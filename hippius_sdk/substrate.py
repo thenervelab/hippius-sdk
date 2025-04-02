@@ -387,3 +387,220 @@ class SubstrateClient:
             error_msg = f"Error querying free credits: {str(e)}"
             print(error_msg)
             raise ValueError(error_msg)
+
+    def get_user_file_hashes(self, account_address: Optional[str] = None) -> List[str]:
+        """
+        Get all file hashes (CIDs) stored by a user in the marketplace.
+        
+        Args:
+            account_address: Substrate account address (uses keypair address if not specified)
+                             Format: 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+        
+        Returns:
+            List[str]: List of CIDs stored by the user
+        
+        Raises:
+            ConnectionError: If connection to Substrate fails
+            ValueError: If query fails or no files found
+        """
+        try:
+            # Initialize Substrate connection if not already connected
+            if not hasattr(self, '_substrate') or self._substrate is None:
+                print("Initializing Substrate connection...")
+                self._substrate = SubstrateInterface(
+                    url=self.url,
+                    ss58_format=42,  # Substrate default
+                    type_registry_preset='substrate-node-template'
+                )
+                print(f"Connected to Substrate node at {self.url}")
+            
+            # Use provided account address or default to keypair address
+            if not account_address:
+                if not hasattr(self, '_keypair') or self._keypair is None:
+                    if not hasattr(self, '_seed_phrase') or not self._seed_phrase:
+                        raise ValueError("No account address provided and no seed phrase is set")
+                    
+                    print("Creating keypair from seed phrase to get account address...")
+                    self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
+                
+                account_address = self._keypair.ss58_address
+                print(f"Using keypair address: {account_address}")
+            
+            # Query the blockchain for user file hashes
+            print(f"Querying file hashes for account: {account_address}")
+            result = self._substrate.query(
+                module='Marketplace',
+                storage_function='UserFileHashes',
+                params=[account_address]
+            )
+            
+            # If files exist, convert to a list of CIDs
+            if result.value:
+                # The result is already a list of bytes, convert each to string
+                file_hashes = [cid.hex() for cid in result.value]
+                print(f"Found {len(file_hashes)} files stored by this account")
+                return file_hashes
+            else:
+                print(f"No files found for account: {account_address}")
+                return []
+                
+        except Exception as e:
+            error_msg = f"Error querying user file hashes: {str(e)}"
+            print(error_msg)
+            raise ValueError(error_msg)
+
+    def get_user_files(self, account_address: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get detailed information about all files stored by a user in the marketplace.
+        
+        This method uses a custom JSON-RPC endpoint to get comprehensive file information.
+        
+        Args:
+            account_address: Substrate account address (uses keypair address if not specified)
+                             Format: 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+        
+        Returns:
+            List[Dict[str, Any]]: List of file objects with the following structure:
+                {
+                    "file_hash": str,     # The IPFS CID of the file
+                    "file_name": str,     # The name of the file
+                    "miner_ids": List[str], # List of miner IDs that have pinned the file
+                    "file_size": int      # Size of the file in bytes
+                }
+        
+        Raises:
+            ConnectionError: If connection to Substrate fails
+            ValueError: If query fails
+        """
+        try:
+            # Initialize Substrate connection if not already connected
+            if not hasattr(self, '_substrate') or self._substrate is None:
+                print("Initializing Substrate connection...")
+                self._substrate = SubstrateInterface(
+                    url=self.url,
+                    ss58_format=42,  # Substrate default
+                    type_registry_preset='substrate-node-template'
+                )
+                print(f"Connected to Substrate node at {self.url}")
+            
+            # Use provided account address or default to keypair address
+            if not account_address:
+                if not hasattr(self, '_keypair') or self._keypair is None:
+                    if not hasattr(self, '_seed_phrase') or not self._seed_phrase:
+                        raise ValueError("No account address provided and no seed phrase is set")
+                    
+                    print("Creating keypair from seed phrase to get account address...")
+                    self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
+                
+                account_address = self._keypair.ss58_address
+                print(f"Using keypair address: {account_address}")
+            
+            # Prepare the JSON-RPC request
+            request = {
+                "jsonrpc": "2.0",
+                "method": "get_user_files",
+                "params": [account_address],
+                "id": 1
+            }
+            
+            print(f"Querying detailed file information for account: {account_address}")
+            
+            # Make the JSON-RPC call
+            response = self._substrate.rpc_request(
+                method="get_user_files",
+                params=[account_address]
+            )
+            
+            # Check for errors in the response
+            if "error" in response:
+                error_msg = f"RPC error: {response['error'].get('message', 'Unknown error')}"
+                print(error_msg)
+                raise ValueError(error_msg)
+            
+            # Extract the result
+            files = response.get("result", [])
+            print(f"Found {len(files)} files stored by this account")
+            
+            # Helper function to convert ASCII code arrays to strings
+            def ascii_to_string(value):
+                if isinstance(value, list) and all(isinstance(x, int) for x in value):
+                    return ''.join(chr(code) for code in value)
+                return str(value)
+            
+            # Helper function to properly format CIDs
+            def format_cid(cid_str):
+                # If it already looks like a proper CID, return it as is
+                if cid_str.startswith(('Qm', 'bafy', 'bafk', 'bafyb', 'bafzb', 'b')):
+                    return cid_str
+                
+                # Check if it's a hex string
+                if all(c in '0123456789abcdefABCDEF' for c in cid_str):
+                    # First try the special case where the hex string is actually ASCII encoded
+                    try:
+                        # Try to decode the hex as ASCII characters
+                        # (This is the case with some substrate responses where the CID is hex-encoded ASCII)
+                        hex_bytes = bytes.fromhex(cid_str)
+                        ascii_str = hex_bytes.decode('ascii')
+                        
+                        # If the decoded string starts with a valid CID prefix, return it
+                        if ascii_str.startswith(('Qm', 'bafy', 'bafk', 'bafyb', 'bafzb', 'b')):
+                            print(f"Decoded CID from hex ASCII: {ascii_str}")
+                            return ascii_str
+                    except Exception:
+                        pass
+                        
+                    # If the above doesn't work, try the standard CID decoding
+                    try:
+                        import base58
+                        import binascii
+                        
+                        # Try to decode hex to binary then to base58 for CIDv0
+                        try:
+                            binary_data = binascii.unhexlify(cid_str)
+                            if len(binary_data) > 2 and binary_data[0] == 0x12 and binary_data[1] == 0x20:
+                                # This looks like a CIDv0 (Qm...)
+                                decoded_cid = base58.b58encode(binary_data).decode('utf-8')
+                                print(f"Decoded CIDv0: {decoded_cid}")
+                                return decoded_cid
+                        except Exception:
+                            pass
+                            
+                        # If not successful, just return hex with 0x prefix as fallback
+                        return f"0x{cid_str}"
+                    except ImportError:
+                        # If base58 is not available, return hex with prefix
+                        return f"0x{cid_str}"
+                
+                # Default case - return as is
+                return cid_str
+            
+            # Process the response
+            processed_files = []
+            for file in files:
+                processed_file = {
+                    "file_size": file.get("file_size", 0)
+                }
+                
+                # Convert file_hash from byte array to string
+                if "file_hash" in file:
+                    cid_str = ascii_to_string(file["file_hash"])
+                    processed_file["file_hash"] = format_cid(cid_str)
+                
+                # Convert file_name from byte array to string
+                if "file_name" in file:
+                    processed_file["file_name"] = ascii_to_string(file["file_name"])
+                
+                # Convert miner_ids from byte arrays to strings
+                if "miner_ids" in file and isinstance(file["miner_ids"], list):
+                    processed_file["miner_ids"] = [ascii_to_string(miner_id) for miner_id in file["miner_ids"]]
+                else:
+                    processed_file["miner_ids"] = []
+                
+                processed_files.append(processed_file)
+            
+            return processed_files
+                
+        except Exception as e:
+            error_msg = f"Error querying user files: {str(e)}"
+            print(error_msg)
+            raise ValueError(error_msg)

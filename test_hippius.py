@@ -13,6 +13,7 @@ Usage:
     python test_hippius.py store <file_path>
     python test_hippius.py store-dir <directory_path>
     python test_hippius.py credits [<account_address>]
+    python test_hippius.py files [<account_address>]
 """
 
 import argparse
@@ -40,6 +41,9 @@ Examples:
   python test_hippius.py store-dir ./test_directory
   python test_hippius.py credits
   python test_hippius.py credits 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+  python test_hippius.py files
+  python test_hippius.py files 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+  python test_hippius.py files --all-miners
 """
     )
     
@@ -105,6 +109,15 @@ Examples:
     credits_parser.add_argument("account_address", nargs="?", default=None, 
                               help="Substrate account address (uses keypair address if not specified)")
     
+    # Files command
+    files_parser = subparsers.add_parser("files", help="View detailed information about files stored by a user")
+    files_parser.add_argument("account_address", nargs="?", default=None, 
+                            help="Substrate account address (uses keypair address if not specified)")
+    files_parser.add_argument("--debug", action="store_true", 
+                            help="Show debug information about CID decoding")
+    files_parser.add_argument("--all-miners", action="store_true",
+                            help="Show all miners for each file instead of only the first 3")
+    
     args = parser.parse_args()
     
     if not args.command:
@@ -144,6 +157,11 @@ Examples:
             
         elif args.command == "credits":
             return handle_credits(client, args.account_address)
+            
+        elif args.command == "files":
+            return handle_files(client, args.account_address, 
+                              debug=args.debug if hasattr(args, 'debug') else False,
+                              show_all_miners=args.all_miners if hasattr(args, 'all_miners') else False)
             
     except Exception as e:
         print(f"Error: {e}")
@@ -366,6 +384,98 @@ def handle_credits(client, account_address):
         print(f"Account address: {account_address or 'Using default keypair address'}")
     except Exception as e:
         print(f"Error checking credits: {e}")
+        return 1
+    
+    return 0
+
+
+def handle_files(client, account_address, debug=False, show_all_miners=False):
+    """Handle the files command"""
+    print("Retrieving file information...")
+    try:
+        if debug:
+            print("DEBUG MODE: Will show details about CID decoding")
+            # Try to decode a sample hex-encoded CID to test the implementation
+            sample_hex = "6261666b7265696134696b3262697767736675647237656e6a6d6170617174657733336e727467697032656c663472777134323537636f68666561"
+            try:
+                print("\nTesting CID decoding with sample hex:")
+                hex_bytes = bytes.fromhex(sample_hex)
+                ascii_str = hex_bytes.decode('ascii')
+                print(f"  Hex: {sample_hex}")
+                print(f"  Decoded as ASCII: {ascii_str}")
+                print(f"  Starts with valid prefix: {ascii_str.startswith(('Qm', 'bafy', 'bafk', 'bafyb', 'bafzb', 'b'))}")
+            except Exception as e:
+                print(f"  Error decoding sample: {e}")
+        
+        files = client.substrate_client.get_user_files(account_address)
+        
+        if files:
+            print(f"\nFound {len(files)} files for account: {account_address or client.substrate_client._keypair.ss58_address}")
+            print("\n" + "-" * 80)
+            
+            for i, file in enumerate(files, 1):
+                print(f"File {i}:")
+                
+                # Display file hash (CID) - already formatted in substrate.py
+                file_hash = file.get('file_hash', 'Unknown')
+                print(f"  File Hash (CID): {file_hash}")
+                
+                if debug and file_hash.startswith('0x'):
+                    # If it's still hex, show debug info
+                    hex_str = file_hash[2:]  # Remove 0x prefix
+                    try:
+                        print("  DEBUG - Trying to decode this CID:")
+                        hex_bytes = bytes.fromhex(hex_str)
+                        print(f"    Hex bytes length: {len(hex_bytes)}")
+                        try:
+                            ascii_str = hex_bytes.decode('ascii', errors='replace')
+                            print(f"    As ASCII: {ascii_str}")
+                        except Exception as e:
+                            print(f"    ASCII decode error: {e}")
+                    except Exception as e:
+                        print(f"    Hex decode error: {e}")
+                
+                # Display file name
+                print(f"  File Name: {file.get('file_name', 'Unnamed')}")
+                
+                # Display file size
+                file_size = file.get('file_size', 0)
+                size_kb = file_size / 1024
+                size_mb = size_kb / 1024
+                
+                if size_mb >= 1:
+                    print(f"  File Size: {file_size:,} bytes ({size_mb:.2f} MB)")
+                else:
+                    print(f"  File Size: {file_size:,} bytes ({size_kb:.2f} KB)")
+                
+                # Display miners - use the clean list from substrate.py
+                miners = file.get('miner_ids', [])
+                if miners:
+                    print(f"  Pinned by {len(miners)} miners:")
+                    # Only show first 3 miners if there are many (unless show_all_miners is True)
+                    if len(miners) > 3 and not show_all_miners:
+                        display_miners = miners[:3]
+                        print(f"    (Showing first 3 of {len(miners)} miners - use --all-miners to see all)")
+                    else:
+                        display_miners = miners
+                        if len(miners) > 3:
+                            print(f"    (Showing all {len(miners)} miners)")
+                    
+                    for miner_id in display_miners:
+                        # Format long IDs for readability
+                        if isinstance(miner_id, str) and miner_id.startswith('1') and len(miner_id) > 40:
+                            # Truncate long peer IDs
+                            print(f"    - {miner_id[:12]}...{miner_id[-4:]}")
+                        else:
+                            print(f"    - {miner_id}")
+                else:
+                    print("  Not pinned by any miners")
+                
+                print("-" * 80)
+        else:
+            print(f"No files found for account: {account_address or 'Using default keypair address'}")
+    except Exception as e:
+        print(f"Error retrieving file information: {e}")
         return 1
     
     return 0

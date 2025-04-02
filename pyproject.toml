@@ -23,6 +23,8 @@ ipfshttpclient = "^0.8.0"
 substrate-interface = "^1.4.2"
 requests = "^2.28.1"
 pydantic = "^2.0.0"
+python-dotenv = "^1.0.0"
+base58 = "^2.1.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0.0"
