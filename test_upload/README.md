@@ -14,7 +14,19 @@ This directory contains sample files for testing the IPFS upload functionality o
 You can use this directory to test directory uploads with the Hippius SDK test script:
 
 ```bash
-python test_hippius.py upload-dir test_upload
+python test_hippius.py store-dir test_upload
 ```
 
-This should upload the entire directory structure to IPFS and return a CID that points to the directory. 
+This will upload the entire directory structure to IPFS, return a CID that points to the directory, and store references on the Substrate blockchain.
+
+To view the files stored by your account, use:
+
+```bash
+python test_hippius.py files
+```
+
+To see all the miners pinning each file:
+
+```bash
+python test_hippius.py files --all-miners
+``` 

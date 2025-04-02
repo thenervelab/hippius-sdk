@@ -6,6 +6,7 @@ This example demonstrates how to use the Hippius SDK to upload and download file
 
 import os
 import shutil
+import time
 from hippius_sdk import HippiusClient
 
 # Configuration
@@ -30,17 +31,19 @@ def upload_model_example():
     try:
         print(f"Uploading model: {model_file}")
         
-        # Upload the model to IPFS
+        # Upload the model to IPFS with enhanced return values
         result = client.upload_file(file_path=model_file)
         
+        # Access the returned information
         cid = result["cid"]
         filename = result["filename"]
         size_bytes = result["size_bytes"]
+        size_formatted = result["size_formatted"]
         
         print(f"Model uploaded successfully!")
         print(f"CID: {cid}")
         print(f"Filename: {filename}")
-        print(f"Size: {size_bytes} bytes")
+        print(f"Size: {size_bytes} bytes ({size_formatted})")
         
         return cid
     
@@ -56,10 +59,12 @@ def download_model_example(cid):
     try:
         print(f"Downloading model with CID: {cid}")
         
-        # Download the file
-        client.download_file(cid, output_path)
+        # Download the file with enhanced return values
+        result = client.download_file(cid, output_path)
         
-        print(f"Model downloaded successfully to: {output_path}")
+        print(f"Model downloaded successfully to: {result['output_path']}")
+        print(f"Download completed in {result['elapsed_seconds']} seconds")
+        print(f"File size: {result['size_bytes']} bytes ({result['size_formatted']})")
         
         # Display the content (in a real scenario, you would load the model)
         with open(output_path, "r") as f:
@@ -91,15 +96,20 @@ def upload_dataset_example():
         
         print(f"Uploading dataset directory: {dataset_dir}")
         
-        # Upload the directory to IPFS
+        # Upload the directory to IPFS with enhanced return values
         result = client.upload_directory(dir_path=dataset_dir)
         
         cid = result["cid"]
         dirname = result["dirname"]
+        file_count = result["file_count"]
+        total_size = result["total_size_bytes"]
+        size_formatted = result["size_formatted"]
         
         print(f"Dataset uploaded successfully!")
         print(f"CID: {cid}")
         print(f"Directory name: {dirname}")
+        print(f"File count: {file_count}")
+        print(f"Total size: {total_size} bytes ({size_formatted})")
         
         return cid
     
@@ -110,13 +120,56 @@ def upload_dataset_example():
 
 def check_file_exists_example(cid):
     """Example of checking if a file exists on IPFS."""
-    exists = client.exists(cid)
-    print(f"CID {cid} exists on IPFS: {exists}")
+    result = client.exists(cid)
+    exists = result["exists"]
+    formatted_cid = result["formatted_cid"]
+    gateway_url = result["gateway_url"] if exists else None
+    
+    print(f"CID {formatted_cid} exists on IPFS: {exists}")
+    if exists and gateway_url:
+        print(f"Gateway URL: {gateway_url}")
     
     # Check a non-existent CID
     fake_cid = "QmThisIsNotARealCIDForTestingPurposes123456789"
-    exists = client.exists(fake_cid)
-    print(f"CID {fake_cid} exists on IPFS: {exists}")
+    fake_result = client.exists(fake_cid)
+    print(f"CID {fake_result['formatted_cid']} exists on IPFS: {fake_result['exists']}")
+
+def cat_file_example(cid):
+    """Example of retrieving file content from IPFS."""
+    print(f"Retrieving content for CID: {cid}")
+    
+    # Get the content with enhanced return values
+    result = client.cat(cid, max_display_bytes=100)
+    
+    print(f"Content size: {result['size_bytes']} bytes ({result['size_formatted']})")
+    
+    if result["is_text"]:
+        print("Content type: Text")
+        print(f"Content preview: {result['text_preview']}")
+    else:
+        print("Content type: Binary")
+        print(f"Hex preview: {result['hex_preview']}")
+
+def format_examples():
+    """Examples of using the formatting utilities."""
+    # Format file sizes
+    sizes = [10, 1024, 1024*1024, 1024*1024*1024*2.5]
+    
+    print("File size formatting examples:")
+    for size in sizes:
+        formatted = client.format_size(size)
+        print(f"  {size} bytes → {formatted}")
+    
+    # Format CIDs
+    cids = [
+        "QmZ4tDuvesekSs4qM5ZBKpXiZGun7S2CYtEZRB3DYXkjGx",  # Regular CID
+        "6261666b7265696134696b3262697767736675647237656e6a6d6170617174657733336e727467697032656c663472777134323537636f68666561",  # Hex-encoded CID
+    ]
+    
+    print("\nCID formatting examples:")
+    for cid in cids:
+        formatted = client.format_cid(cid)
+        print(f"  {cid[:20]}... → {formatted}")
 
 def main():
     """Run the examples."""
@@ -138,9 +191,20 @@ def main():
     check_file_exists_example(model_cid)
     print("\n")
     
-    # Note: You can also pin CIDs to ensure they remain available
-    # success = client.pin(model_cid)
-    # print(f"Pinned {model_cid}: {success}")
+    # Get file content
+    cat_file_example(model_cid)
+    print("\n")
+    
+    # Formatting examples
+    format_examples()
+    print("\n")
+    
+    # Pin a file example
+    print("Pinning example:")
+    pin_result = client.pin(model_cid)
+    print(f"Pinned {pin_result['formatted_cid']}: {pin_result['success']}")
+    if not pin_result['success']:
+        print(f"Reason: {pin_result['message']}")
 
 if __name__ == "__main__":
     main() 
