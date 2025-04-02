@@ -1,6 +1,6 @@
-# Hippius SDK
+# Hippius
 
-A Python SDK for interacting with Hippius blockchain storage, designed specifically for ML developers working with Bittensor.
+A Python SDK and CLI for interacting with Hippius blockchain storage, designed specifically for ML developers working with Bittensor.
 
 ## Features
 
@@ -9,15 +9,20 @@ A Python SDK for interacting with Hippius blockchain storage, designed specifica
 - Human-readable formatting of file sizes and CIDs
 - Simple and intuitive API for ML developers
 - Substrate blockchain integration for decentralized storage references
+- End-to-end encryption for secure file storage and retrieval
+- Built-in CLI tools for encryption key generation
 
 ## Installation
 
 ```bash
 # Using pip
-pip install hippius-sdk
+pip install hippius
 
 # Using Poetry
-poetry add hippius-sdk
+poetry add hippius
+
+# With clipboard support for encryption key utility
+poetry add hippius -E clipboard
 ```
 
 ## Quick Start
@@ -69,6 +74,155 @@ print(f"Formatted CID: {formatted_cid}")
 # Format file size for display
 formatted_size = client.format_size(1024 * 1024)
 print(f"Formatted size: {formatted_size}")  # Output: 1.00 MB
+```
+
+## Encryption Support
+
+Hippius SDK supports end-to-end encryption for secure file storage and retrieval using the NaCl (libsodium) cryptography library.
+
+### Generating an Encryption Key
+
+```bash
+# After installing the SDK, you can use the built-in command-line tool:
+hippius-keygen
+
+# Generate and copy to clipboard (requires pyperclip)
+hippius-keygen --copy
+```
+
+### Setting Up Encryption
+
+The SDK can be configured to use encryption in several ways:
+
+1. Through environment variables (recommended for development):
+   ```
+   # In your .env file
+   HIPPIUS_ENCRYPTION_KEY=your-base64-encoded-key
+   HIPPIUS_ENCRYPT_BY_DEFAULT=true
+   ```
+
+2. Directly in code:
+   ```python
+   import base64
+   from hippius_sdk import HippiusClient
+   
+   # Decode the base64 key
+   encryption_key = base64.b64decode("your-base64-encoded-key")
+   
+   # Initialize client with encryption enabled
+   client = HippiusClient(
+       encrypt_by_default=True,
+       encryption_key=encryption_key
+   )
+   
+   # Or generate a new key programmatically
+   encoded_key = client.generate_encryption_key()
+   print(f"Generated key: {encoded_key}")
+   ```
+
+### Using Encryption
+
+Once configured, encryption works transparently:
+
+```python
+# Upload with encryption (uses default setting)
+result = client.upload_file("sensitive_data.txt")
+
+# Explicitly enable/disable encryption for a specific operation
+encrypted_result = client.upload_file("sensitive_data.txt", encrypt=True)
+unencrypted_result = client.upload_file("public_data.txt", encrypt=False)
+
+# Download and decrypt automatically
+dl_result = client.download_file(encrypted_result['cid'], "decrypted_file.txt")
+
+# Explicitly control decryption
+decrypted_result = client.download_file(encrypted_result['cid'], "output.txt", decrypt=True)
+raw_result = client.download_file(encrypted_result['cid'], "still_encrypted.txt", decrypt=False)
+
+# View encrypted content
+content = client.cat(encrypted_result['cid'], decrypt=True)
+```
+
+## Command Line Interface
+
+The Hippius SDK includes a powerful command-line interface (CLI) that provides access to all major features of the SDK directly from your terminal.
+
+### Basic Usage
+
+```bash
+# Get help and list available commands
+hippius --help
+
+# Set global options
+hippius --gateway https://ipfs.io --api-url https://relay-fr.hippius.network --verbose
+```
+
+### IPFS Operations
+
+```bash
+# Download a file from IPFS
+hippius download QmCID123 output_file.txt
+
+# Check if a CID exists
+hippius exists QmCID123
+
+# Display file content
+hippius cat QmCID123
+
+# Store a file on IPFS and Hippius Marketplace
+hippius store my_file.txt
+
+# Store a directory on IPFS and Hippius Marketplace
+hippius store-dir ./my_directory
+```
+
+### Account Operations
+
+```bash
+# Check available credits for an account
+hippius credits
+
+# Check credits for a specific account
+hippius credits 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+
+# View files stored by an account
+hippius files
+
+# View files for a specific account
+hippius files 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+
+# Show all miners for each file
+hippius files --all-miners
+```
+
+### Encryption
+
+```bash
+# Generate an encryption key
+hippius keygen
+
+# Generate and copy to clipboard
+hippius keygen --copy
+
+# Upload with encryption
+hippius store my_file.txt --encrypt
+
+# Download and decrypt
+hippius download QmCID123 output_file.txt --decrypt
+```
+
+### Using Environment Variables
+
+The CLI automatically reads from your `.env` file for common settings:
+
+```
+IPFS_GATEWAY=https://ipfs.io
+IPFS_API_URL=https://relay-fr.hippius.network
+SUBSTRATE_URL=wss://rpc.hippius.network
+SUBSTRATE_SEED_PHRASE="your twelve word seed phrase..."
+SUBSTRATE_DEFAULT_MINERS=miner1,miner2,miner3
+HIPPIUS_ENCRYPTION_KEY=your-base64-encoded-key
+HIPPIUS_ENCRYPT_BY_DEFAULT=true|false
 ```
 
 ## Detailed Usage
@@ -147,9 +301,140 @@ cd hippius-sdk
 # Install dependencies
 poetry install
 
+# With encryption and clipboard support
+poetry install -E clipboard
+
 # Run tests
 poetry run pytest
 ```
+
+## Testing Locally
+
+You can test Hippius locally during development or before publishing to PyPI. Here's how to test both the SDK and CLI components:
+
+### 1. Install in Development Mode
+
+The easiest way to test everything together is to install the package in development mode:
+
+```bash
+# In the root directory of the project
+poetry install
+
+# With encryption and clipboard support
+poetry install -E clipboard
+```
+
+This makes both the SDK and CLI available while still allowing you to make changes to the code.
+
+### 2. Testing the CLI
+
+After installing in development mode, you can run the CLI commands directly:
+
+```bash
+# Basic commands
+hippius --help
+hippius download QmCID123 output_file.txt
+hippius keygen
+
+# To see what commands would do without actually running them, add --verbose
+hippius --verbose store myfile.txt
+```
+
+If you want to test CLI changes without reinstalling the package:
+
+```bash
+# Run the CLI module directly
+python -m hippius_sdk.cli download QmCID123 output_file.txt
+
+# Or make it executable and run it directly
+chmod +x hippius_sdk/cli.py
+./hippius_sdk/cli.py download QmCID123 output_file.txt
+```
+
+### 3. Testing the SDK
+
+To test the SDK components, you can create a small test script:
+
+```python
+# test_script.py
+from hippius_sdk import HippiusClient
+from dotenv import load_dotenv
+import os
+
+# Load environment variables
+load_dotenv()
+
+# Create a client
+client = HippiusClient()
+
+# Test a simple operation
+print("Testing IPFS client...")
+try:
+    result = client.exists("QmZ4tDuvesekSs4qM5ZBKpXiZGun7S2CYtEZRB3DYXkjGx")
+    print(f"Result: {result}")
+except Exception as e:
+    print(f"Error: {e}")
+```
+
+Then run it:
+
+```bash
+python test_script.py
+```
+
+### 4. Running Unit Tests
+
+You can use pytest to run the test suite:
+
+```bash
+# Run all tests
+poetry run pytest
+
+# Run specific tests
+poetry run pytest tests/test_ipfs.py
+
+# Run a specific test function
+poetry run pytest tests/test_ipfs.py::test_upload_file
+```
+
+### 5. Building and Testing the Package
+
+If you want to test the exact package that will be uploaded to PyPI:
+
+```bash
+# Build the package
+poetry build
+
+# Install the built package in a virtual environment
+python -m venv test_env
+source test_env/bin/activate  # On Windows: test_env\Scripts\activate
+pip install dist/hippius-0.1.0-py3-none-any.whl
+
+# Test the installed package
+hippius --help
+```
+
+### Troubleshooting Local Testing
+
+1. **IPFS Connection Issues**: Make sure you have either:
+   - A local IPFS daemon running (`ipfs daemon` in a separate terminal)
+   - Or proper environment variables set in `.env` for remote connections
+
+2. **Missing Dependencies**: If you get import errors, ensure all dependencies are installed:
+   ```bash
+   poetry install --all-extras
+   ```
+
+3. **CLI Not Found**: If the `hippius` command isn't found after installing, try:
+   ```bash
+   # Verify it's installed
+   poetry show hippius
+   
+   # Check your PATH
+   which hippius
+   ```
+
+4. **Substrate Issues**: For marketplace operations, make sure your `.env` has the correct `SUBSTRATE_SEED_PHRASE` and `SUBSTRATE_URL` values.
 
 ## Contributing
 

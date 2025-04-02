@@ -21,6 +21,8 @@ class HippiusClient:
         ipfs_api_url: str = "https://relay-fr.hippius.network",
         substrate_url: str = None,
         substrate_seed_phrase: str = None,
+        encrypt_by_default: Optional[bool] = None,
+        encryption_key: Optional[bytes] = None,
     ):
         """
         Initialize the Hippius client.
@@ -30,8 +32,15 @@ class HippiusClient:
             ipfs_api_url: IPFS API URL for uploading content. Defaults to Hippius relay node.
             substrate_url: WebSocket URL of the Hippius substrate node
             substrate_seed_phrase: Seed phrase for Substrate account
+            encrypt_by_default: Whether to encrypt files by default (from .env if None)
+            encryption_key: Encryption key for NaCl secretbox (from .env if None)
         """
-        self.ipfs = IPFSClient(gateway=ipfs_gateway, api_url=ipfs_api_url)
+        self.ipfs = IPFSClient(
+            gateway=ipfs_gateway, 
+            api_url=ipfs_api_url,
+            encrypt_by_default=encrypt_by_default,
+            encryption_key=encryption_key
+        )
         
         # Initialize Substrate client
         try:
@@ -40,12 +49,13 @@ class HippiusClient:
             print(f"Warning: Could not initialize Substrate client: {e}")
             self.substrate_client = None
     
-    def upload_file(self, file_path: str) -> Dict[str, Any]:
+    def upload_file(self, file_path: str, encrypt: Optional[bool] = None) -> Dict[str, Any]:
         """
-        Upload a file to IPFS.
+        Upload a file to IPFS with optional encryption.
         
         Args:
             file_path: Path to the file to upload
+            encrypt: Whether to encrypt the file (overrides default)
         
         Returns:
             Dict[str, Any]: Dictionary containing file details including:
@@ -53,20 +63,23 @@ class HippiusClient:
                 - filename: Name of the file
                 - size_bytes: Size of the file in bytes
                 - size_formatted: Human-readable file size
+                - encrypted: Whether the file was encrypted
         
         Raises:
             FileNotFoundError: If the file doesn't exist
             ConnectionError: If no IPFS connection is available
+            ValueError: If encryption is requested but not available
         """
-        # Use the enhanced IPFSClient method directly
-        return self.ipfs.upload_file(file_path)
+        # Use the enhanced IPFSClient method directly with encryption parameter
+        return self.ipfs.upload_file(file_path, encrypt=encrypt)
     
-    def upload_directory(self, dir_path: str) -> Dict[str, Any]:
+    def upload_directory(self, dir_path: str, encrypt: Optional[bool] = None) -> Dict[str, Any]:
         """
-        Upload a directory to IPFS.
+        Upload a directory to IPFS with optional encryption.
         
         Args:
             dir_path: Path to the directory to upload
+            encrypt: Whether to encrypt files (overrides default)
         
         Returns:
             Dict[str, Any]: Dictionary containing directory details including:
@@ -75,21 +88,24 @@ class HippiusClient:
                 - file_count: Number of files uploaded
                 - total_size_bytes: Total size in bytes
                 - size_formatted: Human-readable total size
+                - encrypted: Whether files were encrypted
         
         Raises:
             FileNotFoundError: If the directory doesn't exist
             ConnectionError: If no IPFS connection is available
+            ValueError: If encryption is requested but not available
         """
-        # Use the enhanced IPFSClient method directly
-        return self.ipfs.upload_directory(dir_path)
+        # Use the enhanced IPFSClient method directly with encryption parameter
+        return self.ipfs.upload_directory(dir_path, encrypt=encrypt)
     
-    def download_file(self, cid: str, output_path: str) -> Dict[str, Any]:
+    def download_file(self, cid: str, output_path: str, decrypt: Optional[bool] = None) -> Dict[str, Any]:
         """
-        Download a file from IPFS.
+        Download a file from IPFS with optional decryption.
         
         Args:
             cid: Content Identifier (CID) of the file to download
             output_path: Path where the downloaded file will be saved
+            decrypt: Whether to decrypt the file (overrides default)
         
         Returns:
             Dict[str, Any]: Dictionary containing download details including:
@@ -98,20 +114,23 @@ class HippiusClient:
                 - size_bytes: Size of the downloaded file in bytes
                 - size_formatted: Human-readable file size
                 - elapsed_seconds: Time taken for the download
+                - decrypted: Whether the file was decrypted
         
         Raises:
             requests.RequestException: If the download fails
+            ValueError: If decryption is requested but fails
         """
-        return self.ipfs.download_file(cid, output_path)
+        return self.ipfs.download_file(cid, output_path, decrypt=decrypt)
     
-    def cat(self, cid: str, max_display_bytes: int = 1024, format_output: bool = True) -> Dict[str, Any]:
+    def cat(self, cid: str, max_display_bytes: int = 1024, format_output: bool = True, decrypt: Optional[bool] = None) -> Dict[str, Any]:
         """
-        Get the content of a file from IPFS.
+        Get the content of a file from IPFS with optional decryption.
         
         Args:
             cid: Content Identifier (CID) of the file
             max_display_bytes: Maximum number of bytes to include in the preview
             format_output: Whether to attempt to decode the content as text
+            decrypt: Whether to decrypt the file (overrides default)
             
         Returns:
             Dict[str, Any]: Dictionary containing content details including:
@@ -120,8 +139,9 @@ class HippiusClient:
                 - size_formatted: Human-readable size
                 - is_text: Whether the content seems to be text
                 - text_preview/hex_preview: Preview of the content
+                - decrypted: Whether the file was decrypted
         """
-        return self.ipfs.cat(cid, max_display_bytes, format_output)
+        return self.ipfs.cat(cid, max_display_bytes, format_output, decrypt=decrypt)
     
     def exists(self, cid: str) -> Dict[str, Any]:
         """
@@ -182,3 +202,29 @@ class HippiusClient:
             str: Human-readable size string (e.g., '1.23 MB', '456.78 KB')
         """
         return self.ipfs.format_size(size_bytes)
+        
+    def generate_encryption_key(self) -> str:
+        """
+        Generate a new random encryption key for use with the SDK.
+        
+        Returns:
+            str: Base64-encoded encryption key ready for use in .env file
+                 or directly as the encryption_key parameter (after base64 decoding).
+        
+        Raises:
+            ImportError: If PyNaCl is not installed
+        """
+        try:
+            import nacl.utils
+            import nacl.secret
+            import base64
+            
+            # Generate a random key
+            key = nacl.utils.random(nacl.secret.SecretBox.KEY_SIZE)
+            
+            # Encode to base64 for storage in .env
+            encoded_key = base64.b64encode(key).decode()
+            
+            return encoded_key
+        except ImportError:
+            raise ImportError("PyNaCl is required for encryption. Install it with: pip install pynacl")
