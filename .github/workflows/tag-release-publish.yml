@@ -9,6 +9,13 @@ jobs:
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
+    # Add explicit permissions for creating releases
+    permissions:
+      contents: write
+      id-token: write
+      packages: write
+      issues: write
+      pull-requests: write
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
     
@@ -22,25 +29,25 @@ jobs:
       
     - name: Create Release
       id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.ref }}
-        release_name: Release ${{ github.ref_name }}
-        draft: false
-        prerelease: false
-        body: |
-          Release ${{ github.ref_name }}
+      run: |
+        gh release create ${{ github.ref_name }} \
+          --title "Release ${{ github.ref_name }}" \
+          --notes "Release ${{ github.ref_name }}
           
           Changes in this release:
           - Automated release from tag ${{ github.ref_name }}
-          - See commit history for details
+          - See commit history for details"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   
   build-and-publish:
     name: Build and publish to PyPI
     needs: create-release
     runs-on: ubuntu-latest
+    # Add explicit permissions for publishing
+    permissions:
+      contents: write
+      id-token: write
     
     steps:
     - uses: actions/checkout@v3
