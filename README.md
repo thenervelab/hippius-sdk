@@ -143,6 +143,104 @@ raw_result = client.download_file(encrypted_result['cid'], "still_encrypted.txt"
 content = client.cat(encrypted_result['cid'], decrypt=True)
 ```
 
+## Erasure Coding
+
+Hippius SDK supports Reed-Solomon erasure coding for reliable and resilient file storage. This allows files to be split into chunks with added redundancy, so that the original file can be reconstructed even if some chunks are lost.
+
+### Erasure Coding Concepts
+
+- **k**: The number of data chunks needed to reconstruct the original file
+- **m**: The total number of chunks created (m > k)
+- The file can be reconstructed from any k chunks out of m total chunks
+- Higher redundancy (m-k) provides better protection against chunk loss
+
+### Using Erasure Coding
+
+```python
+from hippius_sdk import HippiusClient
+
+client = HippiusClient()
+
+# Erasure code a file with default parameters (k=3, m=5)
+result = client.erasure_code_file("large_file.mp4")
+metadata_cid = result["metadata_cid"]
+
+# Use custom parameters for more redundancy
+result = client.erasure_code_file(
+    file_path="important_data.zip",
+    k=4,               # Need 4 chunks to reconstruct
+    m=10,              # Create 10 chunks total (6 redundant)
+    chunk_size=2097152,  # 2MB chunks
+    encrypt=True       # Encrypt before splitting
+)
+
+# Store erasure-coded file in Hippius marketplace
+result = client.store_erasure_coded_file(
+    file_path="critical_backup.tar",
+    k=3,
+    m=5,
+    encrypt=True,
+    miner_ids=["miner1", "miner2", "miner3"]
+)
+
+# Reconstruct a file from its metadata
+reconstructed_path = client.reconstruct_from_erasure_code(
+    metadata_cid=metadata_cid,
+    output_file="reconstructed_file.mp4"
+)
+```
+
+### When to Use Erasure Coding
+
+Erasure coding is particularly useful for:
+
+- Large files where reliability is critical
+- Long-term archival storage
+- Data that must survive partial network failures
+- Situations where higher redundancy is needed without full replication
+
+### Advanced Features
+
+#### Small File Handling
+
+The SDK automatically adjusts parameters for small files:
+
+- If a file is too small to be split into `k` chunks, the SDK will adjust the chunk size
+- For very small files, the content is split into exactly `k` sub-blocks
+- Parameters are always optimized to provide the requested level of redundancy
+
+#### Robust Storage in Marketplace
+
+When using `store_erasure_coded_file`, the SDK now:
+
+- Stores both the metadata file AND all encoded chunks in the marketplace
+- Ensures miners can access all necessary data for redundancy and retrieval
+- Reports total number of files stored for verification
+
+#### CLI Commands
+
+The CLI provides powerful commands for erasure coding:
+
+```bash
+# Basic usage with automatic parameter adjustment
+hippius erasure-code myfile.txt
+
+# Specify custom parameters
+hippius erasure-code large_video.mp4 --k 4 --m 8 --chunk-size 4194304
+
+# For smaller files, using smaller parameters
+hippius erasure-code small_doc.txt --k 2 --m 5 --chunk-size 4096
+
+# Reconstruct a file from its metadata CID
+hippius reconstruct QmMetadataCID reconstructed_file.mp4
+```
+
+The CLI provides detailed output during the process, including:
+- Automatic parameter adjustments for optimal encoding
+- Progress of chunk creation and upload
+- Storage confirmation in the marketplace
+- Instructions for reconstruction
+
 ## Command Line Interface
 
 The Hippius SDK includes a powerful command-line interface (CLI) that provides access to all major features of the SDK directly from your terminal.
@@ -209,6 +307,19 @@ hippius store my_file.txt --encrypt
 
 # Download and decrypt
 hippius download QmCID123 output_file.txt --decrypt
+```
+
+### Erasure Coding
+
+```bash
+# Erasure code a file with default parameters (k=3, m=5)
+hippius erasure-code large_file.mp4
+
+# Erasure code with custom parameters
+hippius erasure-code important_data.zip --k 4 --m 10 --chunk-size 2097152 --encrypt
+
+# Reconstruct a file from its metadata
+hippius reconstruct QmMetadataCID reconstructed_file.mp4
 ```
 
 ### Using Environment Variables

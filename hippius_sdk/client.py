@@ -35,7 +35,7 @@ class HippiusClient:
             encrypt_by_default: Whether to encrypt files by default (from .env if None)
             encryption_key: Encryption key for NaCl secretbox (from .env if None)
         """
-        self.ipfs = IPFSClient(
+        self.ipfs_client = IPFSClient(
             gateway=ipfs_gateway,
             api_url=ipfs_api_url,
             encrypt_by_default=encrypt_by_default,
@@ -75,7 +75,7 @@ class HippiusClient:
             ValueError: If encryption is requested but not available
         """
         # Use the enhanced IPFSClient method directly with encryption parameter
-        return self.ipfs.upload_file(file_path, encrypt=encrypt)
+        return self.ipfs_client.upload_file(file_path, encrypt=encrypt)
 
     def upload_directory(
         self, dir_path: str, encrypt: Optional[bool] = None
@@ -102,7 +102,7 @@ class HippiusClient:
             ValueError: If encryption is requested but not available
         """
         # Use the enhanced IPFSClient method directly with encryption parameter
-        return self.ipfs.upload_directory(dir_path, encrypt=encrypt)
+        return self.ipfs_client.upload_directory(dir_path, encrypt=encrypt)
 
     def download_file(
         self, cid: str, output_path: str, decrypt: Optional[bool] = None
@@ -128,7 +128,7 @@ class HippiusClient:
             requests.RequestException: If the download fails
             ValueError: If decryption is requested but fails
         """
-        return self.ipfs.download_file(cid, output_path, decrypt=decrypt)
+        return self.ipfs_client.download_file(cid, output_path, decrypt=decrypt)
 
     def cat(
         self,
@@ -155,7 +155,9 @@ class HippiusClient:
                 - text_preview/hex_preview: Preview of the content
                 - decrypted: Whether the file was decrypted
         """
-        return self.ipfs.cat(cid, max_display_bytes, format_output, decrypt=decrypt)
+        return self.ipfs_client.cat(
+            cid, max_display_bytes, format_output, decrypt=decrypt
+        )
 
     def exists(self, cid: str) -> Dict[str, Any]:
         """
@@ -171,7 +173,7 @@ class HippiusClient:
                 - formatted_cid: Formatted version of the CID
                 - gateway_url: URL to access the content if it exists
         """
-        return self.ipfs.exists(cid)
+        return self.ipfs_client.exists(cid)
 
     def pin(self, cid: str) -> Dict[str, Any]:
         """
@@ -187,7 +189,7 @@ class HippiusClient:
                 - formatted_cid: Formatted version of the CID
                 - message: Status message
         """
-        return self.ipfs.pin(cid)
+        return self.ipfs_client.pin(cid)
 
     def format_cid(self, cid: str) -> str:
         """
@@ -201,7 +203,7 @@ class HippiusClient:
         Returns:
             str: Formatted CID string
         """
-        return self.ipfs.format_cid(cid)
+        return self.ipfs_client.format_cid(cid)
 
     def format_size(self, size_bytes: int) -> str:
         """
@@ -215,7 +217,7 @@ class HippiusClient:
         Returns:
             str: Human-readable size string (e.g., '1.23 MB', '456.78 KB')
         """
-        return self.ipfs.format_size(size_bytes)
+        return self.ipfs_client.format_size(size_bytes)
 
     def generate_encryption_key(self) -> str:
         """
@@ -244,3 +246,125 @@ class HippiusClient:
             raise ImportError(
                 "PyNaCl is required for encryption. Install it with: pip install pynacl"
             )
+
+    def erasure_code_file(
+        self,
+        file_path: str,
+        k: int = 3,
+        m: int = 5,
+        chunk_size: int = 1024 * 1024,  # 1MB chunks
+        encrypt: Optional[bool] = None,
+        max_retries: int = 3,
+        verbose: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Split a file using erasure coding, then upload the chunks to IPFS.
+
+        This implements an (m, k) Reed-Solomon code where:
+        - m = total number of chunks
+        - k = minimum chunks needed to reconstruct the file (k <= m)
+        - The file can be reconstructed from any k of the m chunks
+
+        Args:
+            file_path: Path to the file to upload
+            k: Number of data chunks (minimum required to reconstruct)
+            m: Total number of chunks (k + redundancy)
+            chunk_size: Size of each chunk in bytes before encoding
+            encrypt: Whether to encrypt the file before encoding (defaults to self.encrypt_by_default)
+            max_retries: Maximum number of retry attempts for IPFS uploads
+            verbose: Whether to print progress information
+
+        Returns:
+            dict: Metadata including the original file info and chunk information
+
+        Raises:
+            ValueError: If erasure coding is not available or parameters are invalid
+            RuntimeError: If chunk uploads fail
+        """
+        return self.ipfs_client.erasure_code_file(
+            file_path=file_path,
+            k=k,
+            m=m,
+            chunk_size=chunk_size,
+            encrypt=encrypt,
+            max_retries=max_retries,
+            verbose=verbose,
+        )
+
+    def reconstruct_from_erasure_code(
+        self,
+        metadata_cid: str,
+        output_file: str,
+        temp_dir: str = None,
+        max_retries: int = 3,
+        verbose: bool = True,
+    ) -> str:
+        """
+        Reconstruct a file from erasure-coded chunks using its metadata.
+
+        Args:
+            metadata_cid: IPFS CID of the metadata file
+            output_file: Path where the reconstructed file should be saved
+            temp_dir: Directory to use for temporary files (default: system temp)
+            max_retries: Maximum number of retry attempts for IPFS downloads
+            verbose: Whether to print progress information
+
+        Returns:
+            str: Path to the reconstructed file
+
+        Raises:
+            ValueError: If reconstruction fails
+            RuntimeError: If not enough chunks can be downloaded
+        """
+        return self.ipfs_client.reconstruct_from_erasure_code(
+            metadata_cid=metadata_cid,
+            output_file=output_file,
+            temp_dir=temp_dir,
+            max_retries=max_retries,
+            verbose=verbose,
+        )
+
+    def store_erasure_coded_file(
+        self,
+        file_path: str,
+        k: int = 3,
+        m: int = 5,
+        chunk_size: int = 1024 * 1024,  # 1MB chunks
+        encrypt: Optional[bool] = None,
+        miner_ids: List[str] = None,
+        max_retries: int = 3,
+        verbose: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Erasure code a file, upload the chunks to IPFS, and store in the Hippius marketplace.
+
+        This is a convenience method that combines erasure_code_file with storage_request.
+
+        Args:
+            file_path: Path to the file to upload
+            k: Number of data chunks (minimum required to reconstruct)
+            m: Total number of chunks (k + redundancy)
+            chunk_size: Size of each chunk in bytes before encoding
+            encrypt: Whether to encrypt the file before encoding
+            miner_ids: List of specific miner IDs to use for storage
+            max_retries: Maximum number of retry attempts
+            verbose: Whether to print progress information
+
+        Returns:
+            dict: Result including metadata CID and transaction hash
+
+        Raises:
+            ValueError: If parameters are invalid
+            RuntimeError: If processing fails
+        """
+        return self.ipfs_client.store_erasure_coded_file(
+            file_path=file_path,
+            k=k,
+            m=m,
+            chunk_size=chunk_size,
+            encrypt=encrypt,
+            miner_ids=miner_ids,
+            substrate_client=self.substrate_client,
+            max_retries=max_retries,
+            verbose=verbose,
+        )

@@ -435,25 +435,202 @@ def handle_files(client, account_address, debug=False, show_all_miners=False):
     return 0
 
 
+def handle_erasure_code(
+    client, file_path, k, m, chunk_size, miner_ids, encrypt=None, verbose=True
+):
+    """Handle the erasure-code command"""
+    if not os.path.exists(file_path):
+        print(f"Error: File {file_path} not found")
+        return 1
+
+    # Check if zfec is installed
+    try:
+        import zfec
+    except ImportError:
+        print(
+            "Error: zfec is required for erasure coding. Install it with: pip install zfec"
+        )
+        print("Then update your environment: poetry add zfec")
+        return 1
+
+    # Parse miner IDs if provided
+    miner_id_list = None
+    if miner_ids:
+        miner_id_list = [m.strip() for m in miner_ids.split(",") if m.strip()]
+        if verbose:
+            print(f"Targeting {len(miner_id_list)} miners: {', '.join(miner_id_list)}")
+
+    # Get the file size and adjust parameters if needed
+    file_size = os.path.getsize(file_path)
+    file_size_mb = file_size / (1024 * 1024)
+    
+    print(f"Processing {file_path} ({file_size_mb:.2f} MB) with erasure coding...")
+    
+    # Check if the file is too small for the current chunk size and k value
+    original_k = k
+    original_m = m
+    original_chunk_size = chunk_size
+    
+    # Calculate how many chunks we would get with current settings
+    potential_chunks = max(1, file_size // chunk_size)
+    
+    # If we can't get at least k chunks, adjust the chunk size
+    if potential_chunks < k:
+        # Calculate a new chunk size that would give us exactly k chunks
+        new_chunk_size = max(1024, file_size // k)  # Ensure at least 1KB chunks
+        
+        print(f"Warning: File is too small for the requested parameters.")
+        print(f"Original parameters: k={k}, m={m}, chunk size={chunk_size/1024/1024:.2f} MB")
+        print(f"Would create only {potential_chunks} chunks, which is less than k={k}")
+        print(f"Automatically adjusting chunk size to {new_chunk_size/1024/1024:.6f} MB to create at least {k} chunks")
+        
+        chunk_size = new_chunk_size
+    
+    print(f"Final parameters: k={k}, m={m} (need {k} of {m} chunks to reconstruct)")
+    print(f"Chunk size: {chunk_size/1024/1024:.6f} MB")
+
+    if encrypt:
+        print("Encryption: Enabled")
+
+    start_time = time.time()
+
+    try:
+        # Use the store_erasure_coded_file method directly from HippiusClient
+        result = client.store_erasure_coded_file(
+            file_path=file_path,
+            k=k,
+            m=m,
+            chunk_size=chunk_size,
+            encrypt=encrypt,
+            miner_ids=miner_id_list,
+            max_retries=3,
+            verbose=verbose,
+        )
+
+        elapsed_time = time.time() - start_time
+
+        print(f"\nErasure coding and storage completed in {elapsed_time:.2f} seconds!")
+
+        # Display metadata
+        metadata = result.get("metadata", {})
+        metadata_cid = result.get("metadata_cid", "unknown")
+        total_files_stored = result.get("total_files_stored", 0)
+
+        original_file = metadata.get("original_file", {})
+        erasure_coding = metadata.get("erasure_coding", {})
+
+        print("\nErasure Coding Summary:")
+        print(
+            f"  Original file: {original_file.get('name')} ({original_file.get('size', 0)/1024/1024:.2f} MB)"
+        )
+        print(f"  File ID: {erasure_coding.get('file_id')}")
+        print(f"  Parameters: k={erasure_coding.get('k')}, m={erasure_coding.get('m')}")
+        print(f"  Total chunks: {len(metadata.get('chunks', []))}")
+        print(f"  Total files stored in marketplace: {total_files_stored}")
+        print(f"  Metadata CID: {metadata_cid}")
+
+        # If we stored in the marketplace
+        if "transaction_hash" in result:
+            print(
+                f"\nStored in marketplace. Transaction hash: {result['transaction_hash']}"
+            )
+
+        # Instructions for reconstruction
+        print("\nTo reconstruct this file, you will need:")
+        print(f"  1. The metadata CID: {metadata_cid}")
+        print("  2. Access to at least k chunks for each original chunk")
+        print("\nReconstruction command:")
+        print(
+            f"  hippius reconstruct {metadata_cid} reconstructed_{original_file.get('name')}"
+        )
+
+        return 0
+
+    except Exception as e:
+        print(f"Error during erasure coding: {e}")
+        
+        # Provide helpful advice based on the error
+        if "Wrong length" in str(e) and "input blocks" in str(e):
+            print("\nThis error typically occurs with very small files.")
+            print("Suggestions:")
+            print("  1. Try using a smaller chunk size: --chunk-size 4096")
+            print("  2. Try using a smaller k value: --k 2")
+            print("  3. For very small files, consider using regular storage instead of erasure coding.")
+        
+        return 1
+
+
+def handle_reconstruct(client, metadata_cid, output_file, verbose=True):
+    """Handle the reconstruct command for erasure-coded files"""
+    # Check if zfec is installed
+    try:
+        import zfec
+    except ImportError:
+        print(
+            "Error: zfec is required for erasure coding. Install it with: pip install zfec"
+        )
+        print("Then update your environment: poetry add zfec")
+        return 1
+
+    print(f"Reconstructing file from metadata CID: {metadata_cid}")
+    print(f"Output file: {output_file}")
+
+    start_time = time.time()
+
+    try:
+        # Use the reconstruct_from_erasure_code method
+        result = client.reconstruct_from_erasure_code(
+            metadata_cid=metadata_cid, output_file=output_file, verbose=verbose
+        )
+
+        elapsed_time = time.time() - start_time
+        print(f"\nFile reconstruction completed in {elapsed_time:.2f} seconds!")
+        print(f"Reconstructed file saved to: {result}")
+
+        return 0
+
+    except Exception as e:
+        print(f"Error during file reconstruction: {e}")
+        return 1
+
+
 def main():
-    """Main entry point for the Hippius CLI."""
+    """Main CLI entry point for hippius command."""
+    # Set up the argument parser
     parser = argparse.ArgumentParser(
         description="Hippius SDK Command Line Interface",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  hippius download QmCID123 downloaded_file.txt
-  hippius exists QmCID123
-  hippius cat QmCID123
-  hippius store test_file.txt
-  hippius store-dir ./test_directory
+examples:
+  # Store a file
+  hippius store example.txt
+  
+  # Store a directory
+  hippius store-dir ./my_directory
+  
+  # Download a file
+  hippius download QmHash output.txt
+  
+  # Check if a CID exists
+  hippius exists QmHash
+  
+  # View the content of a CID
+  hippius cat QmHash
+  
+  # View your available credits
   hippius credits
-  hippius credits 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+  
+  # View your stored files
   hippius files
-  hippius files 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+  
+  # View all miners for stored files
   hippius files --all-miners
-  hippius keygen
-  hippius keygen --copy
+  
+  # Erasure code a file (Reed-Solomon)
+  hippius erasure-code large_file.mp4 --k 3 --m 5
+  
+  # Reconstruct an erasure-coded file
+  hippius reconstruct QmMetadataHash reconstructed_file.mp4
 """,
     )
 
@@ -588,6 +765,53 @@ Examples:
         "--copy", action="store_true", help="Copy the generated key to the clipboard"
     )
 
+    # Erasure code command
+    erasure_code_parser = subparsers.add_parser(
+        "erasure-code", help="Erasure code a file"
+    )
+    erasure_code_parser.add_argument("file_path", help="Path to file to erasure code")
+    erasure_code_parser.add_argument(
+        "--k",
+        type=int,
+        default=3,
+        help="Number of data chunks needed to reconstruct (default: 3)",
+    )
+    erasure_code_parser.add_argument(
+        "--m", type=int, default=5, help="Total number of chunks to create (default: 5)"
+    )
+    erasure_code_parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=1048576,
+        help="Chunk size in bytes (default: 1MB)",
+    )
+    erasure_code_parser.add_argument(
+        "--miner-ids", help="Comma-separated list of miner IDs"
+    )
+    erasure_code_parser.add_argument(
+        "--encrypt", action="store_true", help="Encrypt the file"
+    )
+    erasure_code_parser.add_argument(
+        "--no-encrypt", action="store_true", help="Do not encrypt the file"
+    )
+    erasure_code_parser.add_argument(
+        "--verbose", action="store_true", help="Enable verbose output", default=True
+    )
+
+    # Reconstruct command
+    reconstruct_parser = subparsers.add_parser(
+        "reconstruct", help="Reconstruct an erasure-coded file"
+    )
+    reconstruct_parser.add_argument(
+        "metadata_cid", help="Metadata CID of the erasure-coded file"
+    )
+    reconstruct_parser.add_argument(
+        "output_file", help="Path to save reconstructed file"
+    )
+    reconstruct_parser.add_argument(
+        "--verbose", action="store_true", help="Enable verbose output", default=True
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -645,6 +869,23 @@ Examples:
                 show_all_miners=args.all_miners
                 if hasattr(args, "all_miners")
                 else False,
+            )
+
+        elif args.command == "erasure-code":
+            return handle_erasure_code(
+                client,
+                args.file_path,
+                args.k,
+                args.m,
+                args.chunk_size,
+                miner_ids,
+                encrypt=args.encrypt,
+                verbose=args.verbose,
+            )
+
+        elif args.command == "reconstruct":
+            return handle_reconstruct(
+                client, args.metadata_cid, args.output_file, verbose=args.verbose
             )
 
     except Exception as e:

@@ -8,7 +8,9 @@ import requests
 import base64
 import time
 import tempfile
-from typing import Dict, Any, Optional, Union, List
+import hashlib
+import uuid
+from typing import Dict, Any, Optional, Union, List, Tuple
 import ipfshttpclient
 from dotenv import load_dotenv
 
@@ -20,6 +22,14 @@ try:
     ENCRYPTION_AVAILABLE = True
 except ImportError:
     ENCRYPTION_AVAILABLE = False
+
+# Import zfec for erasure coding
+try:
+    import zfec
+
+    ERASURE_CODING_AVAILABLE = True
+except ImportError:
+    ERASURE_CODING_AVAILABLE = False
 
 
 class IPFSClient:
@@ -288,6 +298,7 @@ class IPFSClient:
         file_path: str,
         include_formatted_size: bool = True,
         encrypt: Optional[bool] = None,
+        max_retries: int = 3,
     ) -> Dict[str, Any]:
         """
         Upload a file to IPFS with optional encryption.
@@ -296,6 +307,7 @@ class IPFSClient:
             file_path: Path to the file to upload
             include_formatted_size: Whether to include formatted size in the result (default: True)
             encrypt: Whether to encrypt the file (overrides default)
+            max_retries: Maximum number of retry attempts (default: 3)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -355,7 +367,7 @@ class IPFSClient:
                 cid = result["Hash"]
             elif self.base_url:
                 # Fallback to using HTTP API
-                cid = self._upload_via_http_api(upload_path)
+                cid = self._upload_via_http_api(upload_path, max_retries=max_retries)
             else:
                 # No connection or API URL available
                 raise ConnectionError(
@@ -983,3 +995,577 @@ class IPFSClient:
             "formatted_cid": formatted_cid,
             "message": message,
         }
+
+    def erasure_code_file(
+        self,
+        file_path: str,
+        k: int = 3,
+        m: int = 5,
+        chunk_size: int = 1024 * 1024,  # 1MB chunks
+        encrypt: Optional[bool] = None,
+        max_retries: int = 3,
+        verbose: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Split a file using erasure coding, then upload the chunks to IPFS.
+
+        This implements an (m, k) Reed-Solomon code where:
+        - m = total number of chunks
+        - k = minimum chunks needed to reconstruct the file (k <= m)
+        - The file can be reconstructed from any k of the m chunks
+
+        Args:
+            file_path: Path to the file to upload
+            k: Number of data chunks (minimum required to reconstruct)
+            m: Total number of chunks (k + redundancy)
+            chunk_size: Size of each chunk in bytes before encoding
+            encrypt: Whether to encrypt the file before encoding (defaults to self.encrypt_by_default)
+            max_retries: Maximum number of retry attempts for IPFS uploads
+            verbose: Whether to print progress information
+
+        Returns:
+            dict: Metadata including the original file info and chunk information
+
+        Raises:
+            ValueError: If erasure coding is not available or parameters are invalid
+            RuntimeError: If chunk uploads fail
+        """
+        if not ERASURE_CODING_AVAILABLE:
+            raise ValueError(
+                "Erasure coding is not available. Install zfec: pip install zfec"
+            )
+
+        if k >= m:
+            raise ValueError(
+                f"Invalid erasure coding parameters: k ({k}) must be less than m ({m})"
+            )
+
+        # Get original file info
+        file_name = os.path.basename(file_path)
+        file_size = os.path.getsize(file_path)
+        file_extension = os.path.splitext(file_name)[1]
+
+        # Determine if encryption should be used
+        should_encrypt = self.encrypt_by_default if encrypt is None else encrypt
+
+        if should_encrypt and not self.encryption_available:
+            raise ValueError(
+                "Encryption requested but not available. Install PyNaCl and configure an encryption key."
+            )
+
+        # Generate a unique ID for this file
+        file_id = str(uuid.uuid4())
+
+        if verbose:
+            print(f"Processing file: {file_name} ({file_size/1024/1024:.2f} MB)")
+            print(
+                f"Erasure coding parameters: k={k}, m={m} (need {k}/{m} chunks to reconstruct)"
+            )
+            if should_encrypt:
+                print("Encryption: Enabled")
+
+        # Step 1: Read and potentially encrypt the file
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+
+        # Calculate original file hash
+        original_file_hash = hashlib.sha256(file_data).hexdigest()
+
+        # Encrypt if requested
+        if should_encrypt:
+            if verbose:
+                print("Encrypting file data...")
+            file_data = self.encrypt_data(file_data)
+
+        # Step 2: Split the file into chunks for erasure coding
+        chunks = []
+        chunk_positions = []
+        for i in range(0, len(file_data), chunk_size):
+            chunk = file_data[i : i + chunk_size]
+            chunks.append(chunk)
+            chunk_positions.append(i)
+
+        # Pad the last chunk if necessary
+        if chunks and len(chunks[-1]) < chunk_size:
+            pad_size = chunk_size - len(chunks[-1])
+            chunks[-1] = chunks[-1] + b"\0" * pad_size
+
+        # If we don't have enough chunks for the requested parameters, adjust
+        if len(chunks) < k:
+            if verbose:
+                print(
+                    f"Warning: File has fewer chunks ({len(chunks)}) than k={k}. Adjusting parameters."
+                )
+            
+            # If we have a very small file, we'll just use a single chunk
+            # but will still split it into k sub-blocks during encoding
+            if len(chunks) == 1:
+                if verbose:
+                    print(f"Small file (single chunk): will split into {k} sub-blocks for encoding")
+            else:
+                # If we have multiple chunks but fewer than k, adjust k to match
+                old_k = k
+                k = max(1, len(chunks))
+                if verbose:
+                    print(f"Adjusting k from {old_k} to {k} to match available chunks")
+                    
+            # Ensure m is greater than k for redundancy
+            if m <= k:
+                old_m = m
+                m = k + 2  # Ensure we have at least 2 redundant chunks
+                if verbose:
+                    print(f"Adjusting m from {old_m} to {m} to ensure redundancy")
+            
+            if verbose:
+                print(f"New parameters: k={k}, m={m}")
+                
+        # Ensure we have at least one chunk to process
+        if not chunks:
+            raise ValueError("File is empty or too small to process")
+            
+        # For k=1 case, ensure we have proper sized input for zfec
+        if k == 1 and len(chunks) == 1:
+            # zfec expects the input to be exactly chunk_size for k=1
+            # So we need to pad if shorter or truncate if longer
+            if len(chunks[0]) != chunk_size:
+                chunks[0] = chunks[0].ljust(chunk_size, b'\0')[:chunk_size]
+
+        # Create metadata
+        metadata = {
+            "original_file": {
+                "name": file_name,
+                "size": file_size,
+                "hash": original_file_hash,
+                "extension": file_extension,
+            },
+            "erasure_coding": {
+                "k": k,
+                "m": m,
+                "chunk_size": chunk_size,
+                "encrypted": should_encrypt,
+                "file_id": file_id,
+            },
+            "chunks": [],
+        }
+
+        # Step 3: Apply erasure coding to each chunk
+        if verbose:
+            print(f"Applying erasure coding to {len(chunks)} chunks...")
+
+        all_encoded_chunks = []
+        for i, chunk in enumerate(chunks):
+            try:
+                # For zfec encoder.encode(), we must provide exactly k blocks
+                
+                # Calculate how many bytes each sub-block should have
+                sub_block_size = (len(chunk) + k - 1) // k  # ceiling division for even distribution
+                
+                # Split the chunk into exactly k sub-blocks of equal size (padding as needed)
+                sub_blocks = []
+                for j in range(k):
+                    start = j * sub_block_size
+                    end = min(start + sub_block_size, len(chunk))
+                    sub_block = chunk[start:end]
+                    
+                    # Pad if needed to make all sub-blocks the same size
+                    if len(sub_block) < sub_block_size:
+                        sub_block = sub_block.ljust(sub_block_size, b'\0')
+                        
+                    sub_blocks.append(sub_block)
+                
+                # Verify we have exactly k sub-blocks
+                if len(sub_blocks) != k:
+                    raise ValueError(f"Expected {k} sub-blocks but got {len(sub_blocks)}")
+                
+                # Encode the k sub-blocks to create m encoded blocks
+                encoder = zfec.Encoder(k, m)
+                encoded_chunks = encoder.encode(sub_blocks)
+                
+                # Add to our collection
+                all_encoded_chunks.append(encoded_chunks)
+                
+                if verbose and (i + 1) % 10 == 0:
+                    print(f"  Encoded {i+1}/{len(chunks)} chunks")
+            except Exception as e:
+                # If encoding fails, provide more helpful error message
+                error_msg = f"Error encoding chunk {i}: {str(e)}"
+                print(f"Error details: chunk size={len(chunk)}, k={k}, m={m}")
+                print(f"Sub-blocks created: {len(sub_blocks) if 'sub_blocks' in locals() else 'None'}")
+                raise RuntimeError(f"{error_msg}")
+
+        # Step 4: Upload all chunks to IPFS
+        if verbose:
+            print(f"Uploading {len(chunks) * m} erasure-coded chunks to IPFS...")
+
+        chunk_uploads = 0
+        chunk_data = []
+
+        # Create a temporary directory for the chunks
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Write and upload each encoded chunk
+            for original_idx, encoded_chunks in enumerate(all_encoded_chunks):
+                for share_idx, share_data in enumerate(encoded_chunks):
+                    # Create a name for this chunk that includes needed info
+                    chunk_name = f"{file_id}_chunk_{original_idx}_{share_idx}.ec"
+                    chunk_path = os.path.join(temp_dir, chunk_name)
+
+                    # Write the chunk to a temp file
+                    with open(chunk_path, "wb") as f:
+                        f.write(share_data)
+
+                    # Upload the chunk to IPFS
+                    try:
+                        chunk_cid = self.upload_file(
+                            chunk_path, max_retries=max_retries
+                        )
+
+                        # Store info about this chunk
+                        chunk_info = {
+                            "name": chunk_name,
+                            "cid": chunk_cid,
+                            "original_chunk": original_idx,
+                            "share_idx": share_idx,
+                            "size": len(share_data),
+                        }
+                        chunk_data.append(chunk_info)
+
+                        chunk_uploads += 1
+                        if verbose and chunk_uploads % 10 == 0:
+                            print(
+                                f"  Uploaded {chunk_uploads}/{len(chunks) * m} chunks"
+                            )
+                    except Exception as e:
+                        print(f"Error uploading chunk {chunk_name}: {str(e)}")
+
+            # Add all chunk info to metadata
+            metadata["chunks"] = chunk_data
+
+            # Step 5: Create and upload the metadata file
+            metadata_path = os.path.join(temp_dir, f"{file_id}_metadata.json")
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+
+            if verbose:
+                print(f"Uploading metadata file...")
+
+            # Upload the metadata file to IPFS
+            metadata_cid_result = self.upload_file(metadata_path, max_retries=max_retries)
+            
+            # Extract just the CID string from the result dictionary
+            metadata_cid = metadata_cid_result['cid']
+            metadata["metadata_cid"] = metadata_cid
+
+            if verbose:
+                print(f"Erasure coding complete!")
+                print(f"Metadata CID: {metadata_cid}")
+                print(f"Original file size: {file_size/1024/1024:.2f} MB")
+                print(f"Total chunks: {len(chunks) * m}")
+                print(f"Minimum chunks needed: {k * len(chunks)}")
+
+            return metadata
+
+    def reconstruct_from_erasure_code(
+        self,
+        metadata_cid: str,
+        output_file: str,
+        temp_dir: str = None,
+        max_retries: int = 3,
+        verbose: bool = True,
+    ) -> str:
+        """
+        Reconstruct a file from erasure-coded chunks using its metadata.
+
+        Args:
+            metadata_cid: IPFS CID of the metadata file
+            output_file: Path where the reconstructed file should be saved
+            temp_dir: Directory to use for temporary files (default: system temp)
+            max_retries: Maximum number of retry attempts for IPFS downloads
+            verbose: Whether to print progress information
+
+        Returns:
+            str: Path to the reconstructed file
+
+        Raises:
+            ValueError: If reconstruction fails
+            RuntimeError: If not enough chunks can be downloaded
+        """
+        if not ERASURE_CODING_AVAILABLE:
+            raise ValueError(
+                "Erasure coding is not available. Install zfec: pip install zfec"
+            )
+
+        # Create a temporary directory if not provided
+        if temp_dir is None:
+            temp_dir_obj = tempfile.TemporaryDirectory()
+            temp_dir = temp_dir_obj.name
+        else:
+            temp_dir_obj = None
+
+        try:
+            # Step 1: Download and parse the metadata file
+            if verbose:
+                print(f"Downloading metadata file (CID: {metadata_cid})...")
+
+            metadata_path = os.path.join(temp_dir, "metadata.json")
+            self.download_file(metadata_cid, metadata_path, max_retries=max_retries)
+
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+
+            # Step 2: Extract key information
+            original_file = metadata["original_file"]
+            erasure_params = metadata["erasure_coding"]
+            chunks_info = metadata["chunks"]
+
+            k = erasure_params["k"]
+            m = erasure_params["m"]
+            is_encrypted = erasure_params.get("encrypted", False)
+            chunk_size = erasure_params.get("chunk_size", 1024 * 1024)
+
+            if verbose:
+                print(
+                    f"File: {original_file['name']} ({original_file['size']/1024/1024:.2f} MB)"
+                )
+                print(f"Erasure coding parameters: k={k}, m={m}")
+                print(f"Encrypted: {is_encrypted}")
+
+            # Step 3: Group chunks by their original chunk index
+            chunks_by_original = {}
+            for chunk in chunks_info:
+                orig_idx = chunk["original_chunk"]
+                if orig_idx not in chunks_by_original:
+                    chunks_by_original[orig_idx] = []
+                chunks_by_original[orig_idx].append(chunk)
+
+            # Step 4: For each original chunk, download at least k shares
+            if verbose:
+                print(f"Downloading and reconstructing chunks...")
+
+            reconstructed_chunks = []
+
+            for orig_idx in sorted(chunks_by_original.keys()):
+                available_chunks = chunks_by_original[orig_idx]
+
+                if len(available_chunks) < k:
+                    raise ValueError(
+                        f"Not enough chunks available for original chunk {orig_idx}. "
+                        f"Need {k}, but only have {len(available_chunks)}."
+                    )
+
+                # We only need k chunks, so take the first k
+                chunks_to_download = available_chunks[:k]
+
+                # Download the chunks
+                downloaded_shares = []
+                share_indexes = []
+
+                for chunk in chunks_to_download:
+                    chunk_path = os.path.join(temp_dir, chunk["name"])
+                    try:
+                        # Extract the CID string from the chunk's cid dictionary
+                        chunk_cid = chunk["cid"]["cid"] if isinstance(chunk["cid"], dict) and "cid" in chunk["cid"] else chunk["cid"]
+                        self.download_file(
+                            chunk_cid, chunk_path, max_retries=max_retries
+                        )
+
+                        # Read the chunk data
+                        with open(chunk_path, "rb") as f:
+                            share_data = f.read()
+
+                        downloaded_shares.append(share_data)
+                        share_indexes.append(chunk["share_idx"])
+
+                    except Exception as e:
+                        if verbose:
+                            print(f"Error downloading chunk {chunk['name']}: {str(e)}")
+                        # Continue to the next chunk
+
+                # If we don't have enough chunks, try to download more
+                if len(downloaded_shares) < k:
+                    raise ValueError(
+                        f"Failed to download enough chunks for original chunk {orig_idx}. "
+                        f"Need {k}, but only downloaded {len(downloaded_shares)}."
+                    )
+
+                # Reconstruct this chunk
+                decoder = zfec.Decoder(k, m)
+                reconstructed_data = decoder.decode(downloaded_shares, share_indexes)
+                
+                # If we used the sub-block approach during encoding, we need to recombine the sub-blocks
+                if isinstance(reconstructed_data, list):
+                    # Combine the sub-blocks back into a single chunk
+                    reconstructed_chunk = b''.join(reconstructed_data)
+                else:
+                    # The simple case where we didn't use sub-blocks
+                    reconstructed_chunk = reconstructed_data
+                    
+                reconstructed_chunks.append(reconstructed_chunk)
+
+                if verbose and (orig_idx + 1) % 10 == 0:
+                    print(
+                        f"  Reconstructed {orig_idx + 1}/{len(chunks_by_original)} chunks"
+                    )
+
+            # Step 5: Combine the reconstructed chunks into a file
+            if verbose:
+                print(f"Combining reconstructed chunks...")
+
+            # Concatenate all chunks
+            file_data = b"".join(reconstructed_chunks)
+
+            # Remove padding from the last chunk
+            if original_file["size"] < len(file_data):
+                file_data = file_data[: original_file["size"]]
+
+            # Step 6: Decrypt if necessary
+            if is_encrypted:
+                if not self.encryption_available:
+                    raise ValueError(
+                        "File is encrypted but encryption is not available. "
+                        "Install PyNaCl and configure an encryption key."
+                    )
+
+                if verbose:
+                    print(f"Decrypting file data...")
+
+                file_data = self.decrypt_data(file_data)
+
+            # Step 7: Write to the output file
+            with open(output_file, "wb") as f:
+                f.write(file_data)
+
+            # Step 8: Verify hash if available
+            if "hash" in original_file:
+                actual_hash = hashlib.sha256(file_data).hexdigest()
+                expected_hash = original_file["hash"]
+
+                if actual_hash != expected_hash:
+                    print(f"Warning: File hash mismatch!")
+                    print(f"  Expected: {expected_hash}")
+                    print(f"  Actual:   {actual_hash}")
+
+            if verbose:
+                print(f"Reconstruction complete!")
+                print(f"File saved to: {output_file}")
+
+            return output_file
+
+        finally:
+            # Clean up temporary directory if we created it
+            if temp_dir_obj is not None:
+                temp_dir_obj.close()
+
+    def store_erasure_coded_file(
+        self,
+        file_path: str,
+        k: int = 3,
+        m: int = 5,
+        chunk_size: int = 1024 * 1024,  # 1MB chunks
+        encrypt: Optional[bool] = None,
+        miner_ids: List[str] = None,
+        substrate_client=None,
+        max_retries: int = 3,
+        verbose: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Erasure code a file, upload the chunks to IPFS, and store in the Hippius marketplace.
+
+        This is a convenience method that combines erasure_code_file with storage_request.
+
+        Args:
+            file_path: Path to the file to upload
+            k: Number of data chunks (minimum required to reconstruct)
+            m: Total number of chunks (k + redundancy)
+            chunk_size: Size of each chunk in bytes before encoding
+            encrypt: Whether to encrypt the file before encoding
+            miner_ids: List of specific miner IDs to use for storage
+            substrate_client: SubstrateClient to use (or None to create one)
+            max_retries: Maximum number of retry attempts
+            verbose: Whether to print progress information
+
+        Returns:
+            dict: Result including metadata CID and transaction hash
+
+        Raises:
+            ValueError: If parameters are invalid
+            RuntimeError: If processing fails
+        """
+        # Step 1: Erasure code the file and upload chunks
+        metadata = self.erasure_code_file(
+            file_path=file_path,
+            k=k,
+            m=m,
+            chunk_size=chunk_size,
+            encrypt=encrypt,
+            max_retries=max_retries,
+            verbose=verbose,
+        )
+
+        # Step 2: Import substrate client if we need it
+        if substrate_client is None:
+            from hippius_sdk.substrate import SubstrateClient, FileInput
+
+            substrate_client = SubstrateClient()
+        else:
+            # Just get the FileInput class
+            from hippius_sdk.substrate import FileInput
+
+        original_file = metadata["original_file"]
+        metadata_cid = metadata["metadata_cid"]
+        
+        # Create a list to hold all the file inputs (metadata + all chunks)
+        all_file_inputs = []
+
+        # Step 3: Prepare metadata file for storage
+        if verbose:
+            print(f"Preparing to store metadata and {len(metadata['chunks'])} chunks in the Hippius marketplace...")
+
+        # Create a file input for the metadata file
+        metadata_file_input = FileInput(
+            file_hash=metadata_cid, file_name=f"{original_file['name']}.ec_metadata"
+        )
+        all_file_inputs.append(metadata_file_input)
+        
+        # Step 4: Add all chunks to the storage request
+        if verbose:
+            print(f"Adding all chunks to storage request...")
+            
+        for i, chunk in enumerate(metadata["chunks"]):
+            # Extract the CID string from the chunk's cid dictionary
+            chunk_cid = chunk["cid"]["cid"] if isinstance(chunk["cid"], dict) and "cid" in chunk["cid"] else chunk["cid"]
+            chunk_file_input = FileInput(
+                file_hash=chunk_cid,
+                file_name=chunk["name"]
+            )
+            all_file_inputs.append(chunk_file_input)
+            
+            # Print progress for large numbers of chunks
+            if verbose and (i + 1) % 50 == 0:
+                print(f"  Prepared {i + 1}/{len(metadata['chunks'])} chunks for storage")
+
+        # Step 5: Submit the storage request for all files
+        try:
+            if verbose:
+                print(f"Submitting storage request for 1 metadata file and {len(metadata['chunks'])} chunks...")
+                
+            tx_hash = substrate_client.storage_request(
+                files=all_file_inputs, miner_ids=miner_ids
+            )
+
+            if verbose:
+                print(f"Successfully stored all files in marketplace!")
+                print(f"Transaction hash: {tx_hash}")
+                print(f"Metadata CID: {metadata_cid}")
+                print(f"Total files stored: {len(all_file_inputs)} (1 metadata + {len(metadata['chunks'])} chunks)")
+
+            return {
+                "metadata": metadata,
+                "metadata_cid": metadata_cid,
+                "transaction_hash": tx_hash,
+                "total_files_stored": len(all_file_inputs)
+            }
+
+        except Exception as e:
+            print(f"Error storing files in marketplace: {str(e)}")
+            # Return the metadata even if storage fails
+            return {"metadata": metadata, "metadata_cid": metadata_cid, "error": str(e)}
