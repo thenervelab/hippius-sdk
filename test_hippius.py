@@ -4,15 +4,12 @@ Test script for Hippius SDK IPFS functionality
 
 This script provides a command-line interface for testing the Hippius SDK's
 IPFS operations including uploading, downloading, checking existence,
-retrieving content, and pinning files.
+retrieving content, and storing files on the Hippius marketplace.
 
 Usage:
-    python test_hippius.py upload <file_path>
-    python test_hippius.py upload-dir <directory_path>
     python test_hippius.py download <cid> <output_path>
     python test_hippius.py exists <cid>
     python test_hippius.py cat <cid>
-    python test_hippius.py pin <cid>
     python test_hippius.py store <file_path>
     python test_hippius.py store-dir <directory_path>
 """
@@ -35,12 +32,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python test_hippius.py upload test_file.txt
-  python test_hippius.py upload-dir ./test_directory
   python test_hippius.py download QmCID123 downloaded_file.txt
   python test_hippius.py exists QmCID123
   python test_hippius.py cat QmCID123
-  python test_hippius.py pin QmCID123
   python test_hippius.py store test_file.txt
   python test_hippius.py store-dir ./test_directory
 """
@@ -80,14 +74,6 @@ Examples:
     # Subcommands
     subparsers = parser.add_subparsers(dest="command", help="Commands")
     
-    # Upload command
-    upload_parser = subparsers.add_parser("upload", help="Upload a file to IPFS")
-    upload_parser.add_argument("file_path", help="Path to file to upload")
-    
-    # Upload directory command
-    upload_dir_parser = subparsers.add_parser("upload-dir", help="Upload a directory to IPFS")
-    upload_dir_parser.add_argument("dir_path", help="Path to directory to upload")
-    
     # Download command
     download_parser = subparsers.add_parser("download", help="Download a file from IPFS")
     download_parser.add_argument("cid", help="CID of file to download")
@@ -102,12 +88,6 @@ Examples:
     cat_parser.add_argument("cid", help="CID of file to display")
     cat_parser.add_argument("--max-size", type=int, default=1024, 
                            help="Maximum number of bytes to display (default: 1024)")
-    
-    # Pin command
-    pin_parser = subparsers.add_parser("pin", help="Pin a CID to IPFS")
-    pin_parser.add_argument("cid", help="CID to pin")
-    
-    # New commands for Substrate integration
     
     # Store command (upload to IPFS then store on Substrate)
     store_parser = subparsers.add_parser("store", help="Upload a file to IPFS and store it on Substrate")
@@ -139,13 +119,7 @@ Examples:
             miner_ids = [miner.strip() for miner in os.getenv("SUBSTRATE_DEFAULT_MINERS").split(",")]
         
         # Handle commands
-        if args.command == "upload":
-            return handle_upload(client, args.file_path)
-            
-        elif args.command == "upload-dir":
-            return handle_upload_dir(client, args.dir_path)
-            
-        elif args.command == "download":
+        if args.command == "download":
             return handle_download(client, args.cid, args.output_path)
             
         elif args.command == "exists":
@@ -153,9 +127,6 @@ Examples:
             
         elif args.command == "cat":
             return handle_cat(client, args.cid, args.max_size)
-            
-        elif args.command == "pin":
-            return handle_pin(client, args.cid)
             
         elif args.command == "store":
             return handle_store(client, args.file_path, miner_ids)
@@ -167,95 +138,6 @@ Examples:
         print(f"Error: {e}")
         return 1
         
-    return 0
-
-
-def handle_upload(client, file_path):
-    """Handle the upload command"""
-    if not os.path.exists(file_path):
-        print(f"Error: File {file_path} not found")
-        return 1
-        
-    print(f"Uploading {file_path}...")
-    start_time = time.time()
-    
-    result = client.upload_file(file_path)
-    
-    elapsed_time = time.time() - start_time
-    file_size_mb = result["size_bytes"] / (1024 * 1024)
-    
-    print(f"Upload successful in {elapsed_time:.2f} seconds!")
-    print(f"CID: {result['cid']}")
-    print(f"Filename: {result['filename']}")
-    print(f"Size: {result['size_bytes']} bytes ({file_size_mb:.2f} MB)")
-    
-    # Suggestion to verify
-    print("\nTo verify the upload, you can run:")
-    print(f"  python {sys.argv[0]} exists {result['cid']}")
-    print(f"  python {sys.argv[0]} cat {result['cid']}")
-    
-    return 0
-
-
-def handle_upload_dir(client, dir_path):
-    """Handle the upload-dir command"""
-    if not os.path.isdir(dir_path):
-        print(f"Error: Directory {dir_path} not found")
-        return 1
-        
-    print(f"Uploading directory {dir_path}...")
-    start_time = time.time()
-    
-    # We'll manually upload each file first to get individual CIDs
-    all_files = []
-    for root, _, files in os.walk(dir_path):
-        for file in files:
-            file_path = os.path.join(root, file)
-            rel_path = os.path.relpath(file_path, dir_path)
-            all_files.append((file_path, rel_path))
-    
-    print(f"Found {len(all_files)} files to upload")
-    
-    # Upload each file individually to get all CIDs
-    individual_cids = []
-    for file_path, rel_path in all_files:
-        try:
-            print(f"  Uploading: {rel_path}")
-            file_result = client.upload_file(file_path)
-            individual_cids.append({
-                "path": rel_path,
-                "cid": file_result["cid"],
-                "size_bytes": file_result["size_bytes"]
-            })
-            print(f"    CID: {individual_cids[-1]['cid']}")
-        except Exception as e:
-            print(f"    Error uploading {rel_path}: {e}")
-    
-    # Now upload the entire directory
-    result = client.upload_directory(dir_path)
-    
-    elapsed_time = time.time() - start_time
-    
-    print(f"\nDirectory upload successful in {elapsed_time:.2f} seconds!")
-    print(f"Directory CID: {result['cid']}")
-    print(f"Directory name: {result['dirname']}")
-    
-    # Print summary of all individual file CIDs
-    print(f"\nAll individual file CIDs ({len(individual_cids)}):")
-    for item in individual_cids:
-        size_kb = item["size_bytes"] / 1024
-        print(f"  {item['path']}: {item['cid']} ({size_kb:.2f} KB)")
-    
-    # Suggestion to verify
-    print("\nTo verify the directory upload, you can run:")
-    print(f"  python {sys.argv[0]} exists {result['cid']}")
-    
-    # Suggestion to pin files
-    print("\nTo pin individual files, you can run:")
-    for item in individual_cids:
-        print(f"  python {sys.argv[0]} pin {item['cid']}  # {item['path']}")
-    print(f"  python {sys.argv[0]} pin {result['cid']}  # directory")
-    
     return 0
 
 
@@ -318,23 +200,6 @@ def handle_cat(client, cid, max_size):
         
     except Exception as e:
         print(f"Error retrieving content: {e}")
-        return 1
-    
-    return 0
-
-
-def handle_pin(client, cid):
-    """Handle the pin command"""
-    print(f"Pinning CID {cid} to IPFS...")
-    try:
-        success = client.pin(cid)
-        if success:
-            print(f"Successfully pinned {cid}")
-        else:
-            print(f"Failed to pin {cid}")
-            return 1
-    except Exception as e:
-        print(f"Error pinning CID: {e}")
         return 1
     
     return 0
