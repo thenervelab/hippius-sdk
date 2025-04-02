@@ -69,7 +69,7 @@ jobs:
         poetry build
     - name: Publish to PyPI
       run: |
-        poetry config pypi-token.pypi ${{ secrets.PYPI_API_TOKEN }}
+        # Just use the environment variable for authentication
         poetry publish --no-interaction
       env:
         POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }} 
