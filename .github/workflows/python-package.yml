@@ -31,9 +31,17 @@ jobs:
     - name: Install dependencies
       run: |
         poetry install --all-extras
-    - name: Lint with black
+    - name: Format with black
       run: |
-        poetry run black --check .
+        poetry run black .
+    - name: Commit formatting changes
+      if: github.event_name == 'push'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add -A
+        git diff --quiet && git diff --staged --quiet || git commit -m "Apply Black formatting [skip ci]"
+        git push
     - name: Test with pytest
       run: |
         poetry run pytest
