@@ -325,3 +325,65 @@ class SubstrateClient:
             Dict[str, float]: Account balances (free, reserved, total)
         """
         raise NotImplementedError("Substrate functionality is not implemented yet.")
+        
+    def get_free_credits(self, account_address: Optional[str] = None) -> float:
+        """
+        Get the free credits available for an account in the marketplace.
+        
+        Args:
+            account_address: Substrate account address (uses keypair address if not specified)
+                             Format: 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+        
+        Returns:
+            float: Free credits amount (with 18 decimal places)
+        
+        Raises:
+            ConnectionError: If connection to Substrate fails
+            ValueError: If account has no credits
+        """
+        try:
+            # Initialize Substrate connection if not already connected
+            if not hasattr(self, '_substrate') or self._substrate is None:
+                print("Initializing Substrate connection...")
+                self._substrate = SubstrateInterface(
+                    url=self.url,
+                    ss58_format=42,  # Substrate default
+                    type_registry_preset='substrate-node-template'
+                )
+                print(f"Connected to Substrate node at {self.url}")
+            
+            # Use provided account address or default to keypair address
+            if not account_address:
+                if not hasattr(self, '_keypair') or self._keypair is None:
+                    if not hasattr(self, '_seed_phrase') or not self._seed_phrase:
+                        raise ValueError("No account address provided and no seed phrase is set")
+                    
+                    print("Creating keypair from seed phrase to get account address...")
+                    self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
+                
+                account_address = self._keypair.ss58_address
+                print(f"Using keypair address: {account_address}")
+            
+            # Query the blockchain for free credits
+            print(f"Querying free credits for account: {account_address}")
+            result = self._substrate.query(
+                module='Credits',
+                storage_function='FreeCredits',
+                params=[account_address]
+            )
+            
+            # If credits exist, convert to a float with 18 decimal places
+            if result.value is not None:
+                # Convert from blockchain u128 to float (divide by 10^18)
+                credits_raw = int(result.value)
+                credits_float = credits_raw / 1_000_000_000_000_000_000  # 18 zeros for decimals
+                print(f"Free credits: {credits_float} ({credits_raw} raw value)")
+                return credits_float
+            else:
+                print(f"No credits found for account: {account_address}")
+                raise ValueError(f"No credits found for account: {account_address}")
+                
+        except Exception as e:
+            error_msg = f"Error querying free credits: {str(e)}"
+            print(error_msg)
+            raise ValueError(error_msg)

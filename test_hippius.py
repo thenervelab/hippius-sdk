@@ -12,6 +12,7 @@ Usage:
     python test_hippius.py cat <cid>
     python test_hippius.py store <file_path>
     python test_hippius.py store-dir <directory_path>
+    python test_hippius.py credits [<account_address>]
 """
 
 import argparse
@@ -37,6 +38,8 @@ Examples:
   python test_hippius.py cat QmCID123
   python test_hippius.py store test_file.txt
   python test_hippius.py store-dir ./test_directory
+  python test_hippius.py credits
+  python test_hippius.py credits 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
 """
     )
     
@@ -97,6 +100,11 @@ Examples:
     store_dir_parser = subparsers.add_parser("store-dir", help="Upload a directory to IPFS and store all files on Substrate")
     store_dir_parser.add_argument("dir_path", help="Path to directory to upload")
     
+    # Credits command
+    credits_parser = subparsers.add_parser("credits", help="Check free credits for an account in the marketplace")
+    credits_parser.add_argument("account_address", nargs="?", default=None, 
+                              help="Substrate account address (uses keypair address if not specified)")
+    
     args = parser.parse_args()
     
     if not args.command:
@@ -133,6 +141,9 @@ Examples:
             
         elif args.command == "store-dir":
             return handle_store_dir(client, args.dir_path, miner_ids)
+            
+        elif args.command == "credits":
+            return handle_credits(client, args.account_address)
             
     except Exception as e:
         print(f"Error: {e}")
@@ -339,6 +350,22 @@ def handle_store_dir(client, dir_path, miner_ids):
         print(f"\nNote: {e}")
     except Exception as e:
         print(f"\nError storing files on Substrate: {e}")
+        return 1
+    
+    return 0
+
+
+def handle_credits(client, account_address):
+    """Handle the credits command"""
+    print("Checking free credits for the account...")
+    try:
+        credits = client.substrate_client.get_free_credits(account_address)
+        print(f"\nFree credits: {credits:.6f}")
+        raw_value = int(credits * 1_000_000_000_000_000_000)  # Convert back to raw for display
+        print(f"Raw value: {raw_value:,}")
+        print(f"Account address: {account_address or 'Using default keypair address'}")
+    except Exception as e:
+        print(f"Error checking credits: {e}")
         return 1
     
     return 0
