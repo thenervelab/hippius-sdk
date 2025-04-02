@@ -7,6 +7,7 @@ import json
 import requests
 from typing import Dict, Any, Optional, Union, List
 import ipfshttpclient
+import time
 
 
 class IPFSClient:
@@ -55,7 +56,7 @@ class IPFSClient:
                 # No local IPFS daemon connection available
                 pass
     
-    def _upload_via_http_api(self, file_path: str) -> str:
+    def _upload_via_http_api(self, file_path: str, max_retries: int = 3) -> str:
         """
         Upload a file to IPFS using the HTTP API.
         
@@ -63,6 +64,7 @@ class IPFSClient:
         
         Args:
             file_path: Path to the file to upload
+            max_retries: Maximum number of retry attempts (default: 3)
             
         Returns:
             str: Content Identifier (CID) of the uploaded file
@@ -73,21 +75,63 @@ class IPFSClient:
         if not self.base_url:
             raise ConnectionError("No IPFS API URL provided for HTTP upload")
         
-        try:
-            # Prepare the file for upload
-            with open(file_path, 'rb') as file:
-                files = {'file': (os.path.basename(file_path), file, 'application/octet-stream')}
+        # Retry logic
+        retries = 0
+        last_error = None
+        
+        while retries < max_retries:
+            try:
+                # Show progress for large files
+                file_size = os.path.getsize(file_path)
+                if file_size > 1024 * 1024:  # If file is larger than 1MB
+                    print(f"  Uploading {file_size/1024/1024:.2f} MB file...")
                 
-                # Make HTTP POST request to the IPFS HTTP API
-                upload_url = f"{self.base_url}/api/v0/add"
-                response = requests.post(upload_url, files=files)
-                response.raise_for_status()
-                
-                # Parse the response JSON
-                result = response.json()
-                return result["Hash"]
-        except Exception as e:
-            raise ConnectionError(f"Failed to upload file via HTTP API: {str(e)}")
+                # Prepare the file for upload
+                with open(file_path, 'rb') as file:
+                    files = {'file': (os.path.basename(file_path), file, 'application/octet-stream')}
+                    
+                    # Make HTTP POST request to the IPFS HTTP API with a timeout
+                    print(f"  Sending request to {self.base_url}/api/v0/add... (attempt {retries+1}/{max_retries})")
+                    upload_url = f"{self.base_url}/api/v0/add"
+                    response = requests.post(
+                        upload_url, 
+                        files=files, 
+                        timeout=120  # 2 minute timeout for uploads
+                    )
+                    response.raise_for_status()
+                    
+                    # Parse the response JSON
+                    result = response.json()
+                    print(f"  Upload successful! CID: {result['Hash']}")
+                    return result["Hash"]
+                    
+            except (requests.exceptions.Timeout, 
+                    requests.exceptions.ConnectionError, 
+                    requests.exceptions.RequestException) as e:
+                # Save the error and retry
+                last_error = e
+                retries += 1
+                wait_time = 2 ** retries  # Exponential backoff: 2, 4, 8 seconds
+                print(f"  Upload attempt {retries} failed: {str(e)}")
+                if retries < max_retries:
+                    print(f"  Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+            except Exception as e:
+                # For other exceptions, don't retry
+                raise ConnectionError(f"Failed to upload file via HTTP API: {str(e)}")
+        
+        # If we've exhausted all retries
+        if last_error:
+            error_type = type(last_error).__name__
+            if isinstance(last_error, requests.exceptions.Timeout):
+                raise ConnectionError(f"Timeout when uploading to {self.base_url} after {max_retries} attempts. The server is not responding.")
+            elif isinstance(last_error, requests.exceptions.ConnectionError):
+                raise ConnectionError(f"Failed to connect to IPFS node at {self.base_url} after {max_retries} attempts: {str(last_error)}")
+            else:
+                raise ConnectionError(f"Failed to upload file via HTTP API after {max_retries} attempts. Last error ({error_type}): {str(last_error)}")
+        
+        # This should never happen, but just in case
+        raise ConnectionError(f"Failed to upload file to {self.base_url} after {max_retries} attempts for unknown reasons.")
     
     def upload_file(self, file_path: str) -> str:
         """
@@ -117,7 +161,7 @@ class IPFSClient:
             # No connection or API URL available
             raise ConnectionError("No IPFS connection available. Please provide a valid api_url or ensure a local IPFS daemon is running.")
     
-    def _upload_directory_via_http_api(self, dir_path: str) -> str:
+    def _upload_directory_via_http_api(self, dir_path: str, max_retries: int = 3) -> str:
         """
         Upload a directory to IPFS using the HTTP API.
         
@@ -125,6 +169,7 @@ class IPFSClient:
         
         Args:
             dir_path: Path to the directory to upload
+            max_retries: Maximum number of retry attempts (default: 3)
             
         Returns:
             str: Content Identifier (CID) of the uploaded directory
@@ -135,41 +180,81 @@ class IPFSClient:
         if not self.base_url:
             raise ConnectionError("No IPFS API URL provided for HTTP upload")
         
-        try:
-            # This is a simplified approach - we'll upload the directory with recursive flag
-            files = []
-            
-            # Create a request with the directory flag
-            upload_url = f"{self.base_url}/api/v0/add?recursive=true&wrap-with-directory=true"
-            
-            for root, _, filenames in os.walk(dir_path):
-                for filename in filenames:
-                    file_path = os.path.join(root, filename)
-                    rel_path = os.path.relpath(file_path, dir_path)
-                    
-                    with open(file_path, 'rb') as f:
-                        file_content = f.read()
-                    
-                    # Add the file to the multipart request
-                    files.append(
-                        ('file', (rel_path, file_content, 'application/octet-stream'))
-                    )
-            
-            # Make HTTP POST request
-            response = requests.post(upload_url, files=files)
-            response.raise_for_status()
-            
-            # The IPFS API returns a JSON object for each file, one per line
-            # The last one should be the directory itself
-            lines = response.text.strip().split('\n')
-            if not lines:
-                raise ConnectionError("Empty response from IPFS API")
+        # Retry logic
+        retries = 0
+        last_error = None
+        
+        while retries < max_retries:
+            try:
+                # This is a simplified approach - we'll upload the directory with recursive flag
+                files = []
                 
-            last_item = json.loads(lines[-1])
-            return last_item["Hash"]
-            
-        except Exception as e:
-            raise ConnectionError(f"Failed to upload directory via HTTP API: {str(e)}")
+                print(f"  Preparing directory contents for upload...")
+                # Collect all files in the directory
+                for root, _, filenames in os.walk(dir_path):
+                    for filename in filenames:
+                        file_path = os.path.join(root, filename)
+                        rel_path = os.path.relpath(file_path, dir_path)
+                        
+                        with open(file_path, 'rb') as f:
+                            file_content = f.read()
+                        
+                        # Add the file to the multipart request
+                        files.append(
+                            ('file', (rel_path, file_content, 'application/octet-stream'))
+                        )
+                
+                # Create a request with the directory flag
+                upload_url = f"{self.base_url}/api/v0/add?recursive=true&wrap-with-directory=true"
+                
+                print(f"  Sending directory upload request to {self.base_url}/api/v0/add... (attempt {retries+1}/{max_retries})")
+                print(f"  Uploading {len(files)} files...")
+                
+                # Make HTTP POST request with timeout
+                response = requests.post(
+                    upload_url, 
+                    files=files, 
+                    timeout=300  # 5 minute timeout for directory uploads
+                )
+                response.raise_for_status()
+                
+                # The IPFS API returns a JSON object for each file, one per line
+                # The last one should be the directory itself
+                lines = response.text.strip().split('\n')
+                if not lines:
+                    raise ConnectionError("Empty response from IPFS API")
+                    
+                last_item = json.loads(lines[-1])
+                print(f"  Directory upload successful! CID: {last_item['Hash']}")
+                return last_item["Hash"]
+                
+            except (requests.exceptions.Timeout, 
+                    requests.exceptions.ConnectionError, 
+                    requests.exceptions.RequestException) as e:
+                # Save the error and retry
+                last_error = e
+                retries += 1
+                wait_time = 2 ** retries  # Exponential backoff: 2, 4, 8 seconds
+                print(f"  Upload attempt {retries} failed: {str(e)}")
+                if retries < max_retries:
+                    print(f"  Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+            except Exception as e:
+                # For other exceptions, don't retry
+                raise ConnectionError(f"Failed to upload directory via HTTP API: {str(e)}")
+        
+        # If we've exhausted all retries
+        if last_error:
+            error_type = type(last_error).__name__
+            if isinstance(last_error, requests.exceptions.Timeout):
+                raise ConnectionError(f"Timeout when uploading directory to {self.base_url} after {max_retries} attempts. The server is not responding.")
+            elif isinstance(last_error, requests.exceptions.ConnectionError):
+                raise ConnectionError(f"Failed to connect to IPFS node at {self.base_url} after {max_retries} attempts: {str(last_error)}")
+            else:
+                raise ConnectionError(f"Failed to upload directory via HTTP API after {max_retries} attempts. Last error ({error_type}): {str(last_error)}")
+        
+        # This should never happen, but just in case
+        raise ConnectionError(f"Failed to upload directory to {self.base_url} after {max_retries} attempts for unknown reasons.")
     
     def upload_directory(self, dir_path: str) -> str:
         """

@@ -5,28 +5,40 @@ Main client for the Hippius SDK.
 import os
 from typing import Dict, Any, Optional, List, Union
 from hippius_sdk.ipfs import IPFSClient
+from hippius_sdk.substrate import SubstrateClient, FileInput
 
 
 class HippiusClient:
     """
     Main client for interacting with the Hippius ecosystem.
     
-    Currently provides IPFS operations, with Substrate functionality coming in a future release.
+    Provides IPFS operations, with Substrate functionality for storage requests.
     """
     
     def __init__(
         self,
         ipfs_gateway: str = "https://ipfs.io",
-        ipfs_api_url: str = "http://relay-fr.hippius.network",
+        ipfs_api_url: str = "https://relay-fr.hippius.network",
+        substrate_url: str = None,
+        substrate_seed_phrase: str = None,
     ):
         """
         Initialize the Hippius client.
         
         Args:
             ipfs_gateway: IPFS gateway URL for downloading content
-            ipfs_api_url: IPFS API URL for uploading content. Defaults to Hippius relay node "relay-fr.hippius.network".
+            ipfs_api_url: IPFS API URL for uploading content. Defaults to Hippius relay node.
+            substrate_url: WebSocket URL of the Hippius substrate node
+            substrate_seed_phrase: Seed phrase for Substrate account
         """
         self.ipfs = IPFSClient(gateway=ipfs_gateway, api_url=ipfs_api_url)
+        
+        # Initialize Substrate client
+        try:
+            self.substrate_client = SubstrateClient(url=substrate_url, seed_phrase=substrate_seed_phrase)
+        except Exception as e:
+            print(f"Warning: Could not initialize Substrate client: {e}")
+            self.substrate_client = None
     
     def upload_file(self, file_path: str) -> Dict[str, Any]:
         """

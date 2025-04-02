@@ -1,0 +1,5 @@
+This is a sample text file for testing IPFS uploads.
+It contains multiple lines of text.
+
+The Hippius SDK provides a simple way to upload files to IPFS.
+This file will be used to test the upload functionality. 
