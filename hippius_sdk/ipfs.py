@@ -1096,39 +1096,41 @@ class IPFSClient:
                 print(
                     f"Warning: File has fewer chunks ({len(chunks)}) than k={k}. Adjusting parameters."
                 )
-            
+
             # If we have a very small file, we'll just use a single chunk
             # but will still split it into k sub-blocks during encoding
             if len(chunks) == 1:
                 if verbose:
-                    print(f"Small file (single chunk): will split into {k} sub-blocks for encoding")
+                    print(
+                        f"Small file (single chunk): will split into {k} sub-blocks for encoding"
+                    )
             else:
                 # If we have multiple chunks but fewer than k, adjust k to match
                 old_k = k
                 k = max(1, len(chunks))
                 if verbose:
                     print(f"Adjusting k from {old_k} to {k} to match available chunks")
-                    
+
             # Ensure m is greater than k for redundancy
             if m <= k:
                 old_m = m
                 m = k + 2  # Ensure we have at least 2 redundant chunks
                 if verbose:
                     print(f"Adjusting m from {old_m} to {m} to ensure redundancy")
-            
+
             if verbose:
                 print(f"New parameters: k={k}, m={m}")
-                
+
         # Ensure we have at least one chunk to process
         if not chunks:
             raise ValueError("File is empty or too small to process")
-            
+
         # For k=1 case, ensure we have proper sized input for zfec
         if k == 1 and len(chunks) == 1:
             # zfec expects the input to be exactly chunk_size for k=1
             # So we need to pad if shorter or truncate if longer
             if len(chunks[0]) != chunk_size:
-                chunks[0] = chunks[0].ljust(chunk_size, b'\0')[:chunk_size]
+                chunks[0] = chunks[0].ljust(chunk_size, b"\0")[:chunk_size]
 
         # Create metadata
         metadata = {
@@ -1156,41 +1158,47 @@ class IPFSClient:
         for i, chunk in enumerate(chunks):
             try:
                 # For zfec encoder.encode(), we must provide exactly k blocks
-                
+
                 # Calculate how many bytes each sub-block should have
-                sub_block_size = (len(chunk) + k - 1) // k  # ceiling division for even distribution
-                
+                sub_block_size = (
+                    len(chunk) + k - 1
+                ) // k  # ceiling division for even distribution
+
                 # Split the chunk into exactly k sub-blocks of equal size (padding as needed)
                 sub_blocks = []
                 for j in range(k):
                     start = j * sub_block_size
                     end = min(start + sub_block_size, len(chunk))
                     sub_block = chunk[start:end]
-                    
+
                     # Pad if needed to make all sub-blocks the same size
                     if len(sub_block) < sub_block_size:
-                        sub_block = sub_block.ljust(sub_block_size, b'\0')
-                        
+                        sub_block = sub_block.ljust(sub_block_size, b"\0")
+
                     sub_blocks.append(sub_block)
-                
+
                 # Verify we have exactly k sub-blocks
                 if len(sub_blocks) != k:
-                    raise ValueError(f"Expected {k} sub-blocks but got {len(sub_blocks)}")
-                
+                    raise ValueError(
+                        f"Expected {k} sub-blocks but got {len(sub_blocks)}"
+                    )
+
                 # Encode the k sub-blocks to create m encoded blocks
                 encoder = zfec.Encoder(k, m)
                 encoded_chunks = encoder.encode(sub_blocks)
-                
+
                 # Add to our collection
                 all_encoded_chunks.append(encoded_chunks)
-                
+
                 if verbose and (i + 1) % 10 == 0:
                     print(f"  Encoded {i+1}/{len(chunks)} chunks")
             except Exception as e:
                 # If encoding fails, provide more helpful error message
                 error_msg = f"Error encoding chunk {i}: {str(e)}"
                 print(f"Error details: chunk size={len(chunk)}, k={k}, m={m}")
-                print(f"Sub-blocks created: {len(sub_blocks) if 'sub_blocks' in locals() else 'None'}")
+                print(
+                    f"Sub-blocks created: {len(sub_blocks) if 'sub_blocks' in locals() else 'None'}"
+                )
                 raise RuntimeError(f"{error_msg}")
 
         # Step 4: Upload all chunks to IPFS
@@ -1249,10 +1257,12 @@ class IPFSClient:
                 print(f"Uploading metadata file...")
 
             # Upload the metadata file to IPFS
-            metadata_cid_result = self.upload_file(metadata_path, max_retries=max_retries)
-            
+            metadata_cid_result = self.upload_file(
+                metadata_path, max_retries=max_retries
+            )
+
             # Extract just the CID string from the result dictionary
-            metadata_cid = metadata_cid_result['cid']
+            metadata_cid = metadata_cid_result["cid"]
             metadata["metadata_cid"] = metadata_cid
 
             if verbose:
@@ -1363,7 +1373,11 @@ class IPFSClient:
                     chunk_path = os.path.join(temp_dir, chunk["name"])
                     try:
                         # Extract the CID string from the chunk's cid dictionary
-                        chunk_cid = chunk["cid"]["cid"] if isinstance(chunk["cid"], dict) and "cid" in chunk["cid"] else chunk["cid"]
+                        chunk_cid = (
+                            chunk["cid"]["cid"]
+                            if isinstance(chunk["cid"], dict) and "cid" in chunk["cid"]
+                            else chunk["cid"]
+                        )
                         self.download_file(
                             chunk_cid, chunk_path, max_retries=max_retries
                         )
@@ -1390,15 +1404,15 @@ class IPFSClient:
                 # Reconstruct this chunk
                 decoder = zfec.Decoder(k, m)
                 reconstructed_data = decoder.decode(downloaded_shares, share_indexes)
-                
+
                 # If we used the sub-block approach during encoding, we need to recombine the sub-blocks
                 if isinstance(reconstructed_data, list):
                     # Combine the sub-blocks back into a single chunk
-                    reconstructed_chunk = b''.join(reconstructed_data)
+                    reconstructed_chunk = b"".join(reconstructed_data)
                 else:
                     # The simple case where we didn't use sub-blocks
                     reconstructed_chunk = reconstructed_data
-                    
+
                 reconstructed_chunks.append(reconstructed_chunk)
 
                 if verbose and (orig_idx + 1) % 10 == 0:
@@ -1512,42 +1526,49 @@ class IPFSClient:
 
         original_file = metadata["original_file"]
         metadata_cid = metadata["metadata_cid"]
-        
+
         # Create a list to hold all the file inputs (metadata + all chunks)
         all_file_inputs = []
 
         # Step 3: Prepare metadata file for storage
         if verbose:
-            print(f"Preparing to store metadata and {len(metadata['chunks'])} chunks in the Hippius marketplace...")
+            print(
+                f"Preparing to store metadata and {len(metadata['chunks'])} chunks in the Hippius marketplace..."
+            )
 
         # Create a file input for the metadata file
         metadata_file_input = FileInput(
             file_hash=metadata_cid, file_name=f"{original_file['name']}.ec_metadata"
         )
         all_file_inputs.append(metadata_file_input)
-        
+
         # Step 4: Add all chunks to the storage request
         if verbose:
             print(f"Adding all chunks to storage request...")
-            
+
         for i, chunk in enumerate(metadata["chunks"]):
             # Extract the CID string from the chunk's cid dictionary
-            chunk_cid = chunk["cid"]["cid"] if isinstance(chunk["cid"], dict) and "cid" in chunk["cid"] else chunk["cid"]
-            chunk_file_input = FileInput(
-                file_hash=chunk_cid,
-                file_name=chunk["name"]
+            chunk_cid = (
+                chunk["cid"]["cid"]
+                if isinstance(chunk["cid"], dict) and "cid" in chunk["cid"]
+                else chunk["cid"]
             )
+            chunk_file_input = FileInput(file_hash=chunk_cid, file_name=chunk["name"])
             all_file_inputs.append(chunk_file_input)
-            
+
             # Print progress for large numbers of chunks
             if verbose and (i + 1) % 50 == 0:
-                print(f"  Prepared {i + 1}/{len(metadata['chunks'])} chunks for storage")
+                print(
+                    f"  Prepared {i + 1}/{len(metadata['chunks'])} chunks for storage"
+                )
 
         # Step 5: Submit the storage request for all files
         try:
             if verbose:
-                print(f"Submitting storage request for 1 metadata file and {len(metadata['chunks'])} chunks...")
-                
+                print(
+                    f"Submitting storage request for 1 metadata file and {len(metadata['chunks'])} chunks..."
+                )
+
             tx_hash = substrate_client.storage_request(
                 files=all_file_inputs, miner_ids=miner_ids
             )
@@ -1556,13 +1577,15 @@ class IPFSClient:
                 print(f"Successfully stored all files in marketplace!")
                 print(f"Transaction hash: {tx_hash}")
                 print(f"Metadata CID: {metadata_cid}")
-                print(f"Total files stored: {len(all_file_inputs)} (1 metadata + {len(metadata['chunks'])} chunks)")
+                print(
+                    f"Total files stored: {len(all_file_inputs)} (1 metadata + {len(metadata['chunks'])} chunks)"
+                )
 
             return {
                 "metadata": metadata,
                 "metadata_cid": metadata_cid,
                 "transaction_hash": tx_hash,
-                "total_files_stored": len(all_file_inputs)
+                "total_files_stored": len(all_file_inputs),
             }
 
         except Exception as e:

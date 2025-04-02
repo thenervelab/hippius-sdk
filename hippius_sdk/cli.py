@@ -463,29 +463,33 @@ def handle_erasure_code(
     # Get the file size and adjust parameters if needed
     file_size = os.path.getsize(file_path)
     file_size_mb = file_size / (1024 * 1024)
-    
+
     print(f"Processing {file_path} ({file_size_mb:.2f} MB) with erasure coding...")
-    
+
     # Check if the file is too small for the current chunk size and k value
     original_k = k
     original_m = m
     original_chunk_size = chunk_size
-    
+
     # Calculate how many chunks we would get with current settings
     potential_chunks = max(1, file_size // chunk_size)
-    
+
     # If we can't get at least k chunks, adjust the chunk size
     if potential_chunks < k:
         # Calculate a new chunk size that would give us exactly k chunks
         new_chunk_size = max(1024, file_size // k)  # Ensure at least 1KB chunks
-        
+
         print(f"Warning: File is too small for the requested parameters.")
-        print(f"Original parameters: k={k}, m={m}, chunk size={chunk_size/1024/1024:.2f} MB")
+        print(
+            f"Original parameters: k={k}, m={m}, chunk size={chunk_size/1024/1024:.2f} MB"
+        )
         print(f"Would create only {potential_chunks} chunks, which is less than k={k}")
-        print(f"Automatically adjusting chunk size to {new_chunk_size/1024/1024:.6f} MB to create at least {k} chunks")
-        
+        print(
+            f"Automatically adjusting chunk size to {new_chunk_size/1024/1024:.6f} MB to create at least {k} chunks"
+        )
+
         chunk_size = new_chunk_size
-    
+
     print(f"Final parameters: k={k}, m={m} (need {k} of {m} chunks to reconstruct)")
     print(f"Chunk size: {chunk_size/1024/1024:.6f} MB")
 
@@ -548,15 +552,17 @@ def handle_erasure_code(
 
     except Exception as e:
         print(f"Error during erasure coding: {e}")
-        
+
         # Provide helpful advice based on the error
         if "Wrong length" in str(e) and "input blocks" in str(e):
             print("\nThis error typically occurs with very small files.")
             print("Suggestions:")
             print("  1. Try using a smaller chunk size: --chunk-size 4096")
             print("  2. Try using a smaller k value: --k 2")
-            print("  3. For very small files, consider using regular storage instead of erasure coding.")
-        
+            print(
+                "  3. For very small files, consider using regular storage instead of erasure coding."
+            )
+
         return 1
 
 
