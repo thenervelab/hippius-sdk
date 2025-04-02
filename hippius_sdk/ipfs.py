@@ -133,15 +133,20 @@ class IPFSClient:
         # This should never happen, but just in case
         raise ConnectionError(f"Failed to upload file to {self.base_url} after {max_retries} attempts for unknown reasons.")
     
-    def upload_file(self, file_path: str) -> str:
+    def upload_file(self, file_path: str, include_formatted_size: bool = True) -> Dict[str, Any]:
         """
         Upload a file to IPFS.
 
         Args:
             file_path: Path to the file to upload
+            include_formatted_size: Whether to include formatted size in the result (default: True)
 
         Returns:
-            str: Content Identifier (CID) of the uploaded file
+            Dict[str, Any]: Dictionary containing:
+                - cid: Content Identifier (CID) of the uploaded file
+                - filename: Name of the uploaded file
+                - size_bytes: Size of the file in bytes
+                - size_formatted: Human-readable file size (if include_formatted_size is True)
         
         Raises:
             FileNotFoundError: If the file doesn't exist
@@ -150,16 +155,34 @@ class IPFSClient:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File {file_path} not found")
         
+        # Get file info before upload
+        filename = os.path.basename(file_path)
+        size_bytes = os.path.getsize(file_path)
+        
+        # Upload to IPFS
         if self.client:
             # Use IPFS client
             result = self.client.add(file_path)
-            return result["Hash"]
+            cid = result["Hash"]
         elif self.base_url:
             # Fallback to using HTTP API
-            return self._upload_via_http_api(file_path)
+            cid = self._upload_via_http_api(file_path)
         else:
             # No connection or API URL available
             raise ConnectionError("No IPFS connection available. Please provide a valid api_url or ensure a local IPFS daemon is running.")
+        
+        # Format the result
+        result = {
+            "cid": cid,
+            "filename": filename,
+            "size_bytes": size_bytes,
+        }
+        
+        # Add formatted size if requested
+        if include_formatted_size:
+            result["size_formatted"] = self.format_size(size_bytes)
+        
+        return result
     
     def _upload_directory_via_http_api(self, dir_path: str, max_retries: int = 3) -> str:
         """
@@ -256,15 +279,21 @@ class IPFSClient:
         # This should never happen, but just in case
         raise ConnectionError(f"Failed to upload directory to {self.base_url} after {max_retries} attempts for unknown reasons.")
     
-    def upload_directory(self, dir_path: str) -> str:
+    def upload_directory(self, dir_path: str, include_formatted_size: bool = True) -> Dict[str, Any]:
         """
         Upload a directory to IPFS.
 
         Args:
             dir_path: Path to the directory to upload
+            include_formatted_size: Whether to include formatted size in the result (default: True)
 
         Returns:
-            str: Content Identifier (CID) of the uploaded directory
+            Dict[str, Any]: Dictionary containing:
+                - cid: Content Identifier (CID) of the uploaded directory
+                - dirname: Name of the uploaded directory
+                - file_count: Number of files in the directory
+                - total_size_bytes: Total size of all files in bytes
+                - size_formatted: Human-readable total size (if include_formatted_size is True)
         
         Raises:
             FileNotFoundError: If the directory doesn't exist
@@ -273,21 +302,125 @@ class IPFSClient:
         if not os.path.isdir(dir_path):
             raise FileNotFoundError(f"Directory {dir_path} not found")
         
+        # Get directory info
+        dirname = os.path.basename(dir_path)
+        total_size_bytes = 0
+        file_count = 0
+        
+        # Calculate directory size and file count
+        for root, _, files in os.walk(dir_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    total_size_bytes += os.path.getsize(file_path)
+                    file_count += 1
+                except (OSError, IOError):
+                    pass
+        
+        # Upload to IPFS
         if self.client:
             # Use IPFS client
             result = self.client.add(dir_path, recursive=True)
             if isinstance(result, list):
                 # Get the last item, which should be the directory itself
-                return result[-1]["Hash"]
-            return result["Hash"]
+                cid = result[-1]["Hash"]
+            else:
+                cid = result["Hash"]
         elif self.base_url:
             # Fallback to using HTTP API
-            return self._upload_directory_via_http_api(dir_path)
+            cid = self._upload_directory_via_http_api(dir_path)
         else:
             # No connection or API URL available
             raise ConnectionError("No IPFS connection available. Please provide a valid api_url or ensure a local IPFS daemon is running.")
+        
+        # Format the result
+        result = {
+            "cid": cid,
+            "dirname": dirname,
+            "file_count": file_count,
+            "total_size_bytes": total_size_bytes,
+        }
+        
+        # Add formatted size if requested
+        if include_formatted_size:
+            result["size_formatted"] = self.format_size(total_size_bytes)
+        
+        return result
     
-    def download_file(self, cid: str, output_path: str) -> None:
+    def format_size(self, size_bytes: int) -> str:
+        """
+        Format a size in bytes to a human-readable string.
+        
+        Args:
+            size_bytes: Size in bytes
+            
+        Returns:
+            str: Human-readable size string (e.g., '1.23 MB', '456.78 KB')
+        """
+        if size_bytes >= 1024 * 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
+        elif size_bytes >= 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.2f} MB"
+        elif size_bytes >= 1024:
+            return f"{size_bytes / 1024:.2f} KB"
+        else:
+            return f"{size_bytes} bytes"
+    
+    def format_cid(self, cid: str) -> str:
+        """
+        Format a CID for display.
+        
+        This method handles both regular CIDs and hex-encoded CIDs.
+        
+        Args:
+            cid: Content Identifier (CID) to format
+            
+        Returns:
+            str: Formatted CID string
+        """
+        # If it already looks like a proper CID, return it as is
+        if cid.startswith(('Qm', 'bafy', 'bafk', 'bafyb', 'bafzb', 'b')):
+            return cid
+        
+        # Check if it's a hex string
+        if all(c in '0123456789abcdefABCDEF' for c in cid):
+            # First try the special case where the hex string is actually ASCII encoded
+            try:
+                # Try to decode the hex as ASCII characters
+                hex_bytes = bytes.fromhex(cid)
+                ascii_str = hex_bytes.decode('ascii')
+                
+                # If the decoded string starts with a valid CID prefix, return it
+                if ascii_str.startswith(('Qm', 'bafy', 'bafk', 'bafyb', 'bafzb', 'b')):
+                    return ascii_str
+            except Exception:
+                pass
+                
+            # If the above doesn't work, try the standard CID decoding
+            try:
+                import base58
+                import binascii
+                
+                # Try to decode hex to binary then to base58 for CIDv0
+                try:
+                    binary_data = binascii.unhexlify(cid)
+                    if len(binary_data) > 2 and binary_data[0] == 0x12 and binary_data[1] == 0x20:
+                        # This looks like a CIDv0 (Qm...)
+                        decoded_cid = base58.b58encode(binary_data).decode('utf-8')
+                        return decoded_cid
+                except Exception:
+                    pass
+                    
+                # If not successful, just return hex with 0x prefix as fallback
+                return f"0x{cid}"
+            except ImportError:
+                # If base58 is not available, return hex with prefix
+                return f"0x{cid}"
+        
+        # Default case - return as is
+        return cid
+    
+    def download_file(self, cid: str, output_path: str) -> Dict[str, Any]:
         """
         Download a file from IPFS.
 
@@ -295,9 +428,19 @@ class IPFSClient:
             cid: Content Identifier (CID) of the file to download
             output_path: Path where the downloaded file will be saved
         
+        Returns:
+            Dict[str, Any]: Dictionary containing download results:
+                - success: Whether the download was successful
+                - output_path: Path where the file was saved
+                - size_bytes: Size of the downloaded file in bytes
+                - size_formatted: Human-readable file size
+                - elapsed_seconds: Time taken for the download in seconds
+        
         Raises:
             requests.RequestException: If the download fails
         """
+        start_time = time.time()
+        
         url = f"{self.gateway}/ipfs/{cid}"
         response = requests.get(url, stream=True)
         response.raise_for_status()
@@ -307,29 +450,74 @@ class IPFSClient:
         with open(output_path, "wb") as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
+        
+        elapsed_time = time.time() - start_time
+        file_size_bytes = os.path.getsize(output_path)
+        
+        return {
+            "success": True,
+            "output_path": output_path,
+            "size_bytes": file_size_bytes,
+            "size_formatted": self.format_size(file_size_bytes),
+            "elapsed_seconds": round(elapsed_time, 2)
+        }
     
-    def cat(self, cid: str) -> bytes:
+    def cat(self, cid: str, max_display_bytes: int = 1024, format_output: bool = True) -> Dict[str, Any]:
         """
         Get the content of a file from IPFS.
 
         Args:
             cid: Content Identifier (CID) of the file
+            max_display_bytes: Maximum number of bytes to include in the preview (default: 1024)
+            format_output: Whether to attempt to decode the content as text (default: True)
 
         Returns:
-            bytes: Content of the file
+            Dict[str, Any]: Dictionary containing:
+                - content: Complete binary content of the file
+                - size_bytes: Size of the content in bytes
+                - size_formatted: Human-readable size
+                - preview: First part of the content (limited by max_display_bytes)
+                - is_text: Whether the content seems to be text
+                - text_preview: Text preview if is_text is True (up to max_display_bytes)
+                - hex_preview: Hex preview if is_text is False (up to max_display_bytes)
         
         Raises:
             requests.RequestException: If fetching the content fails
         """
         if self.client:
-            return self.client.cat(cid)
+            content = self.client.cat(cid)
         else:
             url = f"{self.gateway}/ipfs/{cid}"
             response = requests.get(url)
             response.raise_for_status()
-            return response.content
+            content = response.content
+        
+        size_bytes = len(content)
+        
+        result = {
+            "content": content,
+            "size_bytes": size_bytes,
+            "size_formatted": self.format_size(size_bytes),
+        }
+        
+        # Add preview
+        if format_output:
+            # Limit preview size
+            preview = content[:max_display_bytes]
+            result["preview"] = preview
+            
+            # Try to decode as text
+            try:
+                text_preview = preview.decode('utf-8')
+                result["is_text"] = True
+                result["text_preview"] = text_preview
+            except UnicodeDecodeError:
+                result["is_text"] = False
+                result["hex_preview"] = preview.hex()
+        
+        return result
     
-    def exists(self, cid: str) -> bool:
+    def exists(self, cid: str) -> Dict[str, Any]:
         """
         Check if a CID exists on IPFS.
 
@@ -337,22 +525,36 @@ class IPFSClient:
             cid: Content Identifier (CID) to check
 
         Returns:
-            bool: True if the CID exists, False otherwise
+            Dict[str, Any]: Dictionary containing:
+                - exists: Boolean indicating if the CID exists
+                - cid: The CID that was checked
+                - formatted_cid: Formatted version of the CID
+                - gateway_url: URL to access the content if it exists
         """
+        formatted_cid = self.format_cid(cid)
+        gateway_url = f"{self.gateway}/ipfs/{cid}"
+        
         try:
             if self.client:
                 # We'll try to get the file stats
                 self.client.ls(cid)
-                return True
+                exists = True
             else:
                 # Try to access through gateway
                 url = f"{self.gateway}/ipfs/{cid}"
                 response = requests.head(url)
-                return response.status_code == 200
+                exists = response.status_code == 200
         except (ipfshttpclient.exceptions.ErrorResponse, requests.RequestException):
-            return False
+            exists = False
+        
+        return {
+            "exists": exists,
+            "cid": cid,
+            "formatted_cid": formatted_cid,
+            "gateway_url": gateway_url if exists else None
+        }
     
-    def pin(self, cid: str) -> bool:
+    def pin(self, cid: str) -> Dict[str, Any]:
         """
         Pin a CID to IPFS to keep it available.
 
@@ -360,25 +562,46 @@ class IPFSClient:
             cid: Content Identifier (CID) to pin
 
         Returns:
-            bool: True if pinning was successful, False otherwise
+            Dict[str, Any]: Dictionary containing:
+                - success: Boolean indicating if pinning was successful
+                - cid: The CID that was pinned
+                - formatted_cid: Formatted version of the CID
+                - message: Status message
         
         Raises:
             ConnectionError: If no IPFS connection is available
         """
+        formatted_cid = self.format_cid(cid)
+        
         if not self.client and self.base_url:
             # Try using HTTP API for pinning
             try:
                 url = f"{self.base_url}/api/v0/pin/add?arg={cid}"
                 response = requests.post(url)
                 response.raise_for_status()
-                return True
+                success = True
+                message = "Successfully pinned via HTTP API"
             except requests.RequestException as e:
-                raise ConnectionError(f"Failed to pin CID via HTTP API: {str(e)}")
+                success = False
+                message = f"Failed to pin: {str(e)}"
         elif not self.client:
             raise ConnectionError("No IPFS connection available. Please provide a valid api_url or ensure a local IPFS daemon is running.")
         
         try:
-            self.client.pin.add(cid)
-            return True
-        except ipfshttpclient.exceptions.ErrorResponse:
-            return False
+            if self.client:
+                self.client.pin.add(cid)
+                success = True
+                message = "Successfully pinned"
+            else:
+                success = False
+                message = "No IPFS client available"
+        except ipfshttpclient.exceptions.ErrorResponse as e:
+            success = False
+            message = f"Failed to pin: {str(e)}"
+        
+        return {
+            "success": success,
+            "cid": cid,
+            "formatted_cid": formatted_cid,
+            "message": message
+        }

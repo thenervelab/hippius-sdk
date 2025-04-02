@@ -449,7 +449,7 @@ class SubstrateClient:
             print(error_msg)
             raise ValueError(error_msg)
 
-    def get_user_files(self, account_address: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_user_files(self, account_address: Optional[str] = None, truncate_miners: bool = True, max_miners: int = 3) -> List[Dict[str, Any]]:
         """
         Get detailed information about all files stored by a user in the marketplace.
         
@@ -458,14 +458,19 @@ class SubstrateClient:
         Args:
             account_address: Substrate account address (uses keypair address if not specified)
                              Format: 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+            truncate_miners: Whether to truncate long miner IDs for display (default: True)
+            max_miners: Maximum number of miners to include in the response (default: 3, 0 for all)
         
         Returns:
             List[Dict[str, Any]]: List of file objects with the following structure:
                 {
-                    "file_hash": str,     # The IPFS CID of the file
-                    "file_name": str,     # The name of the file
-                    "miner_ids": List[str], # List of miner IDs that have pinned the file
-                    "file_size": int      # Size of the file in bytes
+                    "file_hash": str,         # The IPFS CID of the file
+                    "file_name": str,         # The name of the file
+                    "miner_ids": List[str],   # List of miner IDs that have pinned the file
+                    "miner_ids_full": List[str], # Complete list of miner IDs (if truncated)
+                    "miner_count": int,       # Total number of miners
+                    "file_size": int,         # Size of the file in bytes
+                    "size_formatted": str     # Human-readable file size
                 }
         
         Raises:
@@ -544,7 +549,6 @@ class SubstrateClient:
                         
                         # If the decoded string starts with a valid CID prefix, return it
                         if ascii_str.startswith(('Qm', 'bafy', 'bafk', 'bafyb', 'bafzb', 'b')):
-                            print(f"Decoded CID from hex ASCII: {ascii_str}")
                             return ascii_str
                     except Exception:
                         pass
@@ -560,7 +564,6 @@ class SubstrateClient:
                             if len(binary_data) > 2 and binary_data[0] == 0x12 and binary_data[1] == 0x20:
                                 # This looks like a CIDv0 (Qm...)
                                 decoded_cid = base58.b58encode(binary_data).decode('utf-8')
-                                print(f"Decoded CIDv0: {decoded_cid}")
                                 return decoded_cid
                         except Exception:
                             pass
@@ -574,12 +577,29 @@ class SubstrateClient:
                 # Default case - return as is
                 return cid_str
             
+            # Helper function to format file sizes
+            def format_file_size(size_bytes):
+                if size_bytes >= 1024 * 1024:
+                    return f"{size_bytes / (1024 * 1024):.2f} MB"
+                else:
+                    return f"{size_bytes / 1024:.2f} KB"
+                    
+            # Helper function to format miner IDs for display
+            def format_miner_id(miner_id):
+                if truncate_miners and isinstance(miner_id, str) and miner_id.startswith('1') and len(miner_id) > 40:
+                    # Truncate long peer IDs
+                    return f"{miner_id[:12]}...{miner_id[-4:]}"
+                return miner_id
+            
             # Process the response
             processed_files = []
             for file in files:
                 processed_file = {
                     "file_size": file.get("file_size", 0)
                 }
+                
+                # Add formatted file size
+                processed_file["size_formatted"] = format_file_size(processed_file["file_size"])
                 
                 # Convert file_hash from byte array to string
                 if "file_hash" in file:
@@ -592,9 +612,28 @@ class SubstrateClient:
                 
                 # Convert miner_ids from byte arrays to strings
                 if "miner_ids" in file and isinstance(file["miner_ids"], list):
-                    processed_file["miner_ids"] = [ascii_to_string(miner_id) for miner_id in file["miner_ids"]]
+                    all_miners = [ascii_to_string(miner_id) for miner_id in file["miner_ids"]]
+                    processed_file["miner_ids_full"] = all_miners
+                    processed_file["miner_count"] = len(all_miners)
+                    
+                    # Truncate miner list if requested
+                    if max_miners > 0 and len(all_miners) > max_miners:
+                        displayed_miners = all_miners[:max_miners]
+                    else:
+                        displayed_miners = all_miners
+                    
+                    # Format and store the displayed miners
+                    processed_file["miner_ids"] = [
+                        {
+                            "id": miner_id,
+                            "formatted": format_miner_id(miner_id)
+                        }
+                        for miner_id in displayed_miners
+                    ]
                 else:
                     processed_file["miner_ids"] = []
+                    processed_file["miner_ids_full"] = []
+                    processed_file["miner_count"] = 0
                 
                 processed_files.append(processed_file)
             

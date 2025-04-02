@@ -173,21 +173,13 @@ Examples:
 def handle_download(client, cid, output_path):
     """Handle the download command"""
     print(f"Downloading {cid} to {output_path}...")
-    start_time = time.time()
     
-    # Ensure the directory exists
-    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+    # Use the enhanced download method which returns formatted information
+    result = client.download_file(cid, output_path)
     
-    # Download the file
-    client.download_file(cid, output_path)
-    
-    elapsed_time = time.time() - start_time
-    file_size_bytes = os.path.getsize(output_path)
-    file_size_mb = file_size_bytes / (1024 * 1024)
-    
-    print(f"Download successful in {elapsed_time:.2f} seconds!")
-    print(f"Saved to: {output_path}")
-    print(f"Size: {file_size_bytes} bytes ({file_size_mb:.2f} MB)")
+    print(f"Download successful in {result['elapsed_seconds']} seconds!")
+    print(f"Saved to: {result['output_path']}")
+    print(f"Size: {result['size_bytes']:,} bytes ({result['size_formatted']})")
     
     return 0
 
@@ -195,12 +187,18 @@ def handle_download(client, cid, output_path):
 def handle_exists(client, cid):
     """Handle the exists command"""
     print(f"Checking if CID {cid} exists on IPFS...")
-    exists = client.exists(cid)
-    print(f"CID {cid} exists: {exists}")
+    result = client.exists(cid)
     
-    if exists:
+    # Use the formatted CID from the result
+    formatted_cid = result['formatted_cid']
+    exists = result['exists']
+    
+    print(f"CID {formatted_cid} exists: {exists}")
+    
+    if exists and result.get('gateway_url'):
+        print(f"Gateway URL: {result['gateway_url']}")
         print("\nTo download this file, you can run:")
-        print(f"  python {sys.argv[0]} download {cid} <output_path>")
+        print(f"  python {sys.argv[0]} download {formatted_cid} <output_path>")
     
     return 0
 
@@ -209,23 +207,23 @@ def handle_cat(client, cid, max_size):
     """Handle the cat command"""
     print(f"Retrieving content of CID {cid}...")
     try:
-        content = client.cat(cid)
+        # Use the enhanced cat method with formatting
+        result = client.cat(cid, max_display_bytes=max_size)
         
-        # Limit the output size
-        if len(content) > max_size:
-            display_content = content[:max_size]
-            print(f"Content (showing first {max_size} bytes):")
+        # Display file information
+        print(f"Content size: {result['size_bytes']:,} bytes ({result['size_formatted']})")
+        
+        # Display content based on type
+        if result['is_text']:
+            print("\nContent (text):")
+            print(result['text_preview'])
+            if result['size_bytes'] > max_size:
+                print(f"\n... (showing first {max_size} bytes of {result['size_bytes']} total) ...")
         else:
-            display_content = content
-            print("Content:")
-        
-        # Try to decode as text, fallback to hex display for binary data
-        try:
-            print(display_content.decode('utf-8'))
-        except UnicodeDecodeError:
-            print(f"Binary content (hex): {display_content.hex()}")
-            
-        print(f"\nTotal size: {len(content)} bytes")
+            print("\nBinary content (hex):")
+            print(result['hex_preview'])
+            if result['size_bytes'] > max_size:
+                print(f"\n... (showing first {max_size} bytes of {result['size_bytes']} total) ...")
         
     except Exception as e:
         print(f"Error retrieving content: {e}")
@@ -243,16 +241,15 @@ def handle_store(client, file_path, miner_ids):
     print(f"Uploading {file_path} to IPFS...")
     start_time = time.time()
     
-    # Upload the file to IPFS first
+    # Use the enhanced upload_file method that returns formatted information
     result = client.upload_file(file_path)
     
     ipfs_elapsed_time = time.time() - start_time
-    file_size_mb = result["size_bytes"] / (1024 * 1024)
     
     print(f"IPFS upload successful in {ipfs_elapsed_time:.2f} seconds!")
     print(f"CID: {result['cid']}")
     print(f"Filename: {result['filename']}")
-    print(f"Size: {result['size_bytes']} bytes ({file_size_mb:.2f} MB)")
+    print(f"Size: {result['size_bytes']:,} bytes ({result['size_formatted']})")
     
     # Store the file on Substrate
     print("\nStoring the file on Substrate...")
@@ -314,9 +311,10 @@ def handle_store_dir(client, dir_path, miner_ids):
                 "path": rel_path,
                 "cid": file_result["cid"],
                 "filename": file_result["filename"],
-                "size_bytes": file_result["size_bytes"]
+                "size_bytes": file_result["size_bytes"],
+                "size_formatted": file_result.get("size_formatted", "")
             })
-            print(f"    CID: {individual_cids[-1]['cid']}")
+            print(f"    CID: {individual_cids[-1]['cid']} ({individual_cids[-1]['size_formatted']})")
         except Exception as e:
             print(f"    Error uploading {rel_path}: {e}")
     
@@ -328,12 +326,13 @@ def handle_store_dir(client, dir_path, miner_ids):
     print(f"\nIPFS directory upload successful in {ipfs_elapsed_time:.2f} seconds!")
     print(f"Directory CID: {result['cid']}")
     print(f"Directory name: {result['dirname']}")
+    print(f"Total files: {result.get('file_count', len(individual_cids))}")
+    print(f"Total size: {result.get('size_formatted', 'Unknown')}")
     
     # Print summary of all individual file CIDs
     print(f"\nAll individual file CIDs ({len(individual_cids)}):")
     for item in individual_cids:
-        size_kb = item["size_bytes"] / 1024
-        print(f"  {item['path']}: {item['cid']} ({size_kb:.2f} KB)")
+        print(f"  {item['path']}: {item['cid']} ({item['size_formatted']})")
     
     # Suggestion to verify
     print("\nTo verify the IPFS directory upload, you can run:")
@@ -395,19 +394,15 @@ def handle_files(client, account_address, debug=False, show_all_miners=False):
     try:
         if debug:
             print("DEBUG MODE: Will show details about CID decoding")
-            # Try to decode a sample hex-encoded CID to test the implementation
-            sample_hex = "6261666b7265696134696b3262697767736675647237656e6a6d6170617174657733336e727467697032656c663472777134323537636f68666561"
-            try:
-                print("\nTesting CID decoding with sample hex:")
-                hex_bytes = bytes.fromhex(sample_hex)
-                ascii_str = hex_bytes.decode('ascii')
-                print(f"  Hex: {sample_hex}")
-                print(f"  Decoded as ASCII: {ascii_str}")
-                print(f"  Starts with valid prefix: {ascii_str.startswith(('Qm', 'bafy', 'bafk', 'bafyb', 'bafzb', 'b'))}")
-            except Exception as e:
-                print(f"  Error decoding sample: {e}")
+            # No need for sample CID test anymore as we use SDK's format_cid method
         
-        files = client.substrate_client.get_user_files(account_address)
+        # Use the enhanced get_user_files method with our preferences
+        max_miners = 0 if show_all_miners else 3  # 0 means show all miners
+        files = client.substrate_client.get_user_files(
+            account_address, 
+            truncate_miners=True,  # Always truncate long miner IDs
+            max_miners=max_miners  # Use 0 for all or 3 for limited
+        )
         
         if files:
             print(f"\nFound {len(files)} files for account: {account_address or client.substrate_client._keypair.ss58_address}")
@@ -416,58 +411,40 @@ def handle_files(client, account_address, debug=False, show_all_miners=False):
             for i, file in enumerate(files, 1):
                 print(f"File {i}:")
                 
-                # Display file hash (CID) - already formatted in substrate.py
+                # Format the CID using the SDK method
                 file_hash = file.get('file_hash', 'Unknown')
-                print(f"  File Hash (CID): {file_hash}")
-                
-                if debug and file_hash.startswith('0x'):
-                    # If it's still hex, show debug info
-                    hex_str = file_hash[2:]  # Remove 0x prefix
-                    try:
-                        print("  DEBUG - Trying to decode this CID:")
-                        hex_bytes = bytes.fromhex(hex_str)
-                        print(f"    Hex bytes length: {len(hex_bytes)}")
-                        try:
-                            ascii_str = hex_bytes.decode('ascii', errors='replace')
-                            print(f"    As ASCII: {ascii_str}")
-                        except Exception as e:
-                            print(f"    ASCII decode error: {e}")
-                    except Exception as e:
-                        print(f"    Hex decode error: {e}")
+                formatted_cid = client.format_cid(file_hash)
+                print(f"  File Hash (CID): {formatted_cid}")
                 
                 # Display file name
                 print(f"  File Name: {file.get('file_name', 'Unnamed')}")
                 
-                # Display file size
+                # Display file size with SDK formatting method if needed
                 file_size = file.get('file_size', 0)
-                size_kb = file_size / 1024
-                size_mb = size_kb / 1024
+                size_formatted = file.get('size_formatted')
+                if not size_formatted and file_size > 0:
+                    size_formatted = client.format_size(file_size)
+                print(f"  File Size: {file_size:,} bytes ({size_formatted})")
                 
-                if size_mb >= 1:
-                    print(f"  File Size: {file_size:,} bytes ({size_mb:.2f} MB)")
-                else:
-                    print(f"  File Size: {file_size:,} bytes ({size_kb:.2f} KB)")
-                
-                # Display miners - use the clean list from substrate.py
+                # Display miners 
+                miner_count = file.get('miner_count', 0)
                 miners = file.get('miner_ids', [])
-                if miners:
-                    print(f"  Pinned by {len(miners)} miners:")
-                    # Only show first 3 miners if there are many (unless show_all_miners is True)
-                    if len(miners) > 3 and not show_all_miners:
-                        display_miners = miners[:3]
-                        print(f"    (Showing first 3 of {len(miners)} miners - use --all-miners to see all)")
-                    else:
-                        display_miners = miners
-                        if len(miners) > 3:
-                            print(f"    (Showing all {len(miners)} miners)")
+                
+                if miner_count > 0:
+                    print(f"  Pinned by {miner_count} miners:")
                     
-                    for miner_id in display_miners:
-                        # Format long IDs for readability
-                        if isinstance(miner_id, str) and miner_id.startswith('1') and len(miner_id) > 40:
-                            # Truncate long peer IDs
-                            print(f"    - {miner_id[:12]}...{miner_id[-4:]}")
+                    # Show message about truncated list if applicable
+                    if miner_count > len(miners) and not show_all_miners:
+                        print(f"    (Showing {len(miners)} of {miner_count} miners - use --all-miners to see all)")
+                    elif miner_count > 3 and show_all_miners:
+                        print(f"    (Showing all {miner_count} miners)")
+                    
+                    # Display the miners using their formatted IDs
+                    for miner in miners:
+                        if isinstance(miner, dict) and 'formatted' in miner:
+                            print(f"    - {miner['formatted']}")
                         else:
-                            print(f"    - {miner_id}")
+                            print(f"    - {miner}")
                 else:
                     print("  Not pinned by any miners")
                 
