@@ -11,6 +11,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Add explicit permissions to write to the repository
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +34,12 @@ jobs:
     - name: Install dependencies
       run: |
         poetry install --all-extras
+    
+    # Alternative approach - uncomment to check formatting only instead of auto-fixing
+    # - name: Check formatting with black
+    #   run: |
+    #     poetry run black --check .
+    
     - name: Format with black
       run: |
         poetry run black .
