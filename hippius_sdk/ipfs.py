@@ -726,7 +726,11 @@ class IPFSClient:
         return cid
 
     def download_file(
-        self, cid: str, output_path: str, decrypt: Optional[bool] = None
+        self,
+        cid: str,
+        output_path: str,
+        decrypt: Optional[bool] = None,
+        max_retries: int = 3,
     ) -> Dict[str, Any]:
         """
         Download a file from IPFS with optional decryption.
@@ -735,6 +739,7 @@ class IPFSClient:
             cid: Content Identifier (CID) of the file to download
             output_path: Path where the downloaded file will be saved
             decrypt: Whether to decrypt the file (overrides default)
+            max_retries: Maximum number of retry attempts (default: 3)
 
         Returns:
             Dict[str, Any]: Dictionary containing download results:
@@ -772,16 +777,41 @@ class IPFSClient:
             else:
                 download_path = output_path
 
-            # Download the file
-            url = f"{self.gateway}/ipfs/{cid}"
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
+            # Download the file with retry logic
+            retries = 0
+            last_error = None
 
-            os.makedirs(os.path.dirname(os.path.abspath(download_path)), exist_ok=True)
+            while retries < max_retries:
+                try:
+                    # Download the file
+                    url = f"{self.gateway}/ipfs/{cid}"
+                    response = requests.get(url, stream=True)
+                    response.raise_for_status()
 
-            with open(download_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                    os.makedirs(
+                        os.path.dirname(os.path.abspath(download_path)), exist_ok=True
+                    )
+
+                    with open(download_path, "wb") as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+
+                    # If we reach here, download was successful
+                    break
+
+                except (requests.exceptions.RequestException, IOError) as e:
+                    # Save the error and retry
+                    last_error = e
+                    retries += 1
+
+                    if retries < max_retries:
+                        wait_time = 2**retries  # Exponential backoff: 2, 4, 8 seconds
+                        print(f"Download attempt {retries} failed: {str(e)}")
+                        print(f"Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
+                    else:
+                        # Raise the last error if we've exhausted all retries
+                        raise
 
             # Decrypt if needed
             if should_decrypt:
@@ -1304,6 +1334,9 @@ class IPFSClient:
                 "Erasure coding is not available. Install zfec: pip install zfec"
             )
 
+        # Start timing the reconstruction process
+        start_time = time.time()
+
         # Create a temporary directory if not provided
         if temp_dir is None:
             temp_dir_obj = tempfile.TemporaryDirectory()
@@ -1318,6 +1351,10 @@ class IPFSClient:
 
             metadata_path = os.path.join(temp_dir, "metadata.json")
             self.download_file(metadata_cid, metadata_path, max_retries=max_retries)
+
+            if verbose:
+                metadata_download_time = time.time() - start_time
+                print(f"Metadata downloaded in {metadata_download_time:.2f} seconds")
 
             with open(metadata_path, "r") as f:
                 metadata = json.load(f)
@@ -1336,8 +1373,11 @@ class IPFSClient:
                 print(
                     f"File: {original_file['name']} ({original_file['size']/1024/1024:.2f} MB)"
                 )
-                print(f"Erasure coding parameters: k={k}, m={m}")
-                print(f"Encrypted: {is_encrypted}")
+                print(
+                    f"Erasure coding parameters: k={k}, m={m} (need {k} of {m} chunks to reconstruct)"
+                )
+                if is_encrypted:
+                    print(f"Encrypted: Yes")
 
             # Step 3: Group chunks by their original chunk index
             chunks_by_original = {}
@@ -1349,9 +1389,15 @@ class IPFSClient:
 
             # Step 4: For each original chunk, download at least k shares
             if verbose:
-                print(f"Downloading and reconstructing chunks...")
+                total_original_chunks = len(chunks_by_original)
+                total_chunks_to_download = total_original_chunks * k
+                print(
+                    f"Downloading and reconstructing {total_chunks_to_download} chunks..."
+                )
 
             reconstructed_chunks = []
+            chunks_downloaded = 0
+            chunks_failed = 0
 
             for orig_idx in sorted(chunks_by_original.keys()):
                 available_chunks = chunks_by_original[orig_idx]
@@ -1381,6 +1427,7 @@ class IPFSClient:
                         self.download_file(
                             chunk_cid, chunk_path, max_retries=max_retries
                         )
+                        chunks_downloaded += 1
 
                         # Read the chunk data
                         with open(chunk_path, "rb") as f:
@@ -1392,6 +1439,7 @@ class IPFSClient:
                     except Exception as e:
                         if verbose:
                             print(f"Error downloading chunk {chunk['name']}: {str(e)}")
+                        chunks_failed += 1
                         # Continue to the next chunk
 
                 # If we don't have enough chunks, try to download more
@@ -1415,9 +1463,21 @@ class IPFSClient:
 
                 reconstructed_chunks.append(reconstructed_chunk)
 
-                if verbose and (orig_idx + 1) % 10 == 0:
+                # Print progress
+                if verbose:
+                    progress_pct = (orig_idx + 1) / total_original_chunks * 100
                     print(
-                        f"  Reconstructed {orig_idx + 1}/{len(chunks_by_original)} chunks"
+                        f"  Progress: {orig_idx + 1}/{total_original_chunks} chunks ({progress_pct:.1f}%)"
+                    )
+
+            if verbose:
+                download_time = time.time() - start_time
+                print(
+                    f"Downloaded {chunks_downloaded} chunks in {download_time:.2f} seconds"
+                )
+                if chunks_failed > 0:
+                    print(
+                        f"Failed to download {chunks_failed} chunks (not needed for reconstruction)"
                     )
 
             # Step 5: Combine the reconstructed chunks into a file
@@ -1457,9 +1517,12 @@ class IPFSClient:
                     print(f"Warning: File hash mismatch!")
                     print(f"  Expected: {expected_hash}")
                     print(f"  Actual:   {actual_hash}")
+                elif verbose:
+                    print(f"Hash verification successful!")
 
+            total_time = time.time() - start_time
             if verbose:
-                print(f"Reconstruction complete!")
+                print(f"Reconstruction complete in {total_time:.2f} seconds!")
                 print(f"File saved to: {output_file}")
 
             return output_file
@@ -1467,7 +1530,7 @@ class IPFSClient:
         finally:
             # Clean up temporary directory if we created it
             if temp_dir_obj is not None:
-                temp_dir_obj.close()
+                temp_dir_obj.cleanup()
 
     def store_erasure_coded_file(
         self,

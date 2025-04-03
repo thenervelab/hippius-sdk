@@ -36,7 +36,7 @@ client = HippiusClient()
 # Or specify custom endpoints
 client = HippiusClient(
     ipfs_gateway="https://ipfs.io",                       # For downloads (default)
-    ipfs_api_url="http://relay-fr.hippius.network:5001",  # For uploads (default)
+    ipfs_api_url="https://relay-fr.hippius.network",  # For uploads (default)
 )
 
 # Upload a file to IPFS
@@ -241,6 +241,69 @@ The CLI provides detailed output during the process, including:
 - Storage confirmation in the marketplace
 - Instructions for reconstruction
 
+#### Erasure Coding
+
+Erasure coding offers redundancy by splitting files into chunks:
+
+```bash
+# Basic erasure coding with default parameters (k=3, m=5)
+hippius erasure-code my_large_file.zip
+
+# Erasure code with custom parameters for increased redundancy
+hippius erasure-code my_important_file.mp4 --k 4 --m 10 --chunk-size 2097152 --encrypt
+```
+
+To reconstruct a file from erasure-coded chunks:
+
+```bash
+hippius reconstruct QmMetadataCID reconstructed_filename
+```
+
+#### Listing Erasure Coded Files
+
+To view only your erasure-coded files:
+
+```bash
+# List all erasure-coded files
+hippius ec-files
+
+# Show all miners for each erasure-coded file
+hippius ec-files --all-miners
+
+# Show associated chunks for each erasure-coded file
+hippius ec-files --show-chunks
+```
+
+This command provides detailed information about each erasure-coded file including:
+- Original file name
+- Metadata CID
+- File size
+- Number of chunks
+- Miners storing the file
+- Reconstruction command
+
+#### Troubleshooting
+
+1. **IPFS Connection Issues**: Make sure you have either:
+   - A local IPFS daemon running (`ipfs daemon` in a separate terminal)
+   - Or proper environment variables set in `.env` for remote connections
+
+2. **Missing Dependencies**: If you get import errors, ensure all dependencies are installed:
+   ```bash
+   poetry install --all-extras
+   ```
+
+3. **CLI Not Found**: If the `hippius` command isn't found after installing, try:
+   ```bash
+   # Verify it's installed
+   poetry show hippius
+   
+   # Check your PATH
+   which hippius
+   ```
+
+4. **Substrate Issues**: For marketplace operations, make sure your `.env` has the correct `SUBSTRATE_SEED_PHRASE` and `SUBSTRATE_URL` values.
+
 ## Command Line Interface
 
 The Hippius SDK includes a powerful command-line interface (CLI) that provides access to all major features of the SDK directly from your terminal.
@@ -291,6 +354,12 @@ hippius files 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
 
 # Show all miners for each file
 hippius files --all-miners
+
+# View only erasure-coded files
+hippius ec-files
+
+# View erasure-coded files with details about chunks
+hippius ec-files --show-chunks
 ```
 
 ### Encryption
@@ -320,7 +389,18 @@ hippius erasure-code important_data.zip --k 4 --m 10 --chunk-size 2097152 --encr
 
 # Reconstruct a file from its metadata
 hippius reconstruct QmMetadataCID reconstructed_file.mp4
+
+# List all your erasure-coded files with metadata CIDs
+hippius ec-files
+
+# Show all miners for each erasure-coded file
+hippius ec-files --all-miners
+
+# Show detailed information including associated chunks
+hippius ec-files --show-chunks
 ```
+
+The `ec-files` command makes it easy to track and manage your erasure-coded files separately from regular files. It provides the metadata CID needed for reconstruction and information about chunk distribution.
 
 ### Using Environment Variables
 

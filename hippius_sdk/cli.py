@@ -435,6 +435,125 @@ def handle_files(client, account_address, debug=False, show_all_miners=False):
     return 0
 
 
+def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=False):
+    """Handle the ec-files command to list only erasure-coded files"""
+    print("Retrieving erasure-coded file information...")
+    try:
+        # Use the enhanced get_user_files method with our preferences
+        max_miners = 0 if show_all_miners else 3  # 0 means show all miners
+        files = client.substrate_client.get_user_files(
+            account_address,
+            truncate_miners=True,  # Always truncate long miner IDs
+            max_miners=max_miners,  # Use 0 for all or 3 for limited
+        )
+
+        # Filter for erasure-coded metadata files
+        ec_metadata_files = []
+        ec_chunk_files = []
+
+        for file in files:
+            file_name = file.get("file_name", "")
+            if file_name.endswith(".ec_metadata"):
+                ec_metadata_files.append(file)
+            elif "_chunk_" in file_name and file_name.endswith(".ec"):
+                ec_chunk_files.append(file)
+
+        # Group chunks by file ID
+        chunk_groups = {}
+        for chunk in ec_chunk_files:
+            # Extract file_id from chunk name pattern: {file_id}_chunk_{original_idx}_{share_idx}.ec
+            chunk_name = chunk.get("file_name", "")
+            if "_chunk_" in chunk_name:
+                file_id = chunk_name.split("_chunk_")[0]
+                if file_id not in chunk_groups:
+                    chunk_groups[file_id] = []
+                chunk_groups[file_id].append(chunk)
+
+        if not ec_metadata_files:
+            print(
+                f"No erasure-coded files found for account: {account_address or client.substrate_client._keypair.ss58_address}"
+            )
+            return 0
+
+        print(
+            f"\nFound {len(ec_metadata_files)} erasure-coded files for account: {account_address or client.substrate_client._keypair.ss58_address}"
+        )
+        print("\n" + "-" * 80)
+
+        for i, file in enumerate(ec_metadata_files, 1):
+            file_name = file.get("file_name", "Unnamed")
+            original_file_name = file_name.replace(".ec_metadata", "")
+            file_hash = file.get("file_hash", "Unknown")
+            formatted_cid = client.format_cid(file_hash)
+
+            # Try to extract file_id from the filename
+            file_id = None
+            if "_metadata.json.ec_metadata" in file_name:
+                file_id = file_name.split("_metadata.json.ec_metadata")[0]
+
+            print(f"Erasure-Coded File {i}:")
+            print(f"  Original File: {original_file_name}")
+            print(f"  Metadata CID: {formatted_cid}")
+
+            # Display file size with SDK formatting method if needed
+            file_size = file.get("file_size", 0)
+            size_formatted = file.get("size_formatted")
+            if not size_formatted and file_size > 0:
+                size_formatted = client.format_size(file_size)
+            print(f"  Metadata Size: {file_size:,} bytes ({size_formatted})")
+
+            # Show associated chunks if requested and if we have a file_id
+            if show_chunks and file_id and file_id in chunk_groups:
+                chunks = chunk_groups[file_id]
+                print(f"  Associated Chunks: {len(chunks)}")
+                for j, chunk in enumerate(chunks, 1):
+                    if j <= 3 or len(chunks) <= 5:  # Show all if few, otherwise first 3
+                        chunk_name = chunk.get("file_name", "")
+                        chunk_cid = client.format_cid(chunk.get("file_hash", "Unknown"))
+                        print(f"    {j}. {chunk_name}: {chunk_cid}")
+                if len(chunks) > 5 and not show_all_miners:
+                    print(
+                        f"    ... and {len(chunks) - 3} more chunks (use --show-all to see all)"
+                    )
+
+            # Display miners
+            miner_count = file.get("miner_count", 0)
+            miners = file.get("miner_ids", [])
+
+            if miner_count > 0:
+                print(f"  Pinned by {miner_count} miners:")
+
+                # Show message about truncated list if applicable
+                if miner_count > len(miners) and not show_all_miners:
+                    print(
+                        f"    (Showing {len(miners)} of {miner_count} miners - use --all-miners to see all)"
+                    )
+                elif miner_count > 3 and show_all_miners:
+                    print(f"    (Showing all {miner_count} miners)")
+
+                # Display the miners using their formatted IDs
+                for miner in miners:
+                    if isinstance(miner, dict) and "formatted" in miner:
+                        print(f"    - {miner['formatted']}")
+                    else:
+                        print(f"    - {miner}")
+            else:
+                print("  Not pinned by any miners")
+
+            # Reconstruction command hint
+            print("\n  To reconstruct this file:")
+            print(
+                f"  hippius reconstruct {formatted_cid} reconstructed_{original_file_name}"
+            )
+            print("-" * 80)
+
+    except Exception as e:
+        print(f"Error retrieving erasure-coded file information: {e}")
+        return 1
+
+    return 0
+
+
 def handle_erasure_code(
     client, file_path, k, m, chunk_size, miner_ids, encrypt=None, verbose=True
 ):
@@ -763,6 +882,27 @@ examples:
         help="Show all miners for each file instead of only the first 3",
     )
 
+    # Erasure Coded Files command
+    ec_files_parser = subparsers.add_parser(
+        "ec-files", help="List only erasure-coded files stored by a user"
+    )
+    ec_files_parser.add_argument(
+        "account_address",
+        nargs="?",
+        default=None,
+        help="Substrate account address (uses keypair address if not specified)",
+    )
+    ec_files_parser.add_argument(
+        "--all-miners",
+        action="store_true",
+        help="Show all miners for each file instead of only the first 3",
+    )
+    ec_files_parser.add_argument(
+        "--show-chunks",
+        action="store_true",
+        help="Show associated chunks for each erasure-coded file",
+    )
+
     # Key generation command
     keygen_parser = subparsers.add_parser(
         "keygen", help="Generate an encryption key for secure file storage"
@@ -875,6 +1015,16 @@ examples:
                 show_all_miners=args.all_miners
                 if hasattr(args, "all_miners")
                 else False,
+            )
+
+        elif args.command == "ec-files":
+            return handle_ec_files(
+                client,
+                args.account_address,
+                show_all_miners=args.all_miners
+                if hasattr(args, "all_miners")
+                else False,
+                show_chunks=args.show_chunks if hasattr(args, "show_chunks") else False,
             )
 
         elif args.command == "erasure-code":
