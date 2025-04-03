@@ -14,6 +14,8 @@ import time
 import json
 from typing import Optional, List
 import getpass
+import concurrent.futures
+import threading
 
 # Import SDK components
 from hippius_sdk import HippiusClient
@@ -128,25 +130,46 @@ def create_client(args):
     if hasattr(args, "encryption_key") and args.encryption_key:
         try:
             encryption_key = base64.b64decode(args.encryption_key)
-            if args.verbose:
+            if hasattr(args, "verbose") and args.verbose:
                 print(f"Using provided encryption key")
         except Exception as e:
             print(f"Warning: Could not decode encryption key: {e}")
             print(f"Using default encryption key from configuration if available")
 
-    # Get API URL based on local_ipfs flag
-    api_url = "http://localhost:5001" if args.local_ipfs else args.api_url
+    # Get API URL based on local_ipfs flag if the flag exists
+    api_url = None
+    if hasattr(args, "local_ipfs") and args.local_ipfs:
+        api_url = "http://localhost:5001"
+    elif hasattr(args, "api_url"):
+        api_url = args.api_url
+    elif hasattr(args, "ipfs_api"):
+        api_url = args.ipfs_api
+
+    # Get gateway URL
+    gateway = None
+    if hasattr(args, "gateway"):
+        gateway = args.gateway
+    elif hasattr(args, "ipfs_gateway"):
+        gateway = args.ipfs_gateway
+
+    # Get substrate URL
+    substrate_url = args.substrate_url if hasattr(args, "substrate_url") else None
 
     # Initialize client with provided parameters
     client = HippiusClient(
-        ipfs_gateway=args.gateway,
+        ipfs_gateway=gateway,
         ipfs_api_url=api_url,
-        substrate_url=args.substrate_url,
+        substrate_url=substrate_url,
+        substrate_seed_phrase=args.seed_phrase
+        if hasattr(args, "seed_phrase")
+        else None,
+        seed_phrase_password=args.password if hasattr(args, "password") else None,
+        account_name=args.account if hasattr(args, "account") else None,
         encrypt_by_default=encrypt,
         encryption_key=encryption_key,
     )
 
-    return client, encrypt, decrypt
+    return client
 
 
 def handle_download(client, cid, output_path, decrypt=None):
@@ -372,15 +395,35 @@ def handle_credits(client, account_address):
     """Handle the credits command"""
     print("Checking free credits for the account...")
     try:
+        # Get the account address we're querying
+        if account_address is None:
+            # If no address provided, first try to get from keypair (if available)
+            if (
+                hasattr(client.substrate_client, "_keypair")
+                and client.substrate_client._keypair is not None
+            ):
+                account_address = client.substrate_client._keypair.ss58_address
+            else:
+                # Try to get the default address
+                default_address = get_default_address()
+                if default_address:
+                    account_address = default_address
+                else:
+                    print(
+                        "Error: No account address provided, and client has no keypair."
+                    )
+                    print(
+                        "Please provide an account address with '--account_address' or set a default with 'hippius address set-default'"
+                    )
+                    return 1
+
         credits = client.substrate_client.get_free_credits(account_address)
         print(f"\nFree credits: {credits:.6f}")
         raw_value = int(
             credits * 1_000_000_000_000_000_000
         )  # Convert back to raw for display
         print(f"Raw value: {raw_value:,}")
-        print(
-            f"Account address: {account_address or client.substrate_client._keypair.ss58_address}"
-        )
+        print(f"Account address: {account_address}")
     except Exception as e:
         print(f"Error checking credits: {e}")
         return 1
@@ -392,6 +435,28 @@ def handle_files(client, account_address, debug=False, show_all_miners=False):
     """Handle the files command"""
     print("Retrieving file information...")
     try:
+        # Get the account address we're querying
+        if account_address is None:
+            # If no address provided, first try to get from keypair (if available)
+            if (
+                hasattr(client.substrate_client, "_keypair")
+                and client.substrate_client._keypair is not None
+            ):
+                account_address = client.substrate_client._keypair.ss58_address
+            else:
+                # Try to get the default address
+                default_address = get_default_address()
+                if default_address:
+                    account_address = default_address
+                else:
+                    print(
+                        "Error: No account address provided, and client has no keypair."
+                    )
+                    print(
+                        "Please provide an account address with '--account_address' or set a default with 'hippius address set-default'"
+                    )
+                    return 1
+
         if debug:
             print("DEBUG MODE: Will show details about CID decoding")
 
@@ -404,9 +469,7 @@ def handle_files(client, account_address, debug=False, show_all_miners=False):
         )
 
         if files:
-            print(
-                f"\nFound {len(files)} files for account: {account_address or client.substrate_client._keypair.ss58_address}"
-            )
+            print(f"\nFound {len(files)} files for account: {account_address}")
             print("\n" + "-" * 80)
 
             for i, file in enumerate(files, 1):
@@ -464,122 +527,303 @@ def handle_files(client, account_address, debug=False, show_all_miners=False):
 
 
 def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=False):
-    """Handle the ec-files command to list only erasure-coded files"""
-    print("Retrieving erasure-coded file information...")
+    """
+    Display erasure-coded files stored by a user.
+
+    This command only reads data and doesn't require seed phrase decryption.
+    """
+    # For progress reporting
+    processed_files = 0
+    total_files = 0
+    lock = threading.Lock()
+
+    # Store results from worker threads
+    results = {
+        "ec_files": [],
+        "binary_files": 0,
+        "json_decode_errors": 0,
+        "not_ec_files": 0,
+        "skipped_files": 0,
+    }
+
+    # For quick identification of potential EC files - common naming patterns
+    EC_FILENAME_PATTERNS = ["metadata", "ec-", "erasure"]
+
+    # Debug print function that can be enabled/disabled
+    verbose = get_config_value("cli", "verbose", False)
+
+    def debug_print(msg):
+        if verbose:
+            print(msg)
+
     try:
-        # Use the enhanced get_user_files method with our preferences
-        max_miners = 0 if show_all_miners else 3  # 0 means show all miners
+        # Get the account address we're querying
+        if account_address is None:
+            # If no address provided, first try to get from keypair (if available)
+            if (
+                hasattr(client.substrate_client, "_keypair")
+                and client.substrate_client._keypair is not None
+            ):
+                account_address = client.substrate_client._keypair.ss58_address
+            else:
+                # Try to get the default address
+                default_address = get_default_address()
+                if default_address:
+                    account_address = default_address
+                else:
+                    print(
+                        "Error: No account address provided, and client has no keypair."
+                    )
+                    print(
+                        "Please provide an account address with '--account_address' or set a default with 'hippius address set-default'"
+                    )
+                    return 1
+
+        # Get all files for the account
+        print(f"Fetching files for account: {account_address}")
         files = client.substrate_client.get_user_files(
-            account_address,
-            truncate_miners=True,  # Always truncate long miner IDs
-            max_miners=max_miners,  # Use 0 for all or 3 for limited
+            account_address=account_address,
+            truncate_miners=not show_all_miners,
+            max_miners=0 if show_all_miners else 3,
         )
 
-        # Filter for erasure-coded metadata files
-        ec_metadata_files = []
-        ec_chunk_files = []
+        if not files:
+            print(f"No files found for account: {account_address}")
+            return
 
+        total_files = len(files)
+        print(f"Found {total_files} files, analyzing for erasure-coded metadata...")
+
+        # First, do a quick initial filter to identify potential EC files based on name patterns
+        potential_ec_files = []
         for file in files:
-            file_name = file.get("file_name", "")
-            if file_name.endswith(".ec_metadata"):
-                ec_metadata_files.append(file)
-            elif "_chunk_" in file_name and file_name.endswith(".ec"):
-                ec_chunk_files.append(file)
+            cid = file.get("file_hash")
+            if not cid:
+                results["skipped_files"] += 1
+                continue
 
-        # Group chunks by file ID
-        chunk_groups = {}
-        for chunk in ec_chunk_files:
-            # Extract file_id from chunk name pattern: {file_id}_chunk_{original_idx}_{share_idx}.ec
-            chunk_name = chunk.get("file_name", "")
-            if "_chunk_" in chunk_name:
-                file_id = chunk_name.split("_chunk_")[0]
-                if file_id not in chunk_groups:
-                    chunk_groups[file_id] = []
-                chunk_groups[file_id].append(chunk)
+            # Check if filename contains any of our EC patterns
+            name = file.get("file_name", "").lower()
+            if any(pattern in name for pattern in EC_FILENAME_PATTERNS):
+                # Higher chance this is an EC file
+                debug_print(f"  - Potential EC file based on name: {name}")
+                potential_ec_files.append((0, file))  # Priority 0 = high
+            else:
+                # Still check it, but with lower priority
+                potential_ec_files.append((1, file))  # Priority 1 = lower
 
-        if not ec_metadata_files:
-            print(
-                f"No erasure-coded files found for account: {account_address or client.substrate_client._keypair.ss58_address}"
-            )
-            return 0
+        # Sort by priority (check likely EC files first)
+        potential_ec_files.sort(key=lambda x: x[0])
+        priority_files = [f for _, f in potential_ec_files]
+
+        # Progress update function
+        def update_progress():
+            nonlocal processed_files
+            processed_files += 1
+            if processed_files % 5 == 0 or processed_files == total_files:
+                print(
+                    f"  Progress: {processed_files}/{total_files} files analyzed ({(processed_files/total_files)*100:.1f}%)",
+                    end="\r",
+                )
+
+        # Function to process a single file - for parallel execution
+        def process_file(file):
+            try:
+                cid = file.get("file_hash")
+                name = file.get("file_name", "")
+
+                debug_print(f"  - Processing: {cid} ({name})")
+
+                # Try to fetch metadata to see if it's an erasure-coded file
+                metadata = client.ipfs_client.cat(cid)
+                if not metadata or not metadata.get("content"):
+                    with lock:
+                        results["skipped_files"] += 1
+                        update_progress()
+                    return None
+
+                content = metadata.get("content")
+                if isinstance(content, bytes):
+                    try:
+                        # Try to decode the content as UTF-8 text - might fail for binary files
+                        metadata_text = content.decode("utf-8", errors="strict")
+
+                        try:
+                            metadata_obj = json.loads(metadata_text)
+
+                            # Check if this is an erasure-coded file metadata - look for either format
+                            is_ec_file = False
+
+                            # Check primary format
+                            if (
+                                isinstance(metadata_obj, dict)
+                                and metadata_obj.get("chunks")
+                                and metadata_obj.get("original_name")
+                            ):
+                                is_ec_file = True
+
+                            # Check alternative format - different structure used in some versions
+                            elif (
+                                isinstance(metadata_obj, dict)
+                                and metadata_obj.get("erasure_coding")
+                                and metadata_obj.get("original_file")
+                            ):
+                                # This is the newer format with a different structure
+                                metadata_obj = {
+                                    "original_name": metadata_obj.get(
+                                        "original_file", {}
+                                    ).get("name", "unknown"),
+                                    "k": metadata_obj.get("erasure_coding", {}).get(
+                                        "k"
+                                    ),
+                                    "m": metadata_obj.get("erasure_coding", {}).get(
+                                        "m"
+                                    ),
+                                    "original_size": metadata_obj.get(
+                                        "original_file", {}
+                                    ).get("size", 0),
+                                    "encrypted": metadata_obj.get("encrypted", False),
+                                    "chunks": metadata_obj.get("chunks", []),
+                                }
+                                is_ec_file = True
+
+                            if is_ec_file:
+                                # Found an erasure-coded file!
+                                debug_print(
+                                    f"    ✓ Found erasure-coded file: {metadata_obj.get('original_name')}"
+                                )
+
+                                ec_file = {
+                                    "metadata_cid": cid,
+                                    "original_name": metadata_obj.get(
+                                        "original_name", "unknown"
+                                    ),
+                                    "k": metadata_obj.get("k"),
+                                    "m": metadata_obj.get("m"),
+                                    "total_chunks": len(metadata_obj.get("chunks", [])),
+                                    "original_size_bytes": metadata_obj.get(
+                                        "original_size"
+                                    ),
+                                    "size_formatted": client.format_size(
+                                        metadata_obj.get("original_size", 0)
+                                    ),
+                                    "encrypted": metadata_obj.get("encrypted", False),
+                                    "miner_ids": file.get("miner_ids", []),
+                                    "miner_count": file.get("miner_count", 0),
+                                    "chunks": metadata_obj.get("chunks", []),
+                                }
+                                with lock:
+                                    results["ec_files"].append(ec_file)
+                                    update_progress()
+                                return ec_file
+                            else:
+                                with lock:
+                                    results["not_ec_files"] += 1
+                                    update_progress()
+                                return None
+
+                        except json.JSONDecodeError:
+                            # Not a JSON file, so not metadata
+                            with lock:
+                                results["json_decode_errors"] += 1
+                                update_progress()
+                            return None
+                    except UnicodeDecodeError:
+                        # This is a binary file, not UTF-8 text, so not erasure-coded metadata
+                        with lock:
+                            results["binary_files"] += 1
+                            update_progress()
+                        return None
+                else:
+                    with lock:
+                        results["skipped_files"] += 1
+                        update_progress()
+                    return None
+            except Exception as e:
+                # For other unexpected errors
+                debug_print(f"    ✗ Error processing {name}: {str(e)}")
+                with lock:
+                    results["skipped_files"] += 1
+                    update_progress()
+                return None
+
+        # Process files in parallel - significantly speeds up execution
+        max_workers = min(10, len(files))  # Don't create too many threads
+        print(f"Processing files using {max_workers} parallel workers...")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Start processing files - higher priority files will be submitted first
+            futures = []
+            # First process files that look like metadata files
+            for file in priority_files:
+                futures.append(executor.submit(process_file, file))
+
+            # Wait for all processing to complete
+            concurrent.futures.wait(futures)
 
         print(
-            f"\nFound {len(ec_metadata_files)} erasure-coded files for account: {account_address or client.substrate_client._keypair.ss58_address}"
-        )
-        print("\n" + "-" * 80)
+            "\nAnalysis complete!                                  "
+        )  # Extra spaces to clear progress line
 
-        for i, file in enumerate(ec_metadata_files, 1):
-            file_name = file.get("file_name", "Unnamed")
-            original_file_name = file_name.replace(".ec_metadata", "")
-            file_hash = file.get("file_hash", "Unknown")
-            formatted_cid = client.format_cid(file_hash)
+        # Print statistics
+        print(f"\nResults:")
+        print(f"  Total files analyzed: {total_files}")
+        print(f"  Erasure-coded files found: {len(results['ec_files'])}")
+        if verbose:
+            print(f"  Binary files (skipped): {results['binary_files']}")
+            print(f"  JSON parse errors: {results['json_decode_errors']}")
+            print(f"  Not erasure-coded: {results['not_ec_files']}")
+            print(f"  Other skipped: {results['skipped_files']}")
 
-            # Try to extract file_id from the filename
-            file_id = None
-            if "_metadata.json.ec_metadata" in file_name:
-                file_id = file_name.split("_metadata.json.ec_metadata")[0]
+        # Print results
+        ec_files = results["ec_files"]
+        if not ec_files:
+            print(f"\nNo erasure-coded files found for this account.")
+            return
 
-            print(f"Erasure-Coded File {i}:")
-            print(f"  Original File: {original_file_name}")
-            print(f"  Metadata CID: {formatted_cid}")
+        print(f"\nFound {len(ec_files)} erasure-coded files:\n")
 
-            # Display file size with SDK formatting method if needed
-            file_size = file.get("file_size", 0)
-            size_formatted = file.get("size_formatted")
-            if not size_formatted and file_size > 0:
-                size_formatted = client.format_size(file_size)
-            print(f"  Metadata Size: {file_size:,} bytes ({size_formatted})")
-
-            # Show associated chunks if requested and if we have a file_id
-            if show_chunks and file_id and file_id in chunk_groups:
-                chunks = chunk_groups[file_id]
-                print(f"  Associated Chunks: {len(chunks)}")
-                for j, chunk in enumerate(chunks, 1):
-                    if j <= 3 or len(chunks) <= 5:  # Show all if few, otherwise first 3
-                        chunk_name = chunk.get("file_name", "")
-                        chunk_cid = client.format_cid(chunk.get("file_hash", "Unknown"))
-                        print(f"    {j}. {chunk_name}: {chunk_cid}")
-                if len(chunks) > 5 and not show_all_miners:
-                    print(
-                        f"    ... and {len(chunks) - 3} more chunks (use --show-all to see all)"
-                    )
-
-            # Display miners
-            miner_count = file.get("miner_count", 0)
-            miners = file.get("miner_ids", [])
-
-            if miner_count > 0:
-                print(f"  Pinned by {miner_count} miners:")
-
-                # Show message about truncated list if applicable
-                if miner_count > len(miners) and not show_all_miners:
-                    print(
-                        f"    (Showing {len(miners)} of {miner_count} miners - use --all-miners to see all)"
-                    )
-                elif miner_count > 3 and show_all_miners:
-                    print(f"    (Showing all {miner_count} miners)")
-
-                # Display the miners using their formatted IDs
-                for miner in miners:
-                    if isinstance(miner, dict) and "formatted" in miner:
-                        print(f"    - {miner['formatted']}")
-                    else:
-                        print(f"    - {miner}")
-            else:
-                print("  Not pinned by any miners")
-
-            # Reconstruction command hint
-            print("\n  To reconstruct this file:")
+        for i, file in enumerate(ec_files):
+            print(f"{i+1}. {file['original_name']} ({file['size_formatted']})")
+            print(f"   Metadata CID: {file['metadata_cid']}")
             print(
-                f"  hippius reconstruct {formatted_cid} reconstructed_{original_file_name}"
+                f"   Erasure coding: {file['k']}/{file['m']} scheme ({file['total_chunks']} chunks)"
             )
-            print("-" * 80)
+            print(f"   Encrypted: {'Yes' if file['encrypted'] else 'No'}")
+            print(f"   Stored by {file['miner_count']} miners")
+
+            if file.get("miner_ids") and show_all_miners:
+                print("\n   Miners:")
+                for miner in file["miner_ids"]:
+                    miner_id = (
+                        miner.get("id", miner) if isinstance(miner, dict) else miner
+                    )
+                    formatted = (
+                        miner.get("formatted", miner_id)
+                        if isinstance(miner, dict)
+                        else miner_id
+                    )
+                    print(f"     - {formatted}")
+
+            if show_chunks and file.get("chunks"):
+                print("\n   Chunks:")
+                for j, chunk in enumerate(file["chunks"]):
+                    if isinstance(chunk, dict):
+                        print(f"     {j+1}. CID: {chunk.get('cid')}")
+                    else:
+                        print(f"     {j+1}. CID: {chunk}")
+
+            print("")  # Empty line between files
+
+        print("\nTo reconstruct a file:")
+        print("hippius reconstruct <metadata_cid> <output_file>")
 
     except Exception as e:
-        print(f"Error retrieving erasure-coded file information: {e}")
-        return 1
+        print(f"Error: {e}")
+        if verbose:
+            import traceback
 
-    return 0
+            traceback.print_exc()
 
 
 def handle_erasure_code(
@@ -588,6 +832,48 @@ def handle_erasure_code(
     """Handle the erasure-code command"""
     if not os.path.exists(file_path):
         print(f"Error: File {file_path} not found")
+        return 1
+
+    # Check if the input is a directory
+    if os.path.isdir(file_path):
+        print(f"Error: {file_path} is a directory, not a file.")
+        print("\nErasure coding requires a single file as input. You have two options:")
+        print("\n1. Archive the directory first:")
+        print(f"   zip -r {file_path}.zip {file_path}/")
+        print(f"   hippius erasure-code {file_path}.zip --k {k} --m {m}")
+        print("\n2. Apply erasure coding to each file individually:")
+        print("   # To code each file in the directory:")
+
+        # Count the files to give the user an idea of how many files would be processed
+        file_count = 0
+        for root, _, files in os.walk(file_path):
+            file_count += len(files)
+
+        if file_count > 0:
+            print(
+                f"\n   Found {file_count} files in the directory. Example command for individual files:"
+            )
+            # Show example for one file if available
+            for root, _, files in os.walk(file_path):
+                if files:
+                    example_file = os.path.join(root, files[0])
+                    rel_path = os.path.relpath(example_file, os.path.dirname(file_path))
+                    print(f'   hippius erasure-code "{example_file}" --k {k} --m {m}')
+                    break
+
+            # Ask if user wants to automatically apply to all files
+            print(
+                "\nWould you like to automatically apply erasure coding to each file in the directory? (y/N)"
+            )
+            choice = input("> ").strip().lower()
+
+            if choice in ("y", "yes"):
+                return handle_erasure_code_directory(
+                    client, file_path, k, m, chunk_size, miner_ids, encrypt, verbose
+                )
+        else:
+            print(f"   No files found in directory {file_path}")
+
         return 1
 
     # Check if zfec is installed
@@ -711,6 +997,154 @@ def handle_erasure_code(
             )
 
         return 1
+
+
+def handle_erasure_code_directory(
+    client, dir_path, k, m, chunk_size, miner_ids, encrypt=None, verbose=True
+):
+    """Apply erasure coding to each file in a directory individually"""
+    if not os.path.isdir(dir_path):
+        print(f"Error: {dir_path} is not a directory")
+        return 1
+
+    # Check if zfec is installed
+    try:
+        import zfec
+    except ImportError:
+        print(
+            "Error: zfec is required for erasure coding. Install it with: pip install zfec"
+        )
+        print("Then update your environment: poetry add zfec")
+        return 1
+
+    print(f"Applying erasure coding to all files in {dir_path}")
+    print(f"Parameters: k={k}, m={m}, chunk_size={chunk_size/1024/1024:.2f} MB")
+    if encrypt:
+        print("Encryption: Enabled")
+
+    # Parse miner IDs if provided
+    miner_id_list = None
+    if miner_ids:
+        miner_id_list = [m.strip() for m in miner_ids.split(",") if m.strip()]
+        if verbose:
+            print(f"Targeting {len(miner_id_list)} miners: {', '.join(miner_id_list)}")
+
+    # Find all files
+    total_files = 0
+    successful = 0
+    failed = 0
+    skipped = 0
+
+    # Collect files first
+    all_files = []
+    for root, _, files in os.walk(dir_path):
+        for filename in files:
+            file_path = os.path.join(root, filename)
+            all_files.append(file_path)
+
+    total_files = len(all_files)
+    print(f"Found {total_files} files to process")
+
+    if total_files == 0:
+        print("No files to process.")
+        return 0
+
+    # Process each file
+    results = []
+
+    for i, file_path in enumerate(all_files, 1):
+        print(f"\n[{i}/{total_files}] Processing: {file_path}")
+
+        # Skip directories (shouldn't happen but just in case)
+        if os.path.isdir(file_path):
+            print(f"Skipping directory: {file_path}")
+            skipped += 1
+            continue
+
+        # Get file size for information purposes
+        file_size = os.path.getsize(file_path)
+        file_size_mb = file_size / (1024 * 1024)
+        print(f"File size: {file_size_mb:.4f} MB ({file_size} bytes)")
+
+        # Calculate adjusted chunk size for this file if needed
+        current_chunk_size = chunk_size
+        potential_chunks = max(1, file_size // current_chunk_size)
+
+        if potential_chunks < k:
+            # Calculate a new chunk size that would give us exactly k chunks
+            # For very small files, use a minimal chunk size to ensure proper erasure coding
+            min_chunk_size = max(1, file_size // k)  # Ensure at least 1 byte per chunk
+            print(f"Adjusting chunk size to {min_chunk_size} bytes for this file")
+            current_chunk_size = min_chunk_size
+
+        try:
+            # Use the store_erasure_coded_file method directly from HippiusClient
+            result = client.store_erasure_coded_file(
+                file_path=file_path,
+                k=k,
+                m=m,
+                chunk_size=current_chunk_size,
+                encrypt=encrypt,
+                miner_ids=miner_id_list,
+                max_retries=3,
+                verbose=False,  # Less verbose for batch processing
+            )
+
+            # Store basic result info
+            results.append(
+                {
+                    "file_path": file_path,
+                    "metadata_cid": result.get("metadata_cid", "unknown"),
+                    "success": True,
+                }
+            )
+
+            print(f"Success! Metadata CID: {result.get('metadata_cid', 'unknown')}")
+            successful += 1
+
+        except Exception as e:
+            print(f"Error coding file: {e}")
+
+            # Provide specific guidance for very small files that fail
+            if file_size < 1024 and "Wrong length" in str(e):
+                print(
+                    "This file may be too small for erasure coding with the current parameters."
+                )
+                print(
+                    "Consider using smaller k and m values for very small files, e.g., --k 2 --m 3"
+                )
+
+            results.append(
+                {
+                    "file_path": file_path,
+                    "error": str(e),
+                    "success": False,
+                }
+            )
+            failed += 1
+
+    # Print summary
+    print(f"\n=== Erasure Coding Directory Summary ===")
+    print(f"Total files processed: {total_files}")
+    print(f"Successfully coded: {successful}")
+    print(f"Failed: {failed}")
+    print(f"Skipped: {skipped}")
+
+    if successful > 0:
+        print("\nSuccessfully coded files:")
+        for result in results:
+            if result.get("success"):
+                print(f"  {result['file_path']} -> {result['metadata_cid']}")
+
+    if failed > 0:
+        print("\nFailed files:")
+        for result in results:
+            if not result.get("success"):
+                print(
+                    f"  {result['file_path']}: {result.get('error', 'Unknown error')}"
+                )
+
+    return 0 if failed == 0 else 1
 
 
 def handle_reconstruct(client, metadata_cid, output_file, verbose=True):
@@ -1070,6 +1504,62 @@ def handle_account_delete(account_name):
         return 1
 
 
+def handle_default_address_set(address):
+    """Handle setting the default address for read-only operations"""
+    # Validate SS58 address format (basic check)
+    if not address.startswith("5"):
+        print(
+            f"Warning: '{address}' doesn't look like a valid SS58 address. SS58 addresses typically start with '5'."
+        )
+        confirm = input("Do you want to continue anyway? (y/N): ")
+        if confirm.lower() not in ("y", "yes"):
+            print("Operation cancelled")
+            return 1
+
+    config = load_config()
+    config["substrate"]["default_address"] = address
+    save_config(config)
+
+    print(f"Default address for read-only operations set to: {address}")
+    print(
+        "This address will be used for commands like 'files' and 'ec-files' when no address is explicitly provided."
+    )
+    return 0
+
+
+def handle_default_address_get():
+    """Handle getting the current default address for read-only operations"""
+    config = load_config()
+    address = config["substrate"].get("default_address")
+
+    if address:
+        print(f"Current default address for read-only operations: {address}")
+    else:
+        print("No default address set for read-only operations")
+        print("You can set one with: hippius address set-default <ss58_address>")
+
+    return 0
+
+
+def handle_default_address_clear():
+    """Handle clearing the default address for read-only operations"""
+    config = load_config()
+    if "default_address" in config["substrate"]:
+        del config["substrate"]["default_address"]
+        save_config(config)
+        print("Default address for read-only operations has been cleared")
+    else:
+        print("No default address was set")
+
+    return 0
+
+
+def get_default_address():
+    """Get the default address for read-only operations"""
+    config = load_config()
+    return config["substrate"].get("default_address")
+
+
 def main():
     """Main CLI entry point for hippius command."""
     # Set up the argument parser
@@ -1166,6 +1656,14 @@ examples:
     parser.add_argument(
         "--encryption-key",
         help="Base64-encoded encryption key (overrides HIPPIUS_ENCRYPTION_KEY in .env)",
+    )
+    parser.add_argument(
+        "--password",
+        help="Password to decrypt the seed phrase if needed (will prompt if required and not provided)",
+    )
+    parser.add_argument(
+        "--account",
+        help="Account name to use (uses active account if not specified)",
     )
 
     # Subcommands
@@ -1419,6 +1917,32 @@ examples:
         "account_name", help="Name of the account to delete"
     )
 
+    # Address subcommand for read-only operations
+    address_parser = subparsers.add_parser(
+        "address", help="Manage default address for read-only operations"
+    )
+    address_subparsers = address_parser.add_subparsers(
+        dest="address_action", help="Address action"
+    )
+
+    # Set default address
+    set_default_parser = address_subparsers.add_parser(
+        "set-default", help="Set the default address for read-only operations"
+    )
+    set_default_parser.add_argument(
+        "address", help="The SS58 address to use as default"
+    )
+
+    # Get current default address
+    address_subparsers.add_parser(
+        "get-default", help="Show the current default address for read-only operations"
+    )
+
+    # Clear default address
+    address_subparsers.add_parser(
+        "clear-default", help="Clear the default address for read-only operations"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -1446,8 +1970,44 @@ examples:
                 for miner in os.getenv("SUBSTRATE_DEFAULT_MINERS").split(",")
             ]
 
-        # Create client
-        client, encrypt, decrypt = create_client(args)
+        # Process encryption flags
+        encrypt = None
+        if hasattr(args, "encrypt") and args.encrypt:
+            encrypt = True
+        elif hasattr(args, "no_encrypt") and args.no_encrypt:
+            encrypt = False
+
+        decrypt = None
+        if hasattr(args, "decrypt") and args.decrypt:
+            decrypt = True
+        elif hasattr(args, "no_decrypt") and args.no_decrypt:
+            decrypt = False
+
+        # Process encryption key if provided
+        encryption_key = None
+        if hasattr(args, "encryption_key") and args.encryption_key:
+            try:
+                encryption_key = base64.b64decode(args.encryption_key)
+                if args.verbose:
+                    print(f"Using provided encryption key")
+            except Exception as e:
+                print(f"Warning: Could not decode encryption key: {e}")
+                print(f"Using default encryption key from configuration if available")
+
+        # Get API URL based on local_ipfs flag
+        api_url = "http://localhost:5001" if args.local_ipfs else args.api_url
+
+        # Create client - using the updated client parameters
+        client = HippiusClient(
+            ipfs_gateway=args.gateway,
+            ipfs_api_url=api_url,
+            substrate_url=args.substrate_url,
+            substrate_seed_phrase=None,  # Let it use config
+            seed_phrase_password=args.password if hasattr(args, "password") else None,
+            account_name=args.account if hasattr(args, "account") else None,
+            encrypt_by_default=encrypt,
+            encryption_key=encryption_key,
+        )
 
         # Handle commands
         if args.command == "download":
@@ -1547,6 +2107,18 @@ examples:
                 return handle_account_delete(args.account_name)
             else:
                 account_parser.print_help()
+                return 1
+
+        # Handle the address commands
+        elif args.command == "address":
+            if args.address_action == "set-default":
+                return handle_default_address_set(args.address)
+            elif args.address_action == "get-default":
+                return handle_default_address_get()
+            elif args.address_action == "clear-default":
+                return handle_default_address_clear()
+            else:
+                address_parser.print_help()
                 return 1
 
     except Exception as e:

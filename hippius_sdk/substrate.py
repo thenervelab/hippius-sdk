@@ -73,29 +73,22 @@ class SubstrateClient:
         self._substrate = None
         self._keypair = None
         self._account_name = account_name or get_active_account()
+        self._account_address = None
+        self._read_only = False
+
+        # Get the account address for read-only operations
+        addr = get_account_address(self._account_name)
+        if addr:
+            self._account_address = addr
 
         # Set seed phrase if provided or available in configuration
         if seed_phrase:
             self.set_seed_phrase(seed_phrase)
         else:
-            # Get the seed phrase from config, using the password if provided
-            config_seed = get_seed_phrase(password, self._account_name)
-            if config_seed:
-                self.set_seed_phrase(config_seed)
-            elif password and self._account_name:
-                print(
-                    f"Found account '{self._account_name}' but could not decrypt the seed phrase with the provided password"
-                )
-            elif password:
-                # Try to get the seed phrase again without a password
-                # This helps with better error messages
-                plain_seed = get_seed_phrase(None, self._account_name)
-                if plain_seed is None:
-                    print("No seed phrase found in configuration")
-                else:
-                    print(
-                        "Found seed phrase in configuration but could not decrypt it with the provided password"
-                    )
+            # Only try to get the seed phrase if we need it for the current operation
+            # We'll defer this to when it's actually needed
+            self._seed_phrase = None
+            self._seed_phrase_password = password
 
         # Don't connect immediately to avoid exceptions during initialization
         # Connection will happen lazily when needed
@@ -117,11 +110,19 @@ class SubstrateClient:
             # Only create keypair if seed phrase is available
             if hasattr(self, "_seed_phrase") and self._seed_phrase:
                 self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
+                self._account_address = self._keypair.ss58_address
                 print(
                     f"Connected successfully. Account address: {self._keypair.ss58_address}"
                 )
+                self._read_only = False
+            elif self._account_address:
+                print(
+                    f"Connected successfully in read-only mode. Account address: {self._account_address}"
+                )
+                self._read_only = True
             else:
-                print("Connected successfully (read-only mode, no keypair)")
+                print("Connected successfully (read-only mode, no account)")
+                self._read_only = True
 
             return True
 
@@ -132,6 +133,48 @@ class SubstrateClient:
             )
 
         return False
+
+    def _ensure_keypair(self) -> bool:
+        """
+        Ensure we have a keypair for signing transactions.
+        Will prompt for password if needed.
+
+        Returns:
+            bool: True if keypair is available, False if it couldn't be created
+        """
+        if self._keypair:
+            return True
+
+        # If we have a seed phrase, create the keypair
+        if hasattr(self, "_seed_phrase") and self._seed_phrase:
+            try:
+                self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
+                self._account_address = self._keypair.ss58_address
+                print(f"Keypair created for account: {self._keypair.ss58_address}")
+                self._read_only = False
+                return True
+            except Exception as e:
+                print(f"Warning: Could not create keypair from seed phrase: {e}")
+                return False
+
+        # Otherwise, try to get the seed phrase from config
+        try:
+            config_seed = get_seed_phrase(
+                self._seed_phrase_password, self._account_name
+            )
+            if config_seed:
+                self._seed_phrase = config_seed
+                self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
+                self._account_address = self._keypair.ss58_address
+                print(f"Keypair created for account: {self._keypair.ss58_address}")
+                self._read_only = False
+                return True
+            else:
+                print("No seed phrase available. Cannot sign transactions.")
+                return False
+        except Exception as e:
+            print(f"Warning: Could not get seed phrase from config: {e}")
+            return False
 
     def set_seed_phrase(self, seed_phrase: str) -> None:
         """
@@ -145,15 +188,13 @@ class SubstrateClient:
 
         # Store the seed phrase in memory for this session
         self._seed_phrase = seed_phrase.strip()
+        self._read_only = False
 
         # Try to create the keypair if possible
         try:
-            if hasattr(self, "_substrate") and self._substrate:
-                # If we already have a connection, create the keypair
-                self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
-                print(f"Keypair created for account: {self._keypair.ss58_address}")
-            else:
-                print(f"Seed phrase set (keypair will be created when connecting)")
+            self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
+            self._account_address = self._keypair.ss58_address
+            print(f"Keypair created for account: {self._keypair.ss58_address}")
         except Exception as e:
             print(f"Warning: Could not create keypair from seed phrase: {e}")
             print(f"Keypair will be created when needed")
@@ -180,6 +221,10 @@ class SubstrateClient:
             ...     FileInput("QmHash2", "file2.jpg")
             ... ])
         """
+        # Check if we have a keypair for signing transactions
+        if not self._ensure_keypair():
+            raise ValueError("Seed phrase must be set before making transactions")
+
         # Convert any dict inputs to FileInput objects
         file_inputs = []
         for file in files:
@@ -215,20 +260,6 @@ class SubstrateClient:
                     type_registry_preset="substrate-node-template",
                 )
                 print(f"Connected to Substrate node at {self.url}")
-
-            # Create keypair from seed phrase if not already created
-            if not hasattr(self, "_keypair") or self._keypair is None:
-                if not hasattr(self, "_seed_phrase") or not self._seed_phrase:
-                    raise ValueError(
-                        "Seed phrase must be set before making transactions"
-                    )
-
-                print("Creating keypair from seed phrase...")
-                self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
-                print(f"Keypair created for address: {self._keypair.ss58_address}")
-
-            # Prepare storage request call
-            print("Preparing marketplace.storageRequest batch call...")
 
             # Format files for the batch call - all files are included in a single array
             formatted_files = []
@@ -348,6 +379,10 @@ class SubstrateClient:
         Returns:
             str: Transaction hash
         """
+        # This requires a keypair for signing
+        if not self._ensure_keypair():
+            raise ValueError("Seed phrase must be set before making transactions")
+
         raise NotImplementedError("Substrate functionality is not implemented yet.")
 
     def get_storage_fee(self, file_size_mb: float) -> float:
@@ -402,19 +437,17 @@ class SubstrateClient:
                 )
                 print(f"Connected to Substrate node at {self.url}")
 
-            # Use provided account address or default to keypair address
+            # Use provided account address or default to keypair/configured address
             if not account_address:
-                if not hasattr(self, "_keypair") or self._keypair is None:
-                    if not hasattr(self, "_seed_phrase") or not self._seed_phrase:
-                        raise ValueError(
-                            "No account address provided and no seed phrase is set"
-                        )
-
-                    print("Creating keypair from seed phrase to get account address...")
-                    self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
-
-                account_address = self._keypair.ss58_address
-                print(f"Using keypair address: {account_address}")
+                if self._account_address:
+                    account_address = self._account_address
+                    print(f"Using account address: {account_address}")
+                else:
+                    # Try to get the address from the keypair (requires seed phrase)
+                    if not self._ensure_keypair():
+                        raise ValueError("No account address available")
+                    account_address = self._keypair.ss58_address
+                    print(f"Using keypair address: {account_address}")
 
             # Query the blockchain for free credits
             print(f"Querying free credits for account: {account_address}")
@@ -468,19 +501,17 @@ class SubstrateClient:
                 )
                 print(f"Connected to Substrate node at {self.url}")
 
-            # Use provided account address or default to keypair address
+            # Use provided account address or default to keypair/configured address
             if not account_address:
-                if not hasattr(self, "_keypair") or self._keypair is None:
-                    if not hasattr(self, "_seed_phrase") or not self._seed_phrase:
-                        raise ValueError(
-                            "No account address provided and no seed phrase is set"
-                        )
-
-                    print("Creating keypair from seed phrase to get account address...")
-                    self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
-
-                account_address = self._keypair.ss58_address
-                print(f"Using keypair address: {account_address}")
+                if self._account_address:
+                    account_address = self._account_address
+                    print(f"Using account address: {account_address}")
+                else:
+                    # Try to get the address from the keypair (requires seed phrase)
+                    if not self._ensure_keypair():
+                        raise ValueError("No account address available")
+                    account_address = self._keypair.ss58_address
+                    print(f"Using keypair address: {account_address}")
 
             # Query the blockchain for user file hashes
             print(f"Querying file hashes for account: {account_address}")
@@ -549,19 +580,17 @@ class SubstrateClient:
                 )
                 print(f"Connected to Substrate node at {self.url}")
 
-            # Use provided account address or default to keypair address
+            # Use provided account address or default to keypair/configured address
             if not account_address:
-                if not hasattr(self, "_keypair") or self._keypair is None:
-                    if not hasattr(self, "_seed_phrase") or not self._seed_phrase:
-                        raise ValueError(
-                            "No account address provided and no seed phrase is set"
-                        )
-
-                    print("Creating keypair from seed phrase to get account address...")
-                    self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
-
-                account_address = self._keypair.ss58_address
-                print(f"Using keypair address: {account_address}")
+                if self._account_address:
+                    account_address = self._account_address
+                    print(f"Using account address: {account_address}")
+                else:
+                    # Try to get the address from the keypair (requires seed phrase)
+                    if not self._ensure_keypair():
+                        raise ValueError("No account address available")
+                    account_address = self._keypair.ss58_address
+                    print(f"Using keypair address: {account_address}")
 
             # Prepare the JSON-RPC request
             request = {
