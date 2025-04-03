@@ -13,6 +13,10 @@ import uuid
 from typing import Dict, Any, Optional, Union, List, Tuple
 import ipfshttpclient
 from dotenv import load_dotenv
+from hippius_sdk.config import (
+    get_config_value,
+    get_encryption_key,
+)
 
 # Import PyNaCl for encryption
 try:
@@ -37,8 +41,8 @@ class IPFSClient:
 
     def __init__(
         self,
-        gateway: str = "https://ipfs.io",
-        api_url: Optional[str] = "https://relay-fr.hippius.network",
+        gateway: Optional[str] = None,
+        api_url: Optional[str] = None,
         encrypt_by_default: Optional[bool] = None,
         encryption_key: Optional[bytes] = None,
     ):
@@ -46,12 +50,25 @@ class IPFSClient:
         Initialize the IPFS client.
 
         Args:
-            gateway: IPFS gateway URL for downloading content
-            api_url: IPFS API URL for uploading content. Defaults to Hippius relay node.
+            gateway: IPFS gateway URL for downloading content (from config if None)
+            api_url: IPFS API URL for uploading content (from config if None)
                     Set to None to try to connect to a local IPFS daemon.
-            encrypt_by_default: Whether to encrypt files by default (from .env if None)
-            encryption_key: Encryption key for NaCl secretbox (from .env if None)
+            encrypt_by_default: Whether to encrypt files by default (from config if None)
+            encryption_key: Encryption key for NaCl secretbox (from config if None)
         """
+        # Load configuration values if not explicitly provided
+        if gateway is None:
+            gateway = get_config_value("ipfs", "gateway", "https://ipfs.io")
+
+        if api_url is None:
+            api_url = get_config_value(
+                "ipfs", "api_url", "https://relay-fr.hippius.network"
+            )
+
+            # Check if local IPFS is enabled in config
+            if get_config_value("ipfs", "local_ipfs", False):
+                api_url = "http://localhost:5001"
+
         self.gateway = gateway.rstrip("/")
         self.api_url = api_url
         self.client = None
@@ -92,7 +109,7 @@ class IPFSClient:
     def _initialize_encryption(
         self, encrypt_by_default: Optional[bool], encryption_key: Optional[bytes]
     ):
-        """Initialize encryption settings from parameters or .env file."""
+        """Initialize encryption settings from parameters or configuration."""
         # Check if encryption is available
         if not ENCRYPTION_AVAILABLE:
             self.encryption_available = False
@@ -100,31 +117,19 @@ class IPFSClient:
             self.encryption_key = None
             return
 
-        # Load environment variables
-        load_dotenv()
+        # Set up encryption default from parameter or config
+        if encrypt_by_default is None:
+            self.encrypt_by_default = get_config_value(
+                "encryption", "encrypt_by_default", False
+            )
+        else:
+            self.encrypt_by_default = encrypt_by_default
 
-        # Set up encryption default from parameter or .env
-        self.encrypt_by_default = encrypt_by_default
-        if self.encrypt_by_default is None:
-            env_default = os.getenv("HIPPIUS_ENCRYPT_BY_DEFAULT", "false").lower()
-            self.encrypt_by_default = env_default in ("true", "1", "yes")
-
-        # Set up encryption key from parameter or .env
-        self.encryption_key = encryption_key
-        if self.encryption_key is None:
-            env_key = os.getenv("HIPPIUS_ENCRYPTION_KEY")
-            if env_key:
-                try:
-                    self.encryption_key = base64.b64decode(env_key)
-                    # Validate key length
-                    if len(self.encryption_key) != nacl.secret.SecretBox.KEY_SIZE:
-                        print(
-                            f"Warning: Encryption key from .env has incorrect length. Expected {nacl.secret.SecretBox.KEY_SIZE} bytes, got {len(self.encryption_key)} bytes."
-                        )
-                        self.encryption_key = None
-                except Exception as e:
-                    print(f"Warning: Failed to decode encryption key from .env: {e}")
-                    self.encryption_key = None
+        # Set up encryption key from parameter or config
+        if encryption_key is None:
+            self.encryption_key = get_encryption_key()
+        else:
+            self.encryption_key = encryption_key
 
         # Check if we have a valid key and can encrypt
         self.encryption_available = (

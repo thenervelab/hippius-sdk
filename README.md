@@ -482,6 +482,87 @@ The SDK provides robust connection handling for IPFS:
 
 This dual approach ensures maximum compatibility across different environments. The fallback happens automatically, so you don't need to worry about it.
 
+## Configuration
+
+Hippius SDK now supports persistent configuration stored in your home directory at `~/.hippius/config.json`. This makes it easier to manage your settings without having to specify them each time or maintain environment variables.
+
+### Configuration Management
+
+The configuration file is automatically created with default values when you first use the SDK. You can manage it using the CLI:
+
+```bash
+# List all configuration settings
+hippius config list
+
+# Get a specific configuration value
+hippius config get ipfs gateway
+
+# Set a configuration value
+hippius config set ipfs gateway https://ipfs.io
+
+# Import settings from your .env file
+hippius config import-env
+
+# Reset configuration to default values
+hippius config reset
+```
+
+### Configuration Structure
+
+The configuration is organized in the following sections:
+
+```json
+{
+  "ipfs": {
+    "gateway": "https://ipfs.io",
+    "api_url": "https://relay-fr.hippius.network",
+    "local_ipfs": false
+  },
+  "substrate": {
+    "url": "wss://rpc.hippius.network",
+    "seed_phrase": null,
+    "default_miners": []
+  },
+  "encryption": {
+    "encrypt_by_default": false,
+    "encryption_key": null
+  },
+  "erasure_coding": {
+    "default_k": 3,
+    "default_m": 5,
+    "default_chunk_size": 1048576
+  },
+  "cli": {
+    "verbose": false,
+    "max_retries": 3
+  }
+}
+```
+
+### Environment Variables and Configuration
+
+The SDK still supports environment variables for backward compatibility. You can import settings from your `.env` file to the configuration using:
+
+```bash
+hippius config import-env
+```
+
+### Using Configuration in Code
+
+```python
+from hippius_sdk import get_config_value, set_config_value, HippiusClient
+
+# Get a configuration value
+gateway = get_config_value("ipfs", "gateway")
+print(f"Current gateway: {gateway}")
+
+# Set a configuration value
+set_config_value("ipfs", "gateway", "https://dweb.link")
+
+# Client will automatically use configuration values
+client = HippiusClient()
+```
+
 ## Development
 
 ```bash
@@ -634,3 +715,111 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+### Seed Phrase Management
+
+For enhanced security, Hippius SDK supports encrypting your Substrate seed phrase with a password:
+
+```bash
+# Set a seed phrase in plain text
+hippius seed set "your twelve word seed phrase here"
+
+# Set a seed phrase and encrypt it with a password
+hippius seed set "your twelve word seed phrase here" --encode
+# You will be prompted to enter and confirm a password
+
+# Check the status of your seed phrase
+hippius seed status
+
+# Encrypt an existing seed phrase with a password
+hippius seed encode
+# You will be prompted to enter and confirm a password
+
+# Temporarily decrypt and view your seed phrase
+hippius seed decode
+# You will be prompted to enter your password
+```
+
+> **Note:** Password-based encryption requires both the `pynacl` and `cryptography` Python packages, which are included as dependencies when you install Hippius SDK.
+
+To use password-based seed phrase encryption:
+1. Set your seed phrase with encryption: `hippius seed set "your seed phrase" --encode`
+2. You'll be prompted to enter and confirm a secure password
+3. The seed phrase will be encrypted using your password and stored safely
+4. When the SDK needs to use your seed phrase, you'll be prompted for your password
+5. Your password is never stored - it's only used temporarily to decrypt the seed phrase
+
+This provides enhanced security by:
+- Protecting your seed phrase with a password only you know
+- Never storing the seed phrase in plain text
+- Using strong cryptography (PBKDF2 with SHA-256) to derive encryption keys
+- Requiring your password every time the seed phrase is needed
+
+When interacting with the Hippius SDK programmatically, you can provide the password when initializing clients:
+
+```python
+from hippius_sdk import HippiusClient
+
+# The client will prompt for password when needed to decrypt the seed phrase
+client = HippiusClient()
+
+# Or you can provide a password when initializing
+client = HippiusClient(seed_phrase_password="your-password")
+```
+
+### Multi-Account Management
+
+Hippius SDK now supports managing multiple named accounts, each with their own seed phrase:
+
+```bash
+# Set a seed phrase for a named account
+hippius seed set "your seed phrase here" --account "my-validator"
+
+# Set another seed phrase for a different account
+hippius seed set "another seed phrase" --account "my-developer-account" --encode
+
+# List all configured accounts
+hippius account list
+
+# Switch the active account
+hippius account switch my-developer-account
+
+# Check the status of a specific account
+hippius seed status --account my-validator
+
+# Delete an account
+hippius account delete my-developer-account
+```
+
+Key features of the multi-account system:
+
+1. **Named Accounts**: Each account has a unique name for easy identification
+2. **SS58 Address Storage**: Addresses are stored unencrypted for convenient access
+3. **Active Account**: One account is designated as "active" and used by default
+4. **Shared Password**: All accounts use the same password for encryption
+5. **Separate Encryption**: Each account can choose whether to encrypt its seed phrase
+
+To use multiple accounts in your code:
+
+```python
+from hippius_sdk import HippiusClient, set_active_account, list_accounts
+
+# List all accounts
+accounts = list_accounts()
+for name, data in accounts.items():
+    print(f"{name}: {data.get('ss58_address')}")
+
+# Switch the active account
+set_active_account("my-validator")
+
+# Create a client with the active account
+client = HippiusClient(seed_phrase_password="your-password")
+
+# Or specify a different account to use
+client = HippiusClient(
+    account_name="my-developer-account",
+    seed_phrase_password="your-password"
+)
+```
+
+The multi-account system makes it easier to manage multiple identities while maintaining security and convenience.

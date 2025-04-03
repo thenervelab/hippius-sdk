@@ -9,6 +9,13 @@ import json
 from typing import Dict, Any, Optional, List, Union
 from substrateinterface import SubstrateInterface, Keypair
 from dotenv import load_dotenv
+from hippius_sdk.config import (
+    get_config_value,
+    get_seed_phrase,
+    set_seed_phrase,
+    get_account_address,
+    get_active_account,
+)
 
 # Load environment variables
 load_dotenv()
@@ -37,32 +44,58 @@ class SubstrateClient:
     """
     Client for interacting with the Hippius Substrate blockchain.
 
+    Provides functionality for storage requests and other blockchain operations.
     Note: This functionality is not fully implemented yet and is under active development.
     """
 
-    def __init__(self, url: str = None, seed_phrase: Optional[str] = None):
+    def __init__(
+        self,
+        url: Optional[str] = None,
+        seed_phrase: Optional[str] = None,
+        password: Optional[str] = None,
+        account_name: Optional[str] = None,
+    ):
         """
         Initialize the Substrate client.
 
         Args:
-            url: WebSocket URL of the Hippius substrate node
-                If not provided, uses SUBSTRATE_URL from environment
-            seed_phrase: Seed phrase for the account (mnemonic)
-                If not provided, uses SUBSTRATE_SEED_PHRASE from environment
+            url: WebSocket URL of the Hippius substrate node (from config if None)
+            seed_phrase: Seed phrase for the account (mnemonic) (from config if None)
+            password: Optional password to decrypt the seed phrase if it's encrypted
+            account_name: Optional name of the account to use (uses active account if None)
         """
-        if not url:
-            url = os.getenv("SUBSTRATE_URL", "wss://rpc.hippius.network")
+        # Load configuration values if not explicitly provided
+        if url is None:
+            url = get_config_value("substrate", "url", "wss://rpc.hippius.network")
 
         # Store URL and initialize variables
         self.url = url
         self._substrate = None
         self._keypair = None
+        self._account_name = account_name or get_active_account()
 
-        # Set seed phrase if provided or available in environment
+        # Set seed phrase if provided or available in configuration
         if seed_phrase:
             self.set_seed_phrase(seed_phrase)
-        elif os.getenv("SUBSTRATE_SEED_PHRASE"):
-            self.set_seed_phrase(os.getenv("SUBSTRATE_SEED_PHRASE"))
+        else:
+            # Get the seed phrase from config, using the password if provided
+            config_seed = get_seed_phrase(password, self._account_name)
+            if config_seed:
+                self.set_seed_phrase(config_seed)
+            elif password and self._account_name:
+                print(
+                    f"Found account '{self._account_name}' but could not decrypt the seed phrase with the provided password"
+                )
+            elif password:
+                # Try to get the seed phrase again without a password
+                # This helps with better error messages
+                plain_seed = get_seed_phrase(None, self._account_name)
+                if plain_seed is None:
+                    print("No seed phrase found in configuration")
+                else:
+                    print(
+                        "Found seed phrase in configuration but could not decrypt it with the provided password"
+                    )
 
         # Don't connect immediately to avoid exceptions during initialization
         # Connection will happen lazily when needed
@@ -110,7 +143,7 @@ class SubstrateClient:
         if not seed_phrase or not seed_phrase.strip():
             raise ValueError("Seed phrase cannot be empty")
 
-        # Store the seed phrase
+        # Store the seed phrase in memory for this session
         self._seed_phrase = seed_phrase.strip()
 
         # Try to create the keypair if possible

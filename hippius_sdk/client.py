@@ -3,9 +3,13 @@ Main client for the Hippius SDK.
 """
 
 import os
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List, Union, Tuple, Set
 from hippius_sdk.ipfs import IPFSClient
 from hippius_sdk.substrate import SubstrateClient, FileInput
+from hippius_sdk.config import (
+    get_config_value,
+    get_encryption_key,
+)
 
 
 class HippiusClient:
@@ -17,10 +21,12 @@ class HippiusClient:
 
     def __init__(
         self,
-        ipfs_gateway: str = "https://ipfs.io",
-        ipfs_api_url: str = "https://relay-fr.hippius.network",
-        substrate_url: str = None,
-        substrate_seed_phrase: str = None,
+        ipfs_gateway: Optional[str] = None,
+        ipfs_api_url: Optional[str] = None,
+        substrate_url: Optional[str] = None,
+        substrate_seed_phrase: Optional[str] = None,
+        seed_phrase_password: Optional[str] = None,
+        account_name: Optional[str] = None,
         encrypt_by_default: Optional[bool] = None,
         encryption_key: Optional[bytes] = None,
     ):
@@ -28,13 +34,45 @@ class HippiusClient:
         Initialize the Hippius client.
 
         Args:
-            ipfs_gateway: IPFS gateway URL for downloading content
-            ipfs_api_url: IPFS API URL for uploading content. Defaults to Hippius relay node.
-            substrate_url: WebSocket URL of the Hippius substrate node
-            substrate_seed_phrase: Seed phrase for Substrate account
-            encrypt_by_default: Whether to encrypt files by default (from .env if None)
-            encryption_key: Encryption key for NaCl secretbox (from .env if None)
+            ipfs_gateway: IPFS gateway URL for downloading content (from config if None)
+            ipfs_api_url: IPFS API URL for uploading content (from config if None)
+            substrate_url: WebSocket URL of the Hippius substrate node (from config if None)
+            substrate_seed_phrase: Seed phrase for Substrate account (from config if None)
+            seed_phrase_password: Password to decrypt the seed phrase if it's encrypted
+            account_name: Name of the account to use (uses active account if None)
+            encrypt_by_default: Whether to encrypt files by default (from config if None)
+            encryption_key: Encryption key for NaCl secretbox (from config if None)
         """
+        # Load configuration values if not explicitly provided
+        if ipfs_gateway is None:
+            ipfs_gateway = get_config_value("ipfs", "gateway", "https://ipfs.io")
+
+        if ipfs_api_url is None:
+            ipfs_api_url = get_config_value(
+                "ipfs", "api_url", "https://relay-fr.hippius.network"
+            )
+
+            # Check if local IPFS is enabled in config
+            if get_config_value("ipfs", "local_ipfs", False):
+                ipfs_api_url = "http://localhost:5001"
+
+        if substrate_url is None:
+            substrate_url = get_config_value(
+                "substrate", "url", "wss://rpc.hippius.network"
+            )
+
+        if substrate_seed_phrase is None:
+            substrate_seed_phrase = get_config_value("substrate", "seed_phrase")
+
+        if encrypt_by_default is None:
+            encrypt_by_default = get_config_value(
+                "encryption", "encrypt_by_default", False
+            )
+
+        if encryption_key is None:
+            encryption_key = get_encryption_key()
+
+        # Initialize IPFS client
         self.ipfs_client = IPFSClient(
             gateway=ipfs_gateway,
             api_url=ipfs_api_url,
@@ -45,7 +83,10 @@ class HippiusClient:
         # Initialize Substrate client
         try:
             self.substrate_client = SubstrateClient(
-                url=substrate_url, seed_phrase=substrate_seed_phrase
+                url=substrate_url,
+                seed_phrase=substrate_seed_phrase,
+                password=seed_phrase_password,
+                account_name=account_name,
             )
         except Exception as e:
             print(f"Warning: Could not initialize Substrate client: {e}")

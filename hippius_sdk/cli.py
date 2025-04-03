@@ -11,11 +11,33 @@ import argparse
 import os
 import sys
 import time
+import json
 from typing import Optional, List
+import getpass
 
 # Import SDK components
 from hippius_sdk import HippiusClient
 from hippius_sdk.substrate import FileInput
+from hippius_sdk import (
+    get_config_value,
+    set_config_value,
+    get_encryption_key,
+    set_encryption_key,
+    load_config,
+    save_config,
+    get_all_config,
+    reset_config,
+    initialize_from_env,
+    get_seed_phrase,
+    set_seed_phrase,
+    encrypt_seed_phrase,
+    decrypt_seed_phrase,
+    get_active_account,
+    set_active_account,
+    list_accounts,
+    delete_account,
+    get_account_address,
+)
 from dotenv import load_dotenv
 
 try:
@@ -28,6 +50,9 @@ else:
 
 # Load environment variables
 load_dotenv()
+
+# Initialize configuration from environment variables
+initialize_from_env()
 
 
 def generate_key():
@@ -107,12 +132,15 @@ def create_client(args):
                 print(f"Using provided encryption key")
         except Exception as e:
             print(f"Warning: Could not decode encryption key: {e}")
-            print(f"Using default encryption key from .env if available")
+            print(f"Using default encryption key from configuration if available")
 
-    # Initialize client with provided gateway and API URL
+    # Get API URL based on local_ipfs flag
+    api_url = "http://localhost:5001" if args.local_ipfs else args.api_url
+
+    # Initialize client with provided parameters
     client = HippiusClient(
         ipfs_gateway=args.gateway,
-        ipfs_api_url="http://localhost:5001" if args.local_ipfs else args.api_url,
+        ipfs_api_url=api_url,
         substrate_url=args.substrate_url,
         encrypt_by_default=encrypt,
         encryption_key=encryption_key,
@@ -719,6 +747,329 @@ def handle_reconstruct(client, metadata_cid, output_file, verbose=True):
         return 1
 
 
+def handle_config_get(section, key):
+    """Handle getting a configuration value"""
+    value = get_config_value(section, key)
+    print(f"Configuration value for {section}.{key}: {value}")
+    return 0
+
+
+def handle_config_set(section, key, value):
+    """Handle setting a configuration value"""
+    # Try to parse JSON value for objects, arrays, and literals
+    try:
+        parsed_value = json.loads(value)
+        value = parsed_value
+    except (json.JSONDecodeError, TypeError):
+        # If not valid JSON, keep the raw string
+        pass
+
+    result = set_config_value(section, key, value)
+    if result:
+        print(f"Successfully set {section}.{key} to {value}")
+    else:
+        print(f"Failed to set {section}.{key}")
+        return 1
+    return 0
+
+
+def handle_config_list():
+    """Handle listing all configuration values"""
+    config = get_all_config()
+    print("Current Hippius SDK Configuration:")
+    print(json.dumps(config, indent=2))
+    print(f"\nConfiguration file: {os.path.expanduser('~/.hippius/config.json')}")
+    return 0
+
+
+def handle_config_reset():
+    """Handle resetting configuration to default values"""
+    if reset_config():
+        print("Successfully reset configuration to default values")
+    else:
+        print("Failed to reset configuration")
+        return 1
+    return 0
+
+
+def handle_seed_phrase_set(seed_phrase, encode=False, account_name=None):
+    """Handle setting the seed phrase"""
+    if encode:
+        try:
+            password = getpass.getpass("Enter password to encrypt seed phrase: ")
+            password_confirm = getpass.getpass("Confirm password: ")
+
+            if password != password_confirm:
+                print("Error: Passwords do not match")
+                return 1
+
+            result = set_seed_phrase(
+                seed_phrase, encode=True, password=password, account_name=account_name
+            )
+        except KeyboardInterrupt:
+            print("\nOperation cancelled")
+            return 1
+    else:
+        result = set_seed_phrase(seed_phrase, encode=False, account_name=account_name)
+
+    if result:
+        account_msg = f" for account '{account_name}'" if account_name else ""
+
+        if encode:
+            print(
+                f"Successfully set and encrypted the seed phrase{account_msg} with password protection"
+            )
+        else:
+            print(
+                f"Successfully set the seed phrase{account_msg} (WARNING: stored in plain text)"
+            )
+
+        if account_name:
+            address = get_account_address(account_name)
+            if address:
+                print(f"SS58 Address: {address}")
+
+        return 0
+    else:
+        print(f"Failed to set the seed phrase")
+        return 1
+
+
+def handle_seed_phrase_encode(account_name=None):
+    """Handle encoding the existing seed phrase"""
+    # Get the current seed phrase
+    seed_phrase = get_seed_phrase(account_name=account_name)
+    if not seed_phrase:
+        if account_name:
+            print(f"Error: No seed phrase available for account '{account_name}'")
+        else:
+            print("Error: No seed phrase available to encode")
+        return 1
+
+    # Check if it's already encoded
+    config = load_config()
+    is_encoded = False
+
+    if account_name:
+        account_data = config["substrate"].get("accounts", {}).get(account_name, {})
+        is_encoded = account_data.get("seed_phrase_encoded", False)
+    else:
+        is_encoded = config["substrate"].get("seed_phrase_encoded", False)
+
+    if is_encoded:
+        if account_name:
+            print(f"Seed phrase for account '{account_name}' is already encoded")
+        else:
+            print("Seed phrase is already encoded")
+        return 0
+
+    # Get a password
+    try:
+        password = getpass.getpass("Enter password to encrypt seed phrase: ")
+        password_confirm = getpass.getpass("Confirm password: ")
+
+        if password != password_confirm:
+            print("Error: Passwords do not match")
+            return 1
+
+        # Encode the seed phrase
+        result = encrypt_seed_phrase(seed_phrase, password, account_name)
+    except KeyboardInterrupt:
+        print("\nOperation cancelled")
+        return 1
+
+    if result:
+        account_msg = f" for account '{account_name}'" if account_name else ""
+        print(
+            f"Successfully encoded the seed phrase{account_msg} with password protection"
+        )
+        return 0
+    else:
+        print("Failed to encode the seed phrase")
+        return 1
+
+
+def handle_seed_phrase_decode(account_name=None):
+    """Handle checking or decoding the seed phrase"""
+    # Check if the seed phrase is encoded
+    config = load_config()
+    is_encoded = False
+
+    if account_name:
+        account_data = config["substrate"].get("accounts", {}).get(account_name, {})
+        is_encoded = account_data.get("seed_phrase_encoded", False)
+    else:
+        is_encoded = config["substrate"].get("seed_phrase_encoded", False)
+
+    if not is_encoded:
+        if account_name:
+            print(
+                f"Seed phrase for account '{account_name}' is not encoded - nothing to decode"
+            )
+        else:
+            print("Seed phrase is not encoded - nothing to decode")
+        return 0
+
+    # Get the decrypted seed phrase
+    try:
+        password = getpass.getpass("Enter password to decrypt seed phrase: ")
+        seed_phrase = decrypt_seed_phrase(password, account_name)
+
+        if seed_phrase:
+            account_msg = f" for account '{account_name}'" if account_name else ""
+            print(f"Decrypted seed phrase{account_msg}: {seed_phrase}")
+
+            # Ask if the user wants to save it as plain text
+            response = input(
+                "Do you want to save the seed phrase as plain text? (y/N): "
+            )
+            if response.lower() in ("y", "yes"):
+                result = set_seed_phrase(
+                    seed_phrase, encode=False, account_name=account_name
+                )
+                if result:
+                    print("Seed phrase saved as plain text")
+                else:
+                    print("Failed to save the seed phrase as plain text")
+
+            return 0
+        else:
+            print("Failed to decode the seed phrase. Incorrect password?")
+            return 1
+    except KeyboardInterrupt:
+        print("\nOperation cancelled")
+        return 1
+
+
+def handle_seed_phrase_status(account_name=None):
+    """Handle showing the status of the seed phrase"""
+    # Check if we have a seed phrase
+    config = load_config()
+
+    if account_name:
+        if account_name not in config["substrate"].get("accounts", {}):
+            print(f"Error: Account '{account_name}' not found")
+            return 1
+
+        account_data = config["substrate"].get("accounts", {}).get(account_name, {})
+        seed_phrase_exists = account_data.get("seed_phrase") is not None
+        is_encoded = account_data.get("seed_phrase_encoded", False)
+        ss58_address = account_data.get("ss58_address")
+    else:
+        seed_phrase_exists = config["substrate"].get("seed_phrase") is not None
+        is_encoded = config["substrate"].get("seed_phrase_encoded", False)
+        ss58_address = config["substrate"].get("ss58_address")
+
+    if not seed_phrase_exists:
+        if account_name:
+            print(f"No seed phrase is configured for account '{account_name}'")
+        else:
+            print("No seed phrase is configured")
+        return 0
+
+    account_msg = f" for account '{account_name}'" if account_name else ""
+
+    if is_encoded:
+        print(f"Seed phrase{account_msg} is stored with password-based encryption")
+
+        # Offer to verify the password works
+        print("You can verify your password by decoding the seed phrase")
+        try:
+            verify = input("Would you like to verify your password works? (y/N): ")
+            if verify.lower() in ("y", "yes"):
+                password = getpass.getpass("Enter password to decrypt seed phrase: ")
+                seed_phrase = decrypt_seed_phrase(password, account_name)
+                if seed_phrase:
+                    print("Password verification successful!")
+                else:
+                    print("Password verification failed")
+        except KeyboardInterrupt:
+            print("\nOperation cancelled")
+    else:
+        print(f"Seed phrase{account_msg} is stored in plain text (not encrypted)")
+
+        # Get the value
+        seed_phrase = get_seed_phrase(account_name=account_name)
+        if seed_phrase:
+            # Show only the first and last few words for security
+            words = seed_phrase.split()
+            if len(words) >= 6:
+                masked = " ".join(words[:2] + ["..."] + words[-2:])
+                print(f"Seed phrase (masked): {masked}")
+            else:
+                print("Seed phrase is available")
+
+    if ss58_address:
+        print(f"SS58 Address: {ss58_address}")
+
+    return 0
+
+
+def handle_account_list():
+    """Handle listing all accounts"""
+    accounts = list_accounts()
+
+    if not accounts:
+        print("No accounts configured")
+        return 0
+
+    print(f"Found {len(accounts)} accounts:")
+
+    for name, data in accounts.items():
+        active_marker = " (active)" if data.get("is_active", False) else ""
+        encoded_status = (
+            "encrypted" if data.get("seed_phrase_encoded", False) else "plain text"
+        )
+        address = data.get("ss58_address", "unknown")
+
+        print(f"  {name}{active_marker}:")
+        print(f"    SS58 Address: {address}")
+        print(f"    Seed phrase: {encoded_status}")
+        print()
+
+    return 0
+
+
+def handle_account_switch(account_name):
+    """Handle switching the active account"""
+    if set_active_account(account_name):
+        print(f"Switched to account '{account_name}'")
+
+        # Show address
+        address = get_account_address(account_name)
+        if address:
+            print(f"SS58 Address: {address}")
+
+        return 0
+    else:
+        return 1
+
+
+def handle_account_delete(account_name):
+    """Handle deleting an account"""
+    # Ask for confirmation
+    confirm = input(
+        f"Are you sure you want to delete account '{account_name}'? This cannot be undone. (y/N): "
+    )
+    if confirm.lower() not in ("y", "yes"):
+        print("Operation cancelled")
+        return 0
+
+    if delete_account(account_name):
+        print(f"Account '{account_name}' deleted")
+
+        # Show the new active account if any
+        active_account = get_active_account()
+        if active_account:
+            print(f"Active account is now '{active_account}'")
+        else:
+            print("No accounts remaining")
+
+        return 0
+    else:
+        return 1
+
+
 def main():
     """Main CLI entry point for hippius command."""
     # Set up the argument parser
@@ -762,30 +1113,35 @@ examples:
     # Optional arguments for all commands
     parser.add_argument(
         "--gateway",
-        default=os.getenv("IPFS_GATEWAY", "https://ipfs.io"),
-        help="IPFS gateway URL for downloads (default: from env or https://ipfs.io)",
+        default=get_config_value("ipfs", "gateway", "https://ipfs.io"),
+        help="IPFS gateway URL for downloads (default: from config or https://ipfs.io)",
     )
     parser.add_argument(
         "--api-url",
-        default=os.getenv("IPFS_API_URL", "https://relay-fr.hippius.network"),
-        help="IPFS API URL for uploads (default: from env or https://relay-fr.hippius.network)",
+        default=get_config_value("ipfs", "api_url", "https://relay-fr.hippius.network"),
+        help="IPFS API URL for uploads (default: from config or https://relay-fr.hippius.network)",
     )
     parser.add_argument(
         "--local-ipfs",
         action="store_true",
+        default=get_config_value("ipfs", "local_ipfs", False),
         help="Use local IPFS node (http://localhost:5001) instead of remote API",
     )
     parser.add_argument(
         "--substrate-url",
-        default=os.getenv("SUBSTRATE_URL", "wss://rpc.hippius.network"),
-        help="Substrate node WebSocket URL (default: from env or wss://rpc.hippius.network)",
+        default=get_config_value("substrate", "url", "wss://rpc.hippius.network"),
+        help="Substrate node WebSocket URL (default: from config or wss://rpc.hippius.network)",
     )
     parser.add_argument(
         "--miner-ids",
-        help="Comma-separated list of miner IDs for storage (default: from env SUBSTRATE_DEFAULT_MINERS)",
+        help="Comma-separated list of miner IDs for storage (default: from config)",
     )
     parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose debug output"
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=get_config_value("cli", "verbose", False),
+        help="Enable verbose debug output",
     )
     parser.add_argument(
         "--encrypt",
@@ -958,6 +1314,111 @@ examples:
         "--verbose", action="store_true", help="Enable verbose output", default=True
     )
 
+    # Configuration subcommand
+    config_parser = subparsers.add_parser(
+        "config", help="Manage Hippius SDK configuration"
+    )
+    config_subparsers = config_parser.add_subparsers(
+        dest="config_action", help="Configuration action"
+    )
+
+    # Get configuration value
+    get_parser = config_subparsers.add_parser("get", help="Get a configuration value")
+    get_parser.add_argument(
+        "section",
+        help="Configuration section (ipfs, substrate, encryption, erasure_coding, cli)",
+    )
+    get_parser.add_argument("key", help="Configuration key")
+
+    # Set configuration value
+    set_parser = config_subparsers.add_parser("set", help="Set a configuration value")
+    set_parser.add_argument(
+        "section",
+        help="Configuration section (ipfs, substrate, encryption, erasure_coding, cli)",
+    )
+    set_parser.add_argument("key", help="Configuration key")
+    set_parser.add_argument("value", help="Value to set (use JSON for complex values)")
+
+    # List all configuration values
+    config_subparsers.add_parser("list", help="List all configuration values")
+
+    # Reset configuration to defaults
+    config_subparsers.add_parser("reset", help="Reset configuration to default values")
+
+    # Import config from .env
+    config_subparsers.add_parser(
+        "import-env", help="Import configuration from .env file"
+    )
+
+    # Seed Phrase subcommand
+    seed_parser = subparsers.add_parser("seed", help="Manage substrate seed phrase")
+    seed_subparsers = seed_parser.add_subparsers(
+        dest="seed_action", help="Seed phrase action"
+    )
+
+    # Set seed phrase
+    set_seed_parser = seed_subparsers.add_parser(
+        "set", help="Set the substrate seed phrase"
+    )
+    set_seed_parser.add_argument(
+        "seed_phrase", help="The mnemonic seed phrase (e.g., 'word1 word2 word3...')"
+    )
+    set_seed_parser.add_argument(
+        "--encode", action="store_true", help="Encrypt the seed phrase with a password"
+    )
+    set_seed_parser.add_argument(
+        "--account", help="Account name to associate with this seed phrase"
+    )
+
+    # Encode existing seed phrase
+    encode_seed_parser = seed_subparsers.add_parser(
+        "encode", help="Encrypt the existing seed phrase"
+    )
+    encode_seed_parser.add_argument(
+        "--account", help="Account name to encode the seed phrase for"
+    )
+
+    # Decode seed phrase
+    decode_seed_parser = seed_subparsers.add_parser(
+        "decode", help="Temporarily decrypt and display the seed phrase"
+    )
+    decode_seed_parser.add_argument(
+        "--account", help="Account name to decode the seed phrase for"
+    )
+
+    # Check seed phrase status
+    status_seed_parser = seed_subparsers.add_parser(
+        "status", help="Check the status of the configured seed phrase"
+    )
+    status_seed_parser.add_argument(
+        "--account", help="Account name to check the status for"
+    )
+
+    # Account subcommand
+    account_parser = subparsers.add_parser("account", help="Manage substrate accounts")
+    account_subparsers = account_parser.add_subparsers(
+        dest="account_action", help="Account action"
+    )
+
+    # List accounts
+    account_subparsers.add_parser("list", help="List all accounts")
+
+    # Switch active account
+    switch_account_parser = account_subparsers.add_parser(
+        "switch", help="Switch to a different account"
+    )
+    switch_account_parser.add_argument(
+        "account_name", help="Name of the account to switch to"
+    )
+
+    # Delete account
+    delete_account_parser = account_subparsers.add_parser(
+        "delete", help="Delete an account"
+    )
+    delete_account_parser.add_argument(
+        "account_name", help="Name of the account to delete"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -1043,6 +1504,50 @@ examples:
             return handle_reconstruct(
                 client, args.metadata_cid, args.output_file, verbose=args.verbose
             )
+
+        elif args.command == "config":
+            if args.config_action == "get":
+                return handle_config_get(args.section, args.key)
+            elif args.config_action == "set":
+                return handle_config_set(args.section, args.key, args.value)
+            elif args.config_action == "list":
+                return handle_config_list()
+            elif args.config_action == "reset":
+                return handle_config_reset()
+            elif args.config_action == "import-env":
+                initialize_from_env()
+                print("Successfully imported configuration from environment variables")
+                return 0
+            else:
+                config_parser.print_help()
+                return 1
+
+        elif args.command == "seed":
+            if args.seed_action == "set":
+                return handle_seed_phrase_set(
+                    args.seed_phrase, args.encode, args.account
+                )
+            elif args.seed_action == "encode":
+                return handle_seed_phrase_encode(args.account)
+            elif args.seed_action == "decode":
+                return handle_seed_phrase_decode(args.account)
+            elif args.seed_action == "status":
+                return handle_seed_phrase_status(args.account)
+            else:
+                seed_parser.print_help()
+                return 1
+
+        # Handle the account commands
+        elif args.command == "account":
+            if args.account_action == "list":
+                return handle_account_list()
+            elif args.account_action == "switch":
+                return handle_account_switch(args.account_name)
+            elif args.account_action == "delete":
+                return handle_account_delete(args.account_name)
+            else:
+                account_parser.print_help()
+                return 1
 
     except Exception as e:
         print(f"Error: {e}")
