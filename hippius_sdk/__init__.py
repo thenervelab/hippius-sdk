@@ -4,6 +4,8 @@ Hippius SDK - Python interface for Hippius blockchain storage
 
 from hippius_sdk.client import HippiusClient
 from hippius_sdk.ipfs import IPFSClient
+from hippius_sdk.substrate import SubstrateClient
+from hippius_sdk.account import AccountManager
 from hippius_sdk.config import (
     get_config_value,
     set_config_value,
@@ -29,6 +31,8 @@ __version__ = "0.1.0"
 __all__ = [
     "HippiusClient",
     "IPFSClient",
+    "SubstrateClient",
+    "AccountManager",
     "get_config_value",
     "set_config_value",
     "get_encryption_key",

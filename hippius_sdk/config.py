@@ -740,5 +740,76 @@ def reset_config() -> bool:
     return save_config(DEFAULT_CONFIG.copy())
 
 
+def get_keypair(
+    ss58_address: Optional[str] = None, account_name: Optional[str] = None
+) -> "Keypair":
+    """
+    Get a Keypair object for a given SS58 address or account name.
+
+    This function will attempt to find the specified account and generate
+    a Keypair object using the stored seed phrase.
+
+    Args:
+        ss58_address: SS58 address of the account
+        account_name: Name of the account (used if ss58_address is None)
+
+    Returns:
+        Keypair: A substrate Keypair object
+
+    Raises:
+        ValueError: If the account cannot be found or if the seed phrase is not available
+        ImportError: If the required dependencies are not installed
+    """
+    # Import here to avoid circular imports
+    try:
+        from substrateinterface import Keypair
+    except ImportError:
+        raise ImportError(
+            "Substrate interface is required to get a keypair. "
+            "Install with: pip install substrate-interface"
+        )
+
+    # If ss58_address is provided, look for a matching account
+    if ss58_address:
+        accounts = list_accounts()
+        found_account = None
+
+        for name, data in accounts.items():
+            if data.get("ss58_address") == ss58_address:
+                found_account = name
+                break
+
+        if found_account:
+            account_name = found_account
+        else:
+            raise ValueError(f"No account found with SS58 address: {ss58_address}")
+
+    # If no account_name by this point, use the active account
+    if not account_name:
+        account_name = get_active_account()
+        if not account_name:
+            raise ValueError(
+                "No account specified and no active account. "
+                "Set an active account with: hippius account switch <account_name>"
+            )
+
+    # Get the seed phrase for the account
+    seed_phrase = get_seed_phrase(account_name=account_name)
+    if not seed_phrase:
+        if get_config_value("substrate", "seed_phrase_encoded"):
+            raise ValueError(
+                f"The seed phrase for account '{account_name}' is encrypted. "
+                f"Please decrypt it first with: hippius seed decode --account {account_name}"
+            )
+        else:
+            raise ValueError(
+                f"No seed phrase found for account '{account_name}'. "
+                f'Set one with: hippius seed set "your seed phrase" --account {account_name}'
+            )
+
+    # Create and return the keypair
+    return Keypair.create_from_mnemonic(seed_phrase)
+
+
 # Initialize configuration on module import
 ensure_config_dir()

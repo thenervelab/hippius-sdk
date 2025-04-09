@@ -714,6 +714,7 @@ def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=
                     original_name = (
                         file_name.replace(".ec_metadata", "") if file_name else "file"
                     )
+                    # We're already using formatted_cid from above
                     print(
                         f"    hippius reconstruct {formatted_cid} reconstructed_{original_name}"
                     )
@@ -888,8 +889,11 @@ def handle_erasure_code(
         print(f"  1. The metadata CID: {metadata_cid}")
         print("  2. Access to at least k chunks for each original chunk")
         print("\nReconstruction command:")
+
+        # Format the CID for the command
+        formatted_cid = client.format_cid(metadata_cid)
         print(
-            f"  hippius reconstruct {metadata_cid} reconstructed_{original_file.get('name')}"
+            f"  hippius reconstruct {formatted_cid} reconstructed_{original_file.get('name')}"
         )
 
         return 0
@@ -1076,9 +1080,12 @@ def handle_reconstruct(client, metadata_cid, output_file, verbose=True):
     start_time = time.time()
 
     try:
-        # Use the reconstruct_from_erasure_code method
+        # Format the CID to ensure it's properly handled
+        formatted_cid = client.format_cid(metadata_cid)
+
+        # Use the formatted CID for reconstruction
         result = client.reconstruct_from_erasure_code(
-            metadata_cid=metadata_cid, output_file=output_file, verbose=verbose
+            metadata_cid=formatted_cid, output_file=output_file, verbose=verbose
         )
 
         elapsed_time = time.time() - start_time
@@ -1350,125 +1357,316 @@ def handle_seed_phrase_status(account_name=None):
     return 0
 
 
-def handle_account_list():
-    """Handle listing all accounts"""
-    accounts = list_accounts()
+def handle_account_list(args):
+    """Handle listing accounts."""
+    from hippius_sdk.account import AccountManager
 
-    if not accounts:
-        print("No accounts configured")
-        return 0
+    account_manager = AccountManager()
 
-    print(f"Found {len(accounts)} accounts:")
+    if args.type == "coldkey":
+        accounts = account_manager.list_coldkeys()
+        print(f"Found {len(accounts)} coldkeys:")
 
-    for name, data in accounts.items():
-        active_marker = " (active)" if data.get("is_active", False) else ""
-        encoded_status = (
-            "encrypted" if data.get("seed_phrase_encoded", False) else "plain text"
+        for i, account in enumerate(accounts, 1):
+            print(f"{i}. {account['name']}: {account['address']}")
+
+            # If verbose, show associated hotkeys
+            if args.verbose:
+                hotkeys = account_manager.list_hotkeys(account["address"])
+                if hotkeys:
+                    print(f"   Associated hotkeys:")
+                    for j, hotkey in enumerate(hotkeys, 1):
+                        print(f"   {j}. {hotkey['name']}: {hotkey['address']}")
+                else:
+                    print(f"   No associated hotkeys")
+
+    elif args.type == "hotkey":
+        try:
+            if args.coldkey:
+                accounts = account_manager.list_hotkeys(args.coldkey)
+                coldkey_name = None
+                if accounts and "coldkey_name" in accounts[0]:
+                    coldkey_name = accounts[0]["coldkey_name"]
+
+                if coldkey_name:
+                    print(
+                        f"Found {len(accounts)} hotkeys for coldkey {args.coldkey} ({coldkey_name}):"
+                    )
+                else:
+                    print(f"Found {len(accounts)} hotkeys for coldkey {args.coldkey}:")
+            else:
+                accounts = account_manager.list_hotkeys()
+                print(f"Found {len(accounts)} hotkeys:")
+
+            for i, account in enumerate(accounts, 1):
+                coldkey_info = ""
+                if "associated_coldkey" in account:
+                    if "coldkey_name" in account:
+                        coldkey_info = f" → coldkey: {account['coldkey_name']} ({account['associated_coldkey']})"
+                    else:
+                        coldkey_info = f" → coldkey: {account['associated_coldkey']}"
+
+                print(f"{i}. {account['name']}: {account['address']}{coldkey_info}")
+
+                # If verbose, show more details
+                if args.verbose:
+                    created_at = account.get("created_at", 0)
+                    if created_at:
+                        from datetime import datetime
+
+                        created_time = datetime.fromtimestamp(created_at).strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        )
+                        print(f"   Created: {created_time}")
+
+                    # Show whether there is a blockchain proxy relationship
+                    try:
+                        proxies = account_manager.list_proxies(
+                            account.get("associated_coldkey")
+                        )
+                        has_proxy = any(
+                            proxy["hotkey"] == account["address"] for proxy in proxies
+                        )
+                        if has_proxy:
+                            print(f"   Blockchain proxy: YES (active on-chain)")
+                        else:
+                            print(f"   Blockchain proxy: NO (local association only)")
+                    except Exception:
+                        print(f"   Blockchain proxy: Unknown (could not verify)")
+
+        except ValueError as e:
+            print(f"Error: {str(e)}")
+            return None
+        except Exception as e:
+            print(f"Error listing hotkeys: {str(e)}")
+            return None
+
+    elif args.type == "proxy":
+        try:
+            proxies = account_manager.list_proxies(args.coldkey)
+            print(f"Found {len(proxies)} proxy relationships on the blockchain:")
+
+            for i, proxy in enumerate(proxies, 1):
+                coldkey = proxy["coldkey"]
+                hotkey = proxy["hotkey"]
+
+                # Try to get human-readable names
+                data = account_manager._load_accounts_data()
+                coldkey_name = (
+                    data.get("coldkeys", {}).get(coldkey, {}).get("name", "Unknown")
+                )
+                hotkey_name = (
+                    data.get("hotkeys", {}).get(hotkey, {}).get("name", "Unknown")
+                )
+
+                print(f"{i}. {coldkey_name} ({coldkey}) → {hotkey_name} ({hotkey})")
+                print(f"   Type: {proxy['proxy_type']}, Delay: {proxy['delay']}")
+        except Exception as e:
+            print(f"Error listing proxies: {str(e)}")
+
+    return accounts
+
+
+def handle_account_proxy_create(args):
+    """Handle creating a proxy relationship."""
+    from hippius_sdk.account import AccountManager
+
+    account_manager = AccountManager()
+
+    try:
+        result = account_manager.create_proxy_relationship(
+            coldkey_address=args.coldkey,
+            hotkey_address=args.hotkey,
+            proxy_type=args.proxy_type,
+            delay=args.delay,
+            password=args.password,  # Pass the password if provided
         )
-        address = data.get("ss58_address", "unknown")
 
-        print(f"  {name}{active_marker}:")
-        print(f"    SS58 Address: {address}")
-        print(f"    Seed phrase: {encoded_status}")
-        print()
-
-    return 0
-
-
-def handle_account_switch(account_name):
-    """Handle switching the active account"""
-    if set_active_account(account_name):
-        print(f"Switched to account '{account_name}'")
-
-        # Show address
-        address = get_account_address(account_name)
-        if address:
-            print(f"SS58 Address: {address}")
-
-        return 0
-    else:
-        return 1
-
-
-def handle_account_delete(account_name):
-    """Handle deleting an account"""
-    # Ask for confirmation
-    confirm = input(
-        f"Are you sure you want to delete account '{account_name}'? This cannot be undone. (y/N): "
-    )
-    if confirm.lower() not in ("y", "yes"):
-        print("Operation cancelled")
-        return 0
-
-    if delete_account(account_name):
-        print(f"Account '{account_name}' deleted")
-
-        # Show the new active account if any
-        active_account = get_active_account()
-        if active_account:
-            print(f"Active account is now '{active_account}'")
+        if result.get("success"):
+            print(f"Successfully created proxy relationship!")
+            print(f"Coldkey: {result['coldkey']}")
+            print(f"Hotkey:  {result['hotkey']}")
+            print(f"Type:    {result['proxy_type']}")
+            print(f"Tx Hash: {result['transaction_hash']}")
         else:
-            print("No accounts remaining")
+            print(
+                f"Failed to create proxy relationship: {result.get('error', 'Unknown error')}"
+            )
 
-        return 0
-    else:
-        return 1
+        return result
+
+    except Exception as e:
+        print(f"Error creating proxy relationship: {str(e)}")
+        return None
 
 
-def handle_default_address_set(address):
-    """Handle setting the default address for read-only operations"""
-    # Validate SS58 address format (basic check)
-    if not address.startswith("5"):
-        print(
-            f"Warning: '{address}' doesn't look like a valid SS58 address. SS58 addresses typically start with '5'."
+def handle_account_proxy_remove(args):
+    """Handle removing a proxy relationship."""
+    from hippius_sdk.account import AccountManager
+
+    account_manager = AccountManager()
+
+    try:
+        result = account_manager.remove_proxy(
+            coldkey_address=args.coldkey,
+            hotkey_address=args.hotkey,
+            password=args.password,
+            proxy_type=args.proxy_type,
+            delay=args.delay,
         )
-        confirm = input("Do you want to continue anyway? (y/N): ")
-        if confirm.lower() not in ("y", "yes"):
-            print("Operation cancelled")
-            return 1
 
-    config = load_config()
-    config["substrate"]["default_address"] = address
-    save_config(config)
+        if result.get("success"):
+            print(f"Successfully removed proxy relationship!")
+            print(f"Coldkey: {result['coldkey']}")
+            print(f"Hotkey:  {result['hotkey']}")
+            print(f"Tx Hash: {result['transaction_hash']}")
+        else:
+            print(
+                f"Failed to remove proxy relationship: {result.get('error', 'Unknown error')}"
+            )
 
-    print(f"Default address for read-only operations set to: {address}")
-    print(
-        "This address will be used for commands like 'files' and 'ec-files' when no address is explicitly provided."
-    )
-    return 0
+        return result
 
-
-def handle_default_address_get():
-    """Handle getting the current default address for read-only operations"""
-    config = load_config()
-    address = config["substrate"].get("default_address")
-
-    if address:
-        print(f"Current default address for read-only operations: {address}")
-    else:
-        print("No default address set for read-only operations")
-        print("You can set one with: hippius address set-default <ss58_address>")
-
-    return 0
+    except Exception as e:
+        print(f"Error removing proxy relationship: {str(e)}")
+        return None
 
 
-def handle_default_address_clear():
-    """Handle clearing the default address for read-only operations"""
-    config = load_config()
-    if "default_address" in config["substrate"]:
-        del config["substrate"]["default_address"]
-        save_config(config)
-        print("Default address for read-only operations has been cleared")
-    else:
-        print("No default address was set")
+def handle_account_coldkey_create(args):
+    """Handle creating a new coldkey account."""
+    from hippius_sdk.account import AccountManager
 
-    return 0
+    account_manager = AccountManager()
+
+    # Determine if we're creating from a mnemonic
+    mnemonic = None
+    if args.mnemonic:
+        mnemonic = args.mnemonic
+    elif args.generate_mnemonic:
+        # We'll use the keypair generation which automatically creates a mnemonic
+        pass
+
+    try:
+        coldkey = account_manager.create_coldkey(
+            name=args.name if args.name else "hippius_coldkey",
+            mnemonic=mnemonic,
+            encrypt=not args.no_encrypt,  # Default to encrypt=True unless explicitly disabled
+            password=None,  # Let the method handle prompting for password
+        )
+
+        # Success message is already printed in the create_coldkey method
+        # If show_mnemonic was requested and it's not encrypted, show it
+        if args.show_mnemonic and not coldkey.get("encrypted", True):
+            print("\nIMPORTANT: Save this mnemonic phrase to recover your account!")
+            print(f"Mnemonic: {coldkey['mnemonic']}")
+            print("\nWARNING: Never share this mnemonic with anyone!")
+
+        return coldkey
+
+    except Exception as e:
+        print(f"Error creating coldkey: {str(e)}")
+        return None
 
 
-def get_default_address():
-    """Get the default address for read-only operations"""
-    config = load_config()
-    return config["substrate"].get("default_address")
+def handle_account_hotkey_create(args):
+    """Handle creating a new hotkey account."""
+    from hippius_sdk.account import AccountManager
+
+    account_manager = AccountManager()
+
+    try:
+        # If no coldkey provided, let the AccountManager handle it
+        # It will use the only coldkey if there's just one, or raise an error
+        hotkey = account_manager.create_hotkey(
+            name=args.name, coldkey_address=args.coldkey
+        )
+
+        # Success message is already printed in create_hotkey
+
+        # If show_mnemonic was requested, show it
+        if args.show_mnemonic and hotkey.get("mnemonic"):
+            print("\nHotkey mnemonic: {0}".format(hotkey["mnemonic"]))
+            print("Note: This mnemonic is only needed if you want to use this hotkey")
+            print("      outside of the Hippius SDK. For normal operations, the proxy")
+            print("      relationship will allow your coldkey to authorize actions.")
+
+        return hotkey
+
+    except ValueError as e:
+        # Handle the specific error case of multiple coldkeys
+        if "multiple coldkeys exist" in str(e):
+            print(f"Error: {e}")
+            print("\nPlease specify which coldkey to use with:")
+            print(
+                "  hippius account hotkey create --coldkey <COLDKEY_ADDRESS> [--name <NAME>]"
+            )
+        else:
+            print(f"Error creating hotkey: {str(e)}")
+
+        return None
+    except Exception as e:
+        print(f"Error creating hotkey: {str(e)}")
+        return None
+
+
+def handle_account_proxy_create(args):
+    """Handle creating a proxy relationship."""
+    from hippius_sdk.account import AccountManager
+
+    account_manager = AccountManager()
+
+    try:
+        result = account_manager.create_proxy_relationship(
+            coldkey_address=args.coldkey,
+            hotkey_address=args.hotkey,
+            proxy_type=args.proxy_type,
+            delay=args.delay,
+        )
+
+        if result.get("success"):
+            print(f"Successfully created proxy relationship!")
+            print(f"Coldkey: {result['coldkey']}")
+            print(f"Hotkey:  {result['hotkey']}")
+            print(f"Type:    {result['proxy_type']}")
+            print(f"Tx Hash: {result['transaction_hash']}")
+        else:
+            print(
+                f"Failed to create proxy relationship: {result.get('error', 'Unknown error')}"
+            )
+
+        return result
+
+    except Exception as e:
+        print(f"Error creating proxy relationship: {str(e)}")
+        return None
+
+
+def handle_account_proxy_remove(args):
+    """Handle removing a proxy relationship."""
+    from hippius_sdk.account import AccountManager
+
+    account_manager = AccountManager()
+
+    try:
+        result = account_manager.remove_proxy(
+            coldkey_address=args.coldkey, hotkey_address=args.hotkey
+        )
+
+        if result.get("success"):
+            print(f"Successfully removed proxy relationship!")
+            print(f"Coldkey: {result['coldkey']}")
+            print(f"Hotkey:  {result['hotkey']}")
+            print(f"Tx Hash: {result['transaction_hash']}")
+        else:
+            print(
+                f"Failed to remove proxy relationship: {result.get('error', 'Unknown error')}"
+            )
+
+        return result
+
+    except Exception as e:
+        print(f"Error removing proxy relationship: {str(e)}")
+        return None
 
 
 def main():
@@ -1812,55 +2010,139 @@ examples:
     )
 
     # Account subcommand
-    account_parser = subparsers.add_parser("account", help="Manage substrate accounts")
+    account_parser = subparsers.add_parser("account", help="Manage blockchain accounts")
     account_subparsers = account_parser.add_subparsers(
-        dest="account_action", help="Account action"
+        dest="account_action", help="Account management actions"
     )
 
-    # List accounts
-    account_subparsers.add_parser("list", help="List all accounts")
-
-    # Switch active account
-    switch_account_parser = account_subparsers.add_parser(
-        "switch", help="Switch to a different account"
+    # Coldkey subcommands
+    coldkey_parser = account_subparsers.add_parser(
+        "coldkey", help="Manage coldkey accounts"
     )
-    switch_account_parser.add_argument(
-        "account_name", help="Name of the account to switch to"
+    coldkey_subparsers = coldkey_parser.add_subparsers(
+        dest="coldkey_action", help="Coldkey actions"
     )
 
-    # Delete account
-    delete_account_parser = account_subparsers.add_parser(
-        "delete", help="Delete an account"
+    # Create coldkey command
+    create_coldkey_parser = coldkey_subparsers.add_parser(
+        "create", help="Create a new coldkey"
     )
-    delete_account_parser.add_argument(
-        "account_name", help="Name of the account to delete"
+    create_coldkey_parser.add_argument(
+        "--name", help="Name for the coldkey (default: hippius_coldkey)"
+    )
+    mnemonic_group = create_coldkey_parser.add_mutually_exclusive_group()
+    mnemonic_group.add_argument("--mnemonic", help="Mnemonic seed phrase to use")
+    mnemonic_group.add_argument(
+        "--generate-mnemonic",
+        action="store_true",
+        help="Generate a new mnemonic (default if no mnemonic provided)",
+    )
+    create_coldkey_parser.add_argument(
+        "--show-mnemonic",
+        action="store_true",
+        help="Display the mnemonic after creation (USE WITH CAUTION)",
+    )
+    create_coldkey_parser.add_argument(
+        "--no-encrypt",
+        action="store_true",
+        help="Do NOT encrypt the mnemonic with a password (not recommended)",
+    )
+    create_coldkey_parser.set_defaults(func=handle_account_coldkey_create)
+
+    # Hotkey subcommands
+    hotkey_parser = account_subparsers.add_parser(
+        "hotkey", help="Manage hotkey accounts"
+    )
+    hotkey_subparsers = hotkey_parser.add_subparsers(
+        dest="hotkey_action", help="Hotkey actions"
     )
 
-    # Address subcommand for read-only operations
-    address_parser = subparsers.add_parser(
-        "address", help="Manage default address for read-only operations"
+    # Create hotkey command
+    create_hotkey_parser = hotkey_subparsers.add_parser(
+        "create", help="Create a new hotkey associated with a coldkey"
     )
-    address_subparsers = address_parser.add_subparsers(
-        dest="address_action", help="Address action"
+    create_hotkey_parser.add_argument(
+        "--name", help="Name for the hotkey (default: hippius_hotkey_N)"
+    )
+    create_hotkey_parser.add_argument(
+        "--coldkey",
+        help="Coldkey address to associate with (required if multiple coldkeys exist)",
+    )
+    create_hotkey_parser.add_argument(
+        "--show-mnemonic",
+        action="store_true",
+        help="Display the mnemonic after creation",
+    )
+    create_hotkey_parser.set_defaults(func=handle_account_hotkey_create)
+
+    # List accounts command
+    list_accounts_parser = account_subparsers.add_parser("list", help="List accounts")
+    list_accounts_parser.add_argument(
+        "type", choices=["coldkey", "hotkey", "proxy"], help="Type of accounts to list"
+    )
+    list_accounts_parser.add_argument("--coldkey", help="Coldkey address to filter by")
+    list_accounts_parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Show more details"
+    )
+    list_accounts_parser.set_defaults(func=handle_account_list)
+
+    # Proxy subcommands
+    proxy_parser = account_subparsers.add_parser(
+        "proxy", help="Manage proxy relationships"
+    )
+    proxy_subparsers = proxy_parser.add_subparsers(
+        dest="proxy_action", help="Proxy actions"
     )
 
-    # Set default address
-    set_default_parser = address_subparsers.add_parser(
-        "set-default", help="Set the default address for read-only operations"
+    # Create proxy command
+    create_proxy_parser = proxy_subparsers.add_parser(
+        "create", help="Create a proxy relationship"
     )
-    set_default_parser.add_argument(
-        "address", help="The SS58 address to use as default"
+    create_proxy_parser.add_argument(
+        "--coldkey", required=True, help="Coldkey address (delegator)"
     )
+    create_proxy_parser.add_argument(
+        "--hotkey", required=True, help="Hotkey address (delegate)"
+    )
+    create_proxy_parser.add_argument(
+        "--proxy-type", default="NonTransfer", help="Proxy type (default: NonTransfer)"
+    )
+    create_proxy_parser.add_argument(
+        "--delay",
+        type=int,
+        default=0,
+        help="Delay in blocks before proxy becomes active (default: 0)",
+    )
+    create_proxy_parser.add_argument(
+        "--password",
+        help="Password for the coldkey (will prompt if not provided and needed)",
+    )
+    create_proxy_parser.set_defaults(func=handle_account_proxy_create)
 
-    # Get current default address
-    address_subparsers.add_parser(
-        "get-default", help="Show the current default address for read-only operations"
+    # Remove proxy command
+    remove_proxy_parser = proxy_subparsers.add_parser(
+        "remove", help="Remove a proxy relationship"
     )
-
-    # Clear default address
-    address_subparsers.add_parser(
-        "clear-default", help="Clear the default address for read-only operations"
+    remove_proxy_parser.add_argument(
+        "--coldkey", required=True, help="Coldkey address (delegator)"
     )
+    remove_proxy_parser.add_argument(
+        "--hotkey", required=True, help="Hotkey address (delegate)"
+    )
+    remove_proxy_parser.add_argument(
+        "--password",
+        help="Password for the coldkey (will prompt if not provided and needed)",
+    )
+    remove_proxy_parser.add_argument(
+        "--proxy-type", default="NonTransfer", help="Proxy type (default: NonTransfer)"
+    )
+    remove_proxy_parser.add_argument(
+        "--delay",
+        type=int,
+        default=0,
+        help="Delay value used when creating the proxy (default: 0)",
+    )
+    remove_proxy_parser.set_defaults(func=handle_account_proxy_remove)
 
     args = parser.parse_args()
 

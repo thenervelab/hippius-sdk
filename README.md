@@ -911,3 +911,95 @@ client = HippiusClient(
 ```
 
 The multi-account system makes it easier to manage multiple identities while maintaining security and convenience.
+
+## Blockchain Account Management
+
+Hippius SDK provides a comprehensive solution for managing blockchain accounts, including coldkeys, hotkeys, and proxy relationships.
+
+### Coldkeys and Hotkeys
+
+Hippius uses a hierarchical account structure:
+
+- **Coldkey**: The main account that holds your funds and grants permissions
+- **Hotkey**: Delegated accounts that can perform specific actions on behalf of your coldkey
+
+This separation provides enhanced security by allowing you to keep your main account (coldkey) secure while using hotkeys for day-to-day operations.
+
+### Creating and Managing Accounts
+
+```python
+from hippius_sdk.account import AccountManager
+
+# Initialize the account manager
+account_manager = AccountManager()
+
+# Create a coldkey (main account)
+coldkey = account_manager.create_coldkey(
+    name="my_hippius_coldkey",  # Optional custom name
+    mnemonic="your mnemonic phrase here"  # Optional - will generate if not provided
+)
+
+# Create a hotkey associated with the coldkey
+hotkey = account_manager.create_hotkey(
+    name="my_hippius_hotkey_1",  # Optional custom name
+    coldkey_address=coldkey["address"]  # Optional association
+)
+
+# List all coldkeys
+coldkeys = account_manager.list_coldkeys()
+
+# List hotkeys for a specific coldkey
+hotkeys = account_manager.list_hotkeys(coldkey_address=coldkey["address"])
+
+# Create a proxy relationship on the blockchain
+result = account_manager.create_proxy_relationship(
+    coldkey_address=coldkey["address"],
+    hotkey_address=hotkey["address"],
+    proxy_type="NonTransfer",  # Type of permissions granted
+    delay=0  # Blocks before proxy becomes active
+)
+
+# List proxy relationships
+proxies = account_manager.list_proxies(coldkey_address=coldkey["address"])
+
+# Remove a proxy relationship
+result = account_manager.remove_proxy(
+    coldkey_address=coldkey["address"],
+    hotkey_address=hotkey["address"]
+)
+```
+
+### CLI Commands for Account Management
+
+The SDK provides CLI commands for managing accounts:
+
+```bash
+# Create a coldkey
+hippius account coldkey create --name "my_hippius_coldkey" --generate-mnemonic --show-mnemonic
+
+# Create a hotkey and associate with a coldkey
+hippius account hotkey create --name "my_hippius_hotkey_1" --coldkey [COLDKEY_ADDRESS]
+
+# List accounts
+hippius account list coldkey --verbose
+hippius account list hotkey
+hippius account list proxy --coldkey [COLDKEY_ADDRESS]
+
+# Create a proxy relationship on the blockchain
+hippius account proxy create --coldkey [COLDKEY_ADDRESS] --hotkey [HOTKEY_ADDRESS] --proxy-type NonTransfer
+
+# Remove a proxy relationship
+hippius account proxy remove --coldkey [COLDKEY_ADDRESS] --hotkey [HOTKEY_ADDRESS]
+```
+
+### Best Practices for Account Management
+
+1. **Security**: Keep your coldkey mnemonic secure and never share it. This is the master key to your account.
+
+2. **Proxy Types**: Different proxy types grant different permissions:
+   - `NonTransfer`: Can perform operations except transferring funds
+   - Other types may be available depending on the chain configuration
+
+3. **Multiple Hotkeys**: Create separate hotkeys for different applications or services to limit the impact if one is compromised.
+
+4. **Regular Auditing**: Regularly check your proxy relationships using `hippius account list proxy` to ensure only authorized delegates have access.
