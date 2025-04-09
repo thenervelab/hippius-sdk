@@ -11,7 +11,7 @@ from hippius_sdk import HippiusClient
 
 # Configuration
 IPFS_GATEWAY = "https://ipfs.io"  # Public IPFS gateway for downloads
-IPFS_API_URL = "https://relay-fr.hippius.network"  # Hippius relay node for uploads
+IPFS_API_URL = "https://store.hippius.network"  # Hippius relay node for uploads
 
 # Initialize the client
 client = HippiusClient(

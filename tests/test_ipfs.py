@@ -57,9 +57,9 @@ class TestIPFSClient(unittest.TestCase):
         client = IPFSClient()
 
         # Should connect to the default Hippius relay node
-        mock_connect.assert_called_once_with("https://relay-fr.hippius.network")
+        mock_connect.assert_called_once_with("https://store.hippius.network")
         self.assertEqual(client.client, mock_client)
-        self.assertEqual(client.base_url, "https://relay-fr.hippius.network")
+        self.assertEqual(client.base_url, "https://store.hippius.network")
 
     @patch("ipfshttpclient.connect")
     def test_init_without_api_url(self, mock_connect):

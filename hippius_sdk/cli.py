@@ -1608,8 +1608,8 @@ examples:
     )
     parser.add_argument(
         "--api-url",
-        default=get_config_value("ipfs", "api_url", "https://relay-fr.hippius.network"),
-        help="IPFS API URL for uploads (default: from config or https://relay-fr.hippius.network)",
+        default=get_config_value("ipfs", "api_url", "https://store.hippius.network"),
+        help="IPFS API URL for uploads (default: from config or https://store.hippius.network)",
     )
     parser.add_argument(
         "--local-ipfs",

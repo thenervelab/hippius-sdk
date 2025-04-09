@@ -36,7 +36,7 @@ client = HippiusClient()
 # Or specify custom endpoints
 client = HippiusClient(
     ipfs_gateway="https://ipfs.io",                       # For downloads (default)
-    ipfs_api_url="https://relay-fr.hippius.network",  # For uploads (default)
+    ipfs_api_url="https://store.hippius.network",  # For uploads (default)
 )
 
 # Upload a file to IPFS
@@ -282,6 +282,64 @@ This command provides detailed information about each erasure-coded file includi
 - Miners storing the file
 - Reconstruction command
 
+The `ec-files` command is optimized for performance through parallel processing and intelligent filtering, making it efficient even with large numbers of files.
+
+#### Performance Considerations
+
+The erasure coding implementation has been optimized for:
+
+1. **Speed**: Parallel processing for file operations
+2. **Memory efficiency**: Files are processed in chunks to minimize memory usage
+3. **Auto-tuning**: Parameters like chunk size are automatically adjusted for small files
+4. **Intelligent filtering**: The system can quickly identify potential erasure-coded files
+
+For extremely large files (>1GB), consider using larger chunk sizes to improve performance:
+
+```bash
+hippius erasure-code large_video.mp4 --chunk-size 10485760  # 10MB chunks
+```
+
+#### Directory Support for Erasure Coding
+
+Hippius SDK now supports applying erasure coding to entire directories:
+
+```bash
+# Apply erasure coding to an entire directory
+hippius erasure-code my_directory/
+
+# The CLI will detect that it's a directory and offer two options:
+# 1. Archive the directory first, then erasure code the archive
+# 2. Apply erasure coding to each file in the directory individually
+```
+
+When choosing the second option, the system will process each file in the directory individually, adjusting parameters like chunk size automatically for small files. A summary of the operation will be displayed, showing:
+- Total files processed
+- Successfully coded files with their metadata CIDs
+- Any files that failed, with error details
+
+To reconstruct a file from erasure-coded chunks:
+
+```bash
+hippius reconstruct QmMetadataCID reconstructed_filename
+```
+
+#### Default Address Management
+
+Hippius SDK now allows setting a default address for read-only operations, making it easier to use commands like `files` and `ec-files` without specifying an account address each time:
+
+```bash
+# Set a default address for read-only operations
+hippius address set-default 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+
+# View the currently set default address
+hippius address get-default
+
+# Clear the default address
+hippius address clear-default
+```
+
+Once a default address is set, commands like `hippius files` and `hippius ec-files` will automatically use this address when no explicit address is provided.
+
 #### Troubleshooting
 
 1. **IPFS Connection Issues**: Make sure you have either:
@@ -302,7 +360,30 @@ This command provides detailed information about each erasure-coded file includi
    which hippius
    ```
 
-4. **Substrate Issues**: For marketplace operations, make sure your `.env` has the correct `SUBSTRATE_SEED_PHRASE` and `SUBSTRATE_URL` values.
+4. **Default Address Issues**: If you receive errors about missing account address:
+   ```bash
+   # Set a default address for read-only operations
+   hippius address set-default 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+   ```
+
+5. **Substrate Issues**: For marketplace operations, make sure your `.env` has the correct `SUBSTRATE_SEED_PHRASE` and `SUBSTRATE_URL` values.
+
+6. **Erasure Coding Problems**:
+   - **"Wrong length for input blocks"**: This typically happens with very small files
+     ```bash
+     # Try smaller k and m values for small files
+     hippius erasure-code small_file.txt --k 2 --m 3
+     ```
+   - **Directories can't be directly coded**: Use the directory support option when prompted
+   - **"zfec is required"**: Install the missing package
+     ```bash
+     pip install zfec
+     poetry add zfec
+     ```
+   - **Slow performance with large files**: Increase chunk size
+     ```bash
+     hippius erasure-code large_file.mp4 --chunk-size 5242880  # 5MB chunks
+     ```
 
 ## Command Line Interface
 
@@ -315,7 +396,7 @@ The Hippius SDK includes a powerful command-line interface (CLI) that provides a
 hippius --help
 
 # Set global options
-hippius --gateway https://ipfs.io --api-url https://relay-fr.hippius.network --verbose
+hippius --gateway https://ipfs.io --api-url https://store.hippius.network --verbose
 ```
 
 ### IPFS Operations
@@ -400,7 +481,7 @@ hippius ec-files --all-miners
 hippius ec-files --show-chunks
 ```
 
-The `ec-files` command makes it easy to track and manage your erasure-coded files separately from regular files. It provides the metadata CID needed for reconstruction and information about chunk distribution.
+The `ec-files` command has been optimized for performance and can now handle large numbers of files efficiently through parallel processing.
 
 ### Using Environment Variables
 
@@ -408,7 +489,7 @@ The CLI automatically reads from your `.env` file for common settings:
 
 ```
 IPFS_GATEWAY=https://ipfs.io
-IPFS_API_URL=https://relay-fr.hippius.network
+IPFS_API_URL=https://store.hippius.network
 SUBSTRATE_URL=wss://rpc.hippius.network
 SUBSTRATE_SEED_PHRASE="your twelve word seed phrase..."
 SUBSTRATE_DEFAULT_MINERS=miner1,miner2,miner3
@@ -515,13 +596,14 @@ The configuration is organized in the following sections:
 {
   "ipfs": {
     "gateway": "https://ipfs.io",
-    "api_url": "https://relay-fr.hippius.network",
+    "api_url": "https://store.hippius.network",
     "local_ipfs": false
   },
   "substrate": {
     "url": "wss://rpc.hippius.network",
     "seed_phrase": null,
-    "default_miners": []
+    "default_miners": [],
+    "default_address": null
   },
   "encryption": {
     "encrypt_by_default": false,
@@ -706,7 +788,13 @@ hippius --help
    which hippius
    ```
 
-4. **Substrate Issues**: For marketplace operations, make sure your `.env` has the correct `SUBSTRATE_SEED_PHRASE` and `SUBSTRATE_URL` values.
+4. **Default Address Issues**: If you receive errors about missing account address:
+   ```bash
+   # Set a default address for read-only operations
+   hippius address set-default 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+   ```
+
+5. **Substrate Issues**: For marketplace operations, make sure your `.env` has the correct `SUBSTRATE_SEED_PHRASE` and `SUBSTRATE_URL` values.
 
 ## Contributing
 

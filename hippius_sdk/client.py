@@ -49,7 +49,7 @@ class HippiusClient:
 
         if ipfs_api_url is None:
             ipfs_api_url = get_config_value(
-                "ipfs", "api_url", "https://relay-fr.hippius.network"
+                "ipfs", "api_url", "https://store.hippius.network"
             )
 
             # Check if local IPFS is enabled in config

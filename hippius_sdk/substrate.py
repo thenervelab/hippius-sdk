@@ -6,6 +6,7 @@ Note: This functionality is coming soon and not implemented yet.
 
 import os
 import json
+import uuid
 from typing import Dict, Any, Optional, List, Union
 from substrateinterface import SubstrateInterface, Keypair
 from dotenv import load_dotenv
@@ -205,8 +206,8 @@ class SubstrateClient:
         """
         Submit a storage request for IPFS files to the marketplace.
 
-        This method batches all files into a single transaction to efficiently store
-        multiple files at once.
+        This method creates a JSON file with the list of files to pin, uploads it to IPFS,
+        and submits the CID of this file to the chain.
 
         Args:
             files: List of FileInput objects or dictionaries with fileHash and fileName
@@ -241,7 +242,7 @@ class SubstrateClient:
                 file_inputs.append(file)
 
         # Print what is being submitted
-        print(f"Submitting storage request for {len(file_inputs)} files as a batch:")
+        print(f"Preparing storage request for {len(file_inputs)} files:")
         for file in file_inputs:
             print(f"  - {file.file_name}: {file.file_hash}")
 
@@ -261,22 +262,50 @@ class SubstrateClient:
                 )
                 print(f"Connected to Substrate node at {self.url}")
 
-            # Format files for the batch call - all files are included in a single array
-            formatted_files = []
+            # Step 1: Create a JSON file with the list of files to pin
+            file_list = []
             for file_input in file_inputs:
-                formatted_files.append(
-                    {
-                        "file_hash": file_input.file_hash,
-                        "file_name": file_input.file_name,
-                    }
+                file_list.append(
+                    {"filename": file_input.file_name, "cid": file_input.file_hash}
                 )
 
-            # Create call parameters with all files in a single batch
+            # Convert to JSON
+            files_json = json.dumps(file_list, indent=2)
+            print(f"Created file list with {len(file_list)} entries")
+
+            # Step 2: Upload the JSON file to IPFS
+            import tempfile
+            from hippius_sdk.ipfs import IPFSClient
+
+            ipfs_client = IPFSClient()
+
+            # Create a temporary file with the JSON content
+            with tempfile.NamedTemporaryFile(
+                mode="w+", suffix=".json", delete=False
+            ) as temp_file:
+                temp_file_path = temp_file.name
+                temp_file.write(files_json)
+
+            try:
+                print("Uploading file list to IPFS...")
+                upload_result = ipfs_client.upload_file(temp_file_path)
+                files_list_cid = upload_result["cid"]
+                print(f"File list uploaded to IPFS with CID: {files_list_cid}")
+            finally:
+                # Clean up the temporary file
+                if os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
+
+            # Step 3: Submit the CID of the JSON file to the chain
+            # Create call parameters with the CID of the JSON file
             call_params = {
-                "files_input": formatted_files,
-                "miner_ids": miner_ids
-                if miner_ids
-                else [],  # Always include miner_ids, empty array if not specified
+                "files_input": [
+                    {
+                        "file_hash": files_list_cid,
+                        "file_name": f"files_list_{uuid.uuid4()}",  # Generate a unique ID
+                    }
+                ],
+                "miner_ids": miner_ids if miner_ids else [],
             }
 
             # Create the call to the marketplace
@@ -300,7 +329,9 @@ class SubstrateClient:
                 call=call, keypair=self._keypair
             )
 
-            print(f"Submitting batch transaction for {len(formatted_files)} files...")
+            print(
+                f"Submitting transaction to store {len(file_list)} files via file list CID..."
+            )
 
             # Submit the transaction
             response = self._substrate.submit_extrinsic(
@@ -310,11 +341,10 @@ class SubstrateClient:
             # Get the transaction hash
             tx_hash = response.extrinsic_hash
 
-            print(f"Batch transaction submitted successfully!")
+            print(f"Transaction submitted successfully!")
             print(f"Transaction hash: {tx_hash}")
-            print(
-                f"All {len(formatted_files)} files have been stored in a single transaction"
-            )
+            print(f"File list CID: {files_list_cid}")
+            print(f"All {len(file_list)} files will be stored through this request")
 
             return tx_hash
 

@@ -19,7 +19,7 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 DEFAULT_CONFIG = {
     "ipfs": {
         "gateway": "https://ipfs.io",
-        "api_url": "https://relay-fr.hippius.network",
+        "api_url": "https://store.hippius.network",
         "local_ipfs": False,
     },
     "substrate": {
