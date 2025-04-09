@@ -599,6 +599,29 @@ class SubstrateClient:
             ConnectionError: If connection to Substrate fails
             ValueError: If query fails
         """
+        # For backward compatibility, this method now calls get_user_files_from_profile
+        # with appropriate conversions
+        return self.get_user_files_from_profile(account_address)
+
+    def get_user_files_from_profile(
+        self,
+        account_address: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get user files by fetching the user profile CID from ipfsPallet and then retrieving
+        the profile JSON from IPFS.
+
+        Args:
+            account_address: Substrate account address (uses keypair address if not specified)
+                             Format: 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+
+        Returns:
+            List[Dict[str, Any]]: List of file objects from the user profile
+
+        Raises:
+            ConnectionError: If connection to Substrate fails
+            ValueError: If query fails or profile cannot be retrieved
+        """
         try:
             # Initialize Substrate connection if not already connected
             if not hasattr(self, "_substrate") or self._substrate is None:
@@ -622,159 +645,204 @@ class SubstrateClient:
                     account_address = self._keypair.ss58_address
                     print(f"Using keypair address: {account_address}")
 
-            # Prepare the JSON-RPC request
-            request = {
-                "jsonrpc": "2.0",
-                "method": "get_user_files",
-                "params": [account_address],
-                "id": 1,
-            }
-
-            print(f"Querying detailed file information for account: {account_address}")
-
-            # Make the JSON-RPC call
-            response = self._substrate.rpc_request(
-                method="get_user_files", params=[account_address]
+            # Query the blockchain for the user profile CID
+            print(f"Querying user profile for account: {account_address}")
+            result = self._substrate.query(
+                module="IpfsPallet",
+                storage_function="UserProfile",
+                params=[account_address],
             )
 
-            # Check for errors in the response
-            if "error" in response:
-                error_msg = (
-                    f"RPC error: {response['error'].get('message', 'Unknown error')}"
-                )
-                print(error_msg)
-                raise ValueError(error_msg)
+            # Check if a profile was found
+            if not result.value:
+                print(f"No profile found for account: {account_address}")
+                return []
 
-            # Extract the result
-            files = response.get("result", [])
-            print(f"Found {len(files)} files stored by this account")
+            # The result is a hex-encoded IPFS CID
+            # Handle both cases: bytes (needs .hex()) and string (already hex)
+            if isinstance(result.value, bytes):
+                hex_cid = result.value.hex()
+            else:
+                # If it's already a string, use it directly
+                hex_cid = result.value
 
-            # Helper function to convert ASCII code arrays to strings
-            def ascii_to_string(value):
-                if isinstance(value, list) and all(isinstance(x, int) for x in value):
-                    return "".join(chr(code) for code in value)
-                return str(value)
+                # Remove '0x' prefix if present
+                if hex_cid.startswith("0x"):
+                    hex_cid = hex_cid[2:]
 
-            # Helper function to properly format CIDs
-            def format_cid(cid_str):
-                # If it already looks like a proper CID, return it as is
-                if cid_str.startswith(("Qm", "bafy", "bafk", "bafyb", "bafzb", "b")):
-                    return cid_str
+            print(f"Found user profile CID (hex): {hex_cid}")
 
-                # Check if it's a hex string
-                if all(c in "0123456789abcdefABCDEF" for c in cid_str):
-                    # First try the special case where the hex string is actually ASCII encoded
-                    try:
-                        # Try to decode the hex as ASCII characters
-                        # (This is the case with some substrate responses where the CID is hex-encoded ASCII)
-                        hex_bytes = bytes.fromhex(cid_str)
-                        ascii_str = hex_bytes.decode("ascii")
+            # Convert the hex CID to a readable IPFS CID
+            profile_cid = self._hex_to_ipfs_cid(hex_cid)
+            print(f"Decoded IPFS CID: {profile_cid}")
 
-                        # If the decoded string starts with a valid CID prefix, return it
-                        if ascii_str.startswith(
-                            ("Qm", "bafy", "bafk", "bafyb", "bafzb", "b")
-                        ):
-                            return ascii_str
-                    except Exception:
-                        pass
+            # Fetch the profile JSON from IPFS
+            from hippius_sdk.ipfs import IPFSClient
 
-                    # If the above doesn't work, try the standard CID decoding
-                    try:
-                        import base58
-                        import binascii
+            ipfs_client = IPFSClient()
 
-                        # Try to decode hex to binary then to base58 for CIDv0
-                        try:
-                            binary_data = binascii.unhexlify(cid_str)
-                            if (
-                                len(binary_data) > 2
-                                and binary_data[0] == 0x12
-                                and binary_data[1] == 0x20
-                            ):
-                                # This looks like a CIDv0 (Qm...)
-                                decoded_cid = base58.b58encode(binary_data).decode(
-                                    "utf-8"
-                                )
-                                return decoded_cid
-                        except Exception:
-                            pass
+            print(f"Fetching user profile from IPFS: {profile_cid}")
+            profile_data = ipfs_client.cat(profile_cid)
 
-                        # If not successful, just return hex with 0x prefix as fallback
-                        return f"0x{cid_str}"
-                    except ImportError:
-                        # If base58 is not available, return hex with prefix
-                        return f"0x{cid_str}"
+            # Parse the JSON content
+            if not profile_data.get("is_text", False):
+                raise ValueError("User profile is not in text format")
 
-                # Default case - return as is
-                return cid_str
+            profile_json = json.loads(profile_data.get("content", "{}"))
+            print(f"Successfully retrieved user profile")
 
-            # Helper function to format file sizes
-            def format_file_size(size_bytes):
-                if size_bytes >= 1024 * 1024:
-                    return f"{size_bytes / (1024 * 1024):.2f} MB"
-                else:
-                    return f"{size_bytes / 1024:.2f} KB"
+            # Extract the file list from the profile
+            # The profile might be either a dictionary with a 'files' key or a direct list of files
+            files = []
+            if isinstance(profile_json, dict):
+                files = profile_json.get("files", [])
+            elif isinstance(profile_json, list):
+                # The profile itself might be a list of files
+                files = profile_json
+            else:
+                print(f"Warning: Unexpected profile structure: {type(profile_json)}")
 
-            # Helper function to format miner IDs for display
-            def format_miner_id(miner_id):
-                if (
-                    truncate_miners
-                    and isinstance(miner_id, str)
-                    and miner_id.startswith("1")
-                    and len(miner_id) > 40
-                ):
-                    # Truncate long peer IDs
-                    return f"{miner_id[:12]}...{miner_id[-4:]}"
-                return miner_id
+            print(f"Found {len(files)} files in user profile")
 
-            # Process the response
+            # Process the files to match the expected format
             processed_files = []
             for file in files:
-                processed_file = {"file_size": file.get("file_size", 0)}
+                # Make sure file is a dictionary
+                if not isinstance(file, dict):
+                    # Skip non-dictionary entries silently
+                    continue
 
-                # Add formatted file size
-                processed_file["size_formatted"] = format_file_size(
-                    processed_file["file_size"]
+                # Convert numeric arrays to strings if needed
+                # Handle file_hash: could be an array of ASCII/UTF-8 code points
+                file_hash = None
+                raw_file_hash = file.get("file_hash")
+                if isinstance(raw_file_hash, list) and all(
+                    isinstance(n, int) for n in raw_file_hash
+                ):
+                    try:
+                        # Convert array of numbers to bytes, then to a string
+                        file_hash = bytes(raw_file_hash).decode("utf-8")
+                    except Exception:
+                        pass
+                else:
+                    # Try different field names for the CID that might be in the profile
+                    file_hash = (
+                        file.get("cid")
+                        or file.get("hash")
+                        or file.get("fileHash")
+                        or raw_file_hash
+                    )
+
+                # Handle file_name: could be an array of ASCII/UTF-8 code points
+                file_name = None
+                raw_file_name = file.get("file_name")
+                if isinstance(raw_file_name, list) and all(
+                    isinstance(n, int) for n in raw_file_name
+                ):
+                    try:
+                        # Convert array of numbers to bytes, then to a string
+                        file_name = bytes(raw_file_name).decode("utf-8")
+                    except Exception:
+                        pass
+                else:
+                    # Try different field names for the filename
+                    file_name = (
+                        file.get("filename")
+                        or file.get("name")
+                        or file.get("fileName")
+                        or raw_file_name
+                    )
+
+                # Try different field names for the size
+                file_size = (
+                    file.get("size")
+                    or file.get("fileSize")
+                    or file.get("file_size")
+                    or 0
                 )
 
-                # Convert file_hash from byte array to string
-                if "file_hash" in file:
-                    cid_str = ascii_to_string(file["file_hash"])
-                    processed_file["file_hash"] = format_cid(cid_str)
+                processed_file = {
+                    "file_hash": file_hash,
+                    "file_name": file_name,
+                    # Add any other fields available in the profile
+                    "miner_ids": file.get(
+                        "miner_ids", []
+                    ),  # Try to get miners if available
+                    "miner_count": len(file.get("miner_ids", [])),  # Count the miners
+                    "file_size": file_size,
+                }
 
-                # Convert file_name from byte array to string
-                if "file_name" in file:
-                    processed_file["file_name"] = ascii_to_string(file["file_name"])
-
-                # Convert miner_ids from byte arrays to strings
-                if "miner_ids" in file and isinstance(file["miner_ids"], list):
-                    all_miners = [
-                        ascii_to_string(miner_id) for miner_id in file["miner_ids"]
-                    ]
-                    processed_file["miner_ids_full"] = all_miners
-                    processed_file["miner_count"] = len(all_miners)
-
-                    # Truncate miner list if requested
-                    if max_miners > 0 and len(all_miners) > max_miners:
-                        displayed_miners = all_miners[:max_miners]
+                # Add formatted file size if available
+                if file_size:
+                    size_bytes = file_size
+                    if size_bytes >= 1024 * 1024:
+                        processed_file[
+                            "size_formatted"
+                        ] = f"{size_bytes / (1024 * 1024):.2f} MB"
                     else:
-                        displayed_miners = all_miners
-
-                    # Format and store the displayed miners
-                    processed_file["miner_ids"] = [
-                        {"id": miner_id, "formatted": format_miner_id(miner_id)}
-                        for miner_id in displayed_miners
-                    ]
+                        processed_file["size_formatted"] = f"{size_bytes / 1024:.2f} KB"
                 else:
-                    processed_file["miner_ids"] = []
-                    processed_file["miner_ids_full"] = []
-                    processed_file["miner_count"] = 0
+                    processed_file["size_formatted"] = "Unknown"
 
                 processed_files.append(processed_file)
 
             return processed_files
 
         except Exception as e:
-            error_msg = f"Error querying user files: {str(e)}"
+            error_msg = f"Error retrieving user files from profile: {str(e)}"
             print(error_msg)
             raise ValueError(error_msg)
+
+    def _hex_to_ipfs_cid(self, hex_string: str) -> str:
+        """
+        Convert a hex-encoded IPFS CID to a regular IPFS CID.
+
+        Args:
+            hex_string: Hex string representation of an IPFS CID
+
+        Returns:
+            str: Regular IPFS CID
+        """
+        # First, try to decode as ASCII if it's a hex representation of ASCII characters
+        try:
+            if hex_string.startswith("0x"):
+                hex_string = hex_string[2:]
+
+            bytes_data = bytes.fromhex(hex_string)
+            ascii_str = bytes_data.decode("ascii")
+
+            # If the decoded string starts with a valid CID prefix, return it
+            if ascii_str.startswith(("Qm", "bafy", "bafk", "bafyb", "bafzb", "b")):
+                return ascii_str
+        except Exception:
+            # If ASCII decoding fails, continue with other methods
+            pass
+
+        # Try to decode as a binary CID
+        try:
+            import base58
+
+            if hex_string.startswith("0x"):
+                hex_string = hex_string[2:]
+
+            binary_data = bytes.fromhex(hex_string)
+
+            # Check if it matches CIDv0 pattern (starts with 0x12, 0x20)
+            if (
+                len(binary_data) > 2
+                and binary_data[0] == 0x12
+                and binary_data[1] == 0x20
+            ):
+                # CIDv0 (Qm...)
+                return base58.b58encode(binary_data).decode("utf-8")
+
+            # If it doesn't match CIDv0, for CIDv1 just return the hex without 0x prefix
+            # since adding 0x breaks IPFS gateway URLs
+            return hex_string
+        except ImportError:
+            # If base58 is not available
+            print("Warning: base58 module not available for proper CID conversion")
+            return hex_string
+        except Exception as e:
+            print(f"Error converting hex to CID: {e}")
+            return hex_string

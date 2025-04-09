@@ -16,6 +16,8 @@ from typing import Optional, List
 import getpass
 import concurrent.futures
 import threading
+import random
+import uuid
 
 # Import SDK components
 from hippius_sdk import HippiusClient
@@ -431,9 +433,12 @@ def handle_credits(client, account_address):
     return 0
 
 
-def handle_files(client, account_address, debug=False, show_all_miners=False):
-    """Handle the files command"""
-    print("Retrieving file information...")
+def handle_files(client, account_address, show_all_miners=False):
+    """
+    Display files stored by a user in a nice format.
+
+    This command only reads data and doesn't require seed phrase decryption.
+    """
     try:
         # Get the account address we're querying
         if account_address is None:
@@ -457,105 +462,89 @@ def handle_files(client, account_address, debug=False, show_all_miners=False):
                     )
                     return 1
 
-        if debug:
-            print("DEBUG MODE: Will show details about CID decoding")
+        # Get files for the account using the new profile-based method
+        print(f"Retrieving files for account: {account_address}")
+        files = client.substrate_client.get_user_files_from_profile(account_address)
 
-        # Use the enhanced get_user_files method with our preferences
-        max_miners = 0 if show_all_miners else 3  # 0 means show all miners
-        files = client.substrate_client.get_user_files(
-            account_address,
-            truncate_miners=True,  # Always truncate long miner IDs
-            max_miners=max_miners,  # Use 0 for all or 3 for limited
-        )
+        # Check if any files were found
+        if not files:
+            print(f"No files found for account: {account_address}")
+            return 0
 
-        if files:
-            print(f"\nFound {len(files)} files for account: {account_address}")
-            print("\n" + "-" * 80)
+        print(f"\nFound {len(files)} files for account: {account_address}")
+        print("-" * 80)
 
-            for i, file in enumerate(files, 1):
+        for i, file in enumerate(files, 1):
+            try:
                 print(f"File {i}:")
 
-                # Format the CID using the SDK method
+                # Display file hash/CID
                 file_hash = file.get("file_hash", "Unknown")
-                formatted_cid = client.format_cid(file_hash)
-                print(f"  File Hash (CID): {formatted_cid}")
+                if file_hash is not None:
+                    formatted_cid = client.format_cid(file_hash)
+                    print(f"  CID: {formatted_cid}")
+                else:
+                    print(f"  CID: Unknown (None)")
 
                 # Display file name
-                print(f"  File Name: {file.get('file_name', 'Unnamed')}")
+                file_name = file.get("file_name", "Unnamed")
+                print(
+                    f"  File name: {file_name if file_name is not None else 'Unnamed'}"
+                )
 
-                # Display file size with SDK formatting method if needed
-                file_size = file.get("file_size", 0)
-                size_formatted = file.get("size_formatted")
-                if not size_formatted and file_size > 0:
-                    size_formatted = client.format_size(file_size)
-                print(f"  File Size: {file_size:,} bytes ({size_formatted})")
-
-                # Display miners
-                miner_count = file.get("miner_count", 0)
-                miners = file.get("miner_ids", [])
-
-                if miner_count > 0:
-                    print(f"  Pinned by {miner_count} miners:")
-
-                    # Show message about truncated list if applicable
-                    if miner_count > len(miners) and not show_all_miners:
-                        print(
-                            f"    (Showing {len(miners)} of {miner_count} miners - use --all-miners to see all)"
-                        )
-                    elif miner_count > 3 and show_all_miners:
-                        print(f"    (Showing all {miner_count} miners)")
-
-                    # Display the miners using their formatted IDs
-                    for miner in miners:
-                        if isinstance(miner, dict) and "formatted" in miner:
-                            print(f"    - {miner['formatted']}")
-                        else:
-                            print(f"    - {miner}")
+                # Display file size
+                if "size_formatted" in file and file["size_formatted"] is not None:
+                    size_formatted = file["size_formatted"]
+                    file_size = file.get("file_size", 0)
+                    if file_size is not None:
+                        print(f"  File size: {file_size:,} bytes ({size_formatted})")
+                    else:
+                        print(f"  File size: Unknown")
                 else:
-                    print("  Not pinned by any miners")
+                    print(f"  File size: Unknown")
+
+                # Display miners (if available)
+                miner_ids = file.get("miner_ids", [])
+                miner_count = file.get("miner_count", 0)
+
+                if miner_ids and show_all_miners:
+                    print(f"  Stored by {len(miner_ids)} miners:")
+                    for miner in miner_ids:
+                        miner_id = (
+                            miner.get("id", miner) if isinstance(miner, dict) else miner
+                        )
+                        formatted = (
+                            miner.get("formatted", miner_id)
+                            if isinstance(miner, dict)
+                            else miner_id
+                        )
+                        print(f"    - {formatted}")
+                elif miner_count:
+                    print(f"  Stored by {miner_count} miners")
+                else:
+                    print(f"  Storage information not available")
 
                 print("-" * 80)
-        else:
-            print(
-                f"No files found for account: {account_address or client.substrate_client._keypair.ss58_address}"
-            )
+            except Exception as e:
+                print(f"  Error displaying file {i}: {e}")
+                print("-" * 80)
+                continue
+
+        # Add tip for downloading
+        if files:
+            print("\nTo download a file, use:")
+            print(f"  hippius download <CID> <output_filename>")
+
     except Exception as e:
-        print(f"Error retrieving file information: {e}")
+        print(f"Error retrieving files: {e}")
         return 1
 
     return 0
 
 
 def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=False):
-    """
-    Display erasure-coded files stored by a user.
-
-    This command only reads data and doesn't require seed phrase decryption.
-    """
-    # For progress reporting
-    processed_files = 0
-    total_files = 0
-    lock = threading.Lock()
-
-    # Store results from worker threads
-    results = {
-        "ec_files": [],
-        "binary_files": 0,
-        "json_decode_errors": 0,
-        "not_ec_files": 0,
-        "skipped_files": 0,
-    }
-
-    # For quick identification of potential EC files - common naming patterns
-    EC_FILENAME_PATTERNS = ["metadata", "ec-", "erasure"]
-
-    # Debug print function that can be enabled/disabled
-    verbose = get_config_value("cli", "verbose", False)
-
-    def debug_print(msg):
-        if verbose:
-            print(msg)
-
+    """Handle the ec-files command to show only erasure-coded files"""
+    print("Looking for erasure-coded files...")
     try:
         # Get the account address we're querying
         if account_address is None:
@@ -579,251 +568,173 @@ def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=
                     )
                     return 1
 
-        # Get all files for the account
-        print(f"Fetching files for account: {account_address}")
-        files = client.substrate_client.get_user_files(
-            account_address=account_address,
-            truncate_miners=not show_all_miners,
-            max_miners=0 if show_all_miners else 3,
-        )
+        # First, get all user files using the profile method
+        files = client.substrate_client.get_user_files_from_profile(account_address)
 
-        if not files:
-            print(f"No files found for account: {account_address}")
-            return
-
-        total_files = len(files)
-        print(f"Found {total_files} files, analyzing for erasure-coded metadata...")
-
-        # First, do a quick initial filter to identify potential EC files based on name patterns
-        potential_ec_files = []
+        # Filter for metadata files (ending with .ec_metadata)
+        ec_metadata_files = []
         for file in files:
-            cid = file.get("file_hash")
-            if not cid:
-                results["skipped_files"] += 1
-                continue
+            file_name = file.get("file_name", "")
+            if (
+                file_name
+                and isinstance(file_name, str)
+                and file_name.endswith(".ec_metadata")
+            ):
+                ec_metadata_files.append(file)
 
-            # Check if filename contains any of our EC patterns
-            name = file.get("file_name", "").lower()
-            if any(pattern in name for pattern in EC_FILENAME_PATTERNS):
-                # Higher chance this is an EC file
-                debug_print(f"  - Potential EC file based on name: {name}")
-                potential_ec_files.append((0, file))  # Priority 0 = high
-            else:
-                # Still check it, but with lower priority
-                potential_ec_files.append((1, file))  # Priority 1 = lower
+        if not ec_metadata_files:
+            print(f"No erasure-coded files found for account {account_address}")
+            return 0
 
-        # Sort by priority (check likely EC files first)
-        potential_ec_files.sort(key=lambda x: x[0])
-        priority_files = [f for _, f in potential_ec_files]
+        print(f"\nFound {len(ec_metadata_files)} erasure-coded files:")
+        print("-" * 80)
 
-        # Progress update function
-        def update_progress():
-            nonlocal processed_files
-            processed_files += 1
-            if processed_files % 5 == 0 or processed_files == total_files:
-                print(
-                    f"  Progress: {processed_files}/{total_files} files analyzed ({(processed_files/total_files)*100:.1f}%)",
-                    end="\r",
-                )
-
-        # Function to process a single file - for parallel execution
-        def process_file(file):
+        for i, file in enumerate(ec_metadata_files, 1):
             try:
-                cid = file.get("file_hash")
-                name = file.get("file_name", "")
+                print(f"EC File {i}:")
 
-                debug_print(f"  - Processing: {cid} ({name})")
+                # Get the metadata CID
+                metadata_cid = file.get("file_hash", "Unknown")
+                if metadata_cid is not None and metadata_cid != "Unknown":
+                    formatted_cid = client.format_cid(metadata_cid)
+                    print(f"  Metadata CID: {formatted_cid}")
 
-                # Try to fetch metadata to see if it's an erasure-coded file
-                metadata = client.ipfs_client.cat(cid)
-                if not metadata or not metadata.get("content"):
-                    with lock:
-                        results["skipped_files"] += 1
-                        update_progress()
-                    return None
-
-                content = metadata.get("content")
-                if isinstance(content, bytes):
+                    # Fetch and parse the metadata to get original file info
                     try:
-                        # Try to decode the content as UTF-8 text - might fail for binary files
-                        metadata_text = content.decode("utf-8", errors="strict")
+                        # Use the formatted CID, not the raw hex-encoded version
+                        metadata = client.ipfs_client.cat(formatted_cid)
 
-                        try:
-                            metadata_obj = json.loads(metadata_text)
+                        # Check if we have text content
+                        if metadata.get("is_text", False):
+                            # Parse the metadata content as JSON
+                            import json
 
-                            # Check if this is an erasure-coded file metadata - look for either format
-                            is_ec_file = False
+                            metadata_json = json.loads(metadata.get("content", "{}"))
 
-                            # Check primary format
-                            if (
-                                isinstance(metadata_obj, dict)
-                                and metadata_obj.get("chunks")
-                                and metadata_obj.get("original_name")
-                            ):
-                                is_ec_file = True
+                            # Extract original file info
+                            # Check both possible formats
+                            original_file = metadata_json.get("original_file", {})
 
-                            # Check alternative format - different structure used in some versions
-                            elif (
-                                isinstance(metadata_obj, dict)
-                                and metadata_obj.get("erasure_coding")
-                                and metadata_obj.get("original_file")
-                            ):
-                                # This is the newer format with a different structure
-                                metadata_obj = {
-                                    "original_name": metadata_obj.get(
-                                        "original_file", {}
-                                    ).get("name", "unknown"),
-                                    "k": metadata_obj.get("erasure_coding", {}).get(
-                                        "k"
-                                    ),
-                                    "m": metadata_obj.get("erasure_coding", {}).get(
-                                        "m"
-                                    ),
-                                    "original_size": metadata_obj.get(
-                                        "original_file", {}
-                                    ).get("size", 0),
-                                    "encrypted": metadata_obj.get("encrypted", False),
-                                    "chunks": metadata_obj.get("chunks", []),
-                                }
-                                is_ec_file = True
-
-                            if is_ec_file:
-                                # Found an erasure-coded file!
-                                debug_print(
-                                    f"    ✓ Found erasure-coded file: {metadata_obj.get('original_name')}"
+                            if original_file:
+                                # New format
+                                print(
+                                    f"  Original file name: {original_file.get('name', 'Unknown')}"
                                 )
 
-                                ec_file = {
-                                    "metadata_cid": cid,
-                                    "original_name": metadata_obj.get(
-                                        "original_name", "unknown"
-                                    ),
-                                    "k": metadata_obj.get("k"),
-                                    "m": metadata_obj.get("m"),
-                                    "total_chunks": len(metadata_obj.get("chunks", [])),
-                                    "original_size_bytes": metadata_obj.get(
-                                        "original_size"
-                                    ),
-                                    "size_formatted": client.format_size(
-                                        metadata_obj.get("original_size", 0)
-                                    ),
-                                    "encrypted": metadata_obj.get("encrypted", False),
-                                    "miner_ids": file.get("miner_ids", []),
-                                    "miner_count": file.get("miner_count", 0),
-                                    "chunks": metadata_obj.get("chunks", []),
-                                }
-                                with lock:
-                                    results["ec_files"].append(ec_file)
-                                    update_progress()
-                                return ec_file
+                                # Show file size
+                                original_size = original_file.get("size", 0)
+                                if original_size:
+                                    size_formatted = client.format_size(original_size)
+                                    print(
+                                        f"  Original file size: {original_size:,} bytes ({size_formatted})"
+                                    )
+                                else:
+                                    print(f"  Original file size: Unknown")
+
+                                # Show hash/CID of original file if available
+                                original_hash = original_file.get("hash", "")
+                                if original_hash:
+                                    print(f"  Original file hash: {original_hash}")
+
+                                # Show extension if available
+                                extension = original_file.get("extension", "")
+                                if extension:
+                                    print(f"  File extension: {extension}")
                             else:
-                                with lock:
-                                    results["not_ec_files"] += 1
-                                    update_progress()
-                                return None
+                                # Try older format
+                                original_name = metadata_json.get(
+                                    "original_name", "Unknown"
+                                )
+                                print(f"  Original file name: {original_name}")
 
-                        except json.JSONDecodeError:
-                            # Not a JSON file, so not metadata
-                            with lock:
-                                results["json_decode_errors"] += 1
-                                update_progress()
-                            return None
-                    except UnicodeDecodeError:
-                        # This is a binary file, not UTF-8 text, so not erasure-coded metadata
-                        with lock:
-                            results["binary_files"] += 1
-                            update_progress()
-                        return None
+                                original_size = metadata_json.get("original_size", 0)
+                                if original_size:
+                                    size_formatted = client.format_size(original_size)
+                                    print(
+                                        f"  Original file size: {original_size:,} bytes ({size_formatted})"
+                                    )
+                                else:
+                                    print(f"  Original file size: Unknown")
+
+                            # Show erasure coding parameters if available
+                            ec_params = metadata_json.get("erasure_coding", {})
+                            if ec_params:
+                                k = ec_params.get("k", 0)
+                                m = ec_params.get("m", 0)
+                                if k and m:
+                                    print(
+                                        f"  Erasure coding: k={k}, m={m} (need {k} of {k+m} parts)"
+                                    )
+                            else:
+                                # Check old format
+                                k = metadata_json.get("k", 0)
+                                m = metadata_json.get("m", 0)
+                                if k and m:
+                                    print(
+                                        f"  Erasure coding: k={k}, m={m} (need {k} of {k+m} parts)"
+                                    )
+
+                            # Show encryption status if available
+                            encrypted = metadata_json.get("encrypted", False)
+                            print(f"  Encrypted: {'Yes' if encrypted else 'No'}")
+
+                            # Count chunks
+                            chunks = metadata_json.get("chunks", [])
+                            if chunks:
+                                print(f"  Total chunks: {len(chunks)}")
+
+                                # Show chunk details if requested
+                                if show_chunks:
+                                    print(f"  Chunks:")
+                                    for j, chunk in enumerate(chunks):
+                                        chunk_cid = (
+                                            chunk
+                                            if isinstance(chunk, str)
+                                            else chunk.get("cid", "Unknown")
+                                        )
+                                        print(f"    Chunk {j+1}: {chunk_cid}")
+                        else:
+                            # Couldn't parse metadata as text
+                            print(f"  Error: Metadata is not in text format")
+                    except Exception as e:
+                        print(f"  Error fetching metadata: {e}")
                 else:
-                    with lock:
-                        results["skipped_files"] += 1
-                        update_progress()
-                    return None
+                    print(f"  Metadata CID: Unknown (None)")
+
+                # Display file name (metadata file name)
+                file_name = file.get("file_name", "Unnamed")
+                print(
+                    f"  Metadata file name: {file_name if file_name is not None else 'Unnamed'}"
+                )
+
+                # Show reconstruction command
+                if metadata_cid is not None and metadata_cid != "Unknown":
+                    print(f"  Reconstruction command:")
+                    # Try to extract original name from metadata file name
+                    original_name = (
+                        file_name.replace(".ec_metadata", "") if file_name else "file"
+                    )
+                    print(
+                        f"    hippius reconstruct {formatted_cid} reconstructed_{original_name}"
+                    )
+                else:
+                    print(f"  Reconstruction command not available (missing CID)")
+
+                print("-" * 80)
             except Exception as e:
-                # For other unexpected errors
-                debug_print(f"    ✗ Error processing {name}: {str(e)}")
-                with lock:
-                    results["skipped_files"] += 1
-                    update_progress()
-                return None
+                print(f"  Error displaying EC file {i}: {e}")
+                print("-" * 80)
+                continue
 
-        # Process files in parallel - significantly speeds up execution
-        max_workers = min(10, len(files))  # Don't create too many threads
-        print(f"Processing files using {max_workers} parallel workers...")
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Start processing files - higher priority files will be submitted first
-            futures = []
-            # First process files that look like metadata files
-            for file in priority_files:
-                futures.append(executor.submit(process_file, file))
-
-            # Wait for all processing to complete
-            concurrent.futures.wait(futures)
-
-        print(
-            "\nAnalysis complete!                                  "
-        )  # Extra spaces to clear progress line
-
-        # Print statistics
-        print(f"\nResults:")
-        print(f"  Total files analyzed: {total_files}")
-        print(f"  Erasure-coded files found: {len(results['ec_files'])}")
-        if verbose:
-            print(f"  Binary files (skipped): {results['binary_files']}")
-            print(f"  JSON parse errors: {results['json_decode_errors']}")
-            print(f"  Not erasure-coded: {results['not_ec_files']}")
-            print(f"  Other skipped: {results['skipped_files']}")
-
-        # Print results
-        ec_files = results["ec_files"]
-        if not ec_files:
-            print(f"\nNo erasure-coded files found for this account.")
-            return
-
-        print(f"\nFound {len(ec_files)} erasure-coded files:\n")
-
-        for i, file in enumerate(ec_files):
-            print(f"{i+1}. {file['original_name']} ({file['size_formatted']})")
-            print(f"   Metadata CID: {file['metadata_cid']}")
-            print(
-                f"   Erasure coding: {file['k']}/{file['m']} scheme ({file['total_chunks']} chunks)"
-            )
-            print(f"   Encrypted: {'Yes' if file['encrypted'] else 'No'}")
-            print(f"   Stored by {file['miner_count']} miners")
-
-            if file.get("miner_ids") and show_all_miners:
-                print("\n   Miners:")
-                for miner in file["miner_ids"]:
-                    miner_id = (
-                        miner.get("id", miner) if isinstance(miner, dict) else miner
-                    )
-                    formatted = (
-                        miner.get("formatted", miner_id)
-                        if isinstance(miner, dict)
-                        else miner_id
-                    )
-                    print(f"     - {formatted}")
-
-            if show_chunks and file.get("chunks"):
-                print("\n   Chunks:")
-                for j, chunk in enumerate(file["chunks"]):
-                    if isinstance(chunk, dict):
-                        print(f"     {j+1}. CID: {chunk.get('cid')}")
-                    else:
-                        print(f"     {j+1}. CID: {chunk}")
-
-            print("")  # Empty line between files
-
-        print("\nTo reconstruct a file:")
-        print("hippius reconstruct <metadata_cid> <output_file>")
+        # Add helpful tips
+        print("\nTo reconstruct a file, use:")
+        print(f"  hippius reconstruct <Metadata_CID> <output_filename>")
 
     except Exception as e:
-        print(f"Error: {e}")
-        if verbose:
-            import traceback
+        print(f"Error retrieving erasure-coded files: {e}")
+        return 1
 
-            traceback.print_exc()
+    return 0
 
 
 def handle_erasure_code(
@@ -1719,42 +1630,50 @@ examples:
 
     # Files command
     files_parser = subparsers.add_parser(
-        "files", help="View detailed information about files stored by a user"
+        "files", help="View files stored by you or another account"
     )
     files_parser.add_argument(
-        "account_address",
-        nargs="?",
-        default=None,
-        help="Substrate account address (uses keypair address if not specified)",
-    )
-    files_parser.add_argument(
-        "--debug", action="store_true", help="Show debug information about CID decoding"
+        "--account_address",
+        help="Substrate account to view files for (defaults to your keyfile account)",
     )
     files_parser.add_argument(
         "--all-miners",
         action="store_true",
-        help="Show all miners for each file instead of only the first 3",
+        help="Show all miners for each file",
+    )
+    files_parser.set_defaults(
+        func=lambda args, client: handle_files(
+            client,
+            args.account_address,
+            show_all_miners=args.all_miners if hasattr(args, "all_miners") else False,
+        )
     )
 
     # Erasure Coded Files command
     ec_files_parser = subparsers.add_parser(
-        "ec-files", help="List only erasure-coded files stored by a user"
+        "ec-files", help="View erasure-coded files stored by you or another account"
     )
     ec_files_parser.add_argument(
-        "account_address",
-        nargs="?",
-        default=None,
-        help="Substrate account address (uses keypair address if not specified)",
+        "--account_address",
+        help="Substrate account to view erasure-coded files for (defaults to your keyfile account)",
     )
     ec_files_parser.add_argument(
         "--all-miners",
         action="store_true",
-        help="Show all miners for each file instead of only the first 3",
+        help="Show all miners for each file",
     )
     ec_files_parser.add_argument(
         "--show-chunks",
         action="store_true",
-        help="Show associated chunks for each erasure-coded file",
+        help="Show chunk details for each erasure-coded file",
+    )
+    ec_files_parser.set_defaults(
+        func=lambda args, client: handle_ec_files(
+            client,
+            args.account_address,
+            show_all_miners=args.all_miners if hasattr(args, "all_miners") else False,
+            show_chunks=args.show_chunks if hasattr(args, "show_chunks") else False,
+        )
     )
 
     # Key generation command
@@ -2032,7 +1951,6 @@ examples:
             return handle_files(
                 client,
                 args.account_address,
-                debug=args.debug if hasattr(args, "debug") else False,
                 show_all_miners=args.all_miners
                 if hasattr(args, "all_miners")
                 else False,
