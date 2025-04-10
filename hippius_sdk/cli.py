@@ -1919,7 +1919,9 @@ examples:
     erasure_code_dir_parser = subparsers.add_parser(
         "erasure-code-dir", help="Apply erasure coding to each file in a directory"
     )
-    erasure_code_dir_parser.add_argument("dir_path", help="Path to directory to process")
+    erasure_code_dir_parser.add_argument(
+        "dir_path", help="Path to directory to process"
+    )
     erasure_code_dir_parser.add_argument(
         "--k",
         type=int,
