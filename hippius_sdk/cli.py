@@ -1915,6 +1915,39 @@ examples:
         "--verbose", action="store_true", help="Enable verbose output", default=True
     )
 
+    # Erasure code directory command
+    erasure_code_dir_parser = subparsers.add_parser(
+        "erasure-code-dir", help="Apply erasure coding to each file in a directory"
+    )
+    erasure_code_dir_parser.add_argument("dir_path", help="Path to directory to process")
+    erasure_code_dir_parser.add_argument(
+        "--k",
+        type=int,
+        default=3,
+        help="Number of data chunks needed to reconstruct (default: 3)",
+    )
+    erasure_code_dir_parser.add_argument(
+        "--m", type=int, default=5, help="Total number of chunks to create (default: 5)"
+    )
+    erasure_code_dir_parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=1048576,
+        help="Chunk size in bytes (default: 1MB)",
+    )
+    erasure_code_dir_parser.add_argument(
+        "--miner-ids", help="Comma-separated list of miner IDs"
+    )
+    erasure_code_dir_parser.add_argument(
+        "--encrypt", action="store_true", help="Encrypt the files"
+    )
+    erasure_code_dir_parser.add_argument(
+        "--no-encrypt", action="store_true", help="Do not encrypt the files"
+    )
+    erasure_code_dir_parser.add_argument(
+        "--verbose", action="store_true", help="Enable verbose output", default=True
+    )
+
     # Reconstruct command
     reconstruct_parser = subparsers.add_parser(
         "reconstruct", help="Reconstruct an erasure-coded file"
@@ -2252,6 +2285,18 @@ examples:
             return handle_erasure_code(
                 client,
                 args.file_path,
+                args.k,
+                args.m,
+                args.chunk_size,
+                miner_ids,
+                encrypt=args.encrypt,
+                verbose=args.verbose,
+            )
+
+        elif args.command == "erasure-code-dir":
+            return handle_erasure_code_directory(
+                client,
+                args.dir_path,
                 args.k,
                 args.m,
                 args.chunk_size,

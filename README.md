@@ -317,6 +317,18 @@ When choosing the second option, the system will process each file in the direct
 - Successfully coded files with their metadata CIDs
 - Any files that failed, with error details
 
+You can also directly use the dedicated command for directory erasure coding:
+
+```bash
+# Direct command for applying erasure coding to an entire directory
+hippius erasure-code-dir my_directory/
+
+# With custom parameters
+hippius erasure-code-dir my_important_files/ --k 4 --m 8 --encrypt
+```
+
+This dedicated command processes each file in the directory individually, optimizing erasure coding parameters for each file based on its size.
+
 To reconstruct a file from erasure-coded chunks:
 
 ```bash
