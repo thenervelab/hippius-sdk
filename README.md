@@ -15,6 +15,10 @@ A Python SDK and CLI for interacting with Hippius blockchain storage, designed s
 ## Installation
 
 ```bash
+
+# Using pipx
+pipx install hippius
+
 # Using pip
 pip install hippius
 
@@ -329,10 +333,49 @@ hippius erasure-code-dir my_important_files/ --k 4 --m 8 --encrypt
 
 This dedicated command processes each file in the directory individually, optimizing erasure coding parameters for each file based on its size.
 
+**Important Note on Directory Structure:**
+- The command processes all files in the entire directory hierarchy, including all subdirectories
+- Each file is processed independently and gets its own separate metadata CID
+- The original directory structure is not automatically preserved for reconstruction
+- You will need to reconstruct each file individually using its specific metadata CID
+
+If preserving the exact directory structure is important, consider these options:
+1. Archive the directory first (option 1 above), then erasure code the single archive file
+2. Keep track of the original file paths relative to the root directory in your own system
+3. For small directories with few files, reconstruct each file individually and manually recreate the structure
+
 To reconstruct a file from erasure-coded chunks:
 
 ```bash
 hippius reconstruct QmMetadataCID reconstructed_filename
+```
+
+**Integration with Other Features:**
+The directory erasure coding functionality works seamlessly with other Hippius SDK features:
+
+- **Account Management**: Use with multiple coldkeys and hotkeys by specifying the account with `--account` 
+- **Default Address**: Combined with default address management for streamlined operations
+- **Proxy Support**: Hotkeys with proper permissions can perform erasure coding operations on behalf of a coldkey
+- **Configuration Management**: All erasure coding parameters can be preset in your config file with `hippius config set`
+
+For a comprehensive workflow, you can manage accounts, set default addresses, configure erasure coding parameters, and then process directories in a single sequence of commands:
+
+```bash
+# Set active account
+hippius account switch my_account_name
+
+# Set default address for operations
+hippius address set-default 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+
+# Configure default erasure coding parameters
+hippius config set erasure_coding default_k 4
+hippius config set erasure_coding default_m 8
+
+# Apply erasure coding to a directory
+hippius erasure-code-dir my_important_directory/
+
+# Check the status of erasure-coded files
+hippius ec-files
 ```
 
 #### Default Address Management
