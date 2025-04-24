@@ -59,6 +59,12 @@ load_dotenv()
 initialize_from_env()
 
 
+def get_default_address():
+    """Get the default address for read-only operations"""
+    config = load_config()
+    return config["substrate"].get("default_address")
+
+
 def generate_key():
     """Generate a random encryption key for NaCl secretbox."""
     if not ENCRYPTION_AVAILABLE:
@@ -411,12 +417,22 @@ def handle_credits(client, account_address):
                 if default_address:
                     account_address = default_address
                 else:
+                    has_default = get_default_address() is not None
+                    
                     print(
                         "Error: No account address provided, and client has no keypair."
                     )
-                    print(
-                        "Please provide an account address with '--account_address' or set a default with 'hippius address set-default'"
-                    )
+                    
+                    if has_default:
+                        print(
+                            "Please provide an account address with '--account_address' or the default address may be invalid."
+                        )
+                    else:
+                        print(
+                            "Please provide an account address with '--account_address' or set a default with:"
+                        )
+                        print("  hippius address set-default <your_account_address>")
+
                     return 1
 
         credits = client.substrate_client.get_free_credits(account_address)
@@ -454,12 +470,21 @@ def handle_files(client, account_address, show_all_miners=False):
                 if default_address:
                     account_address = default_address
                 else:
+                    has_default = get_default_address() is not None
+                    
                     print(
                         "Error: No account address provided, and client has no keypair."
                     )
-                    print(
-                        "Please provide an account address with '--account_address' or set a default with 'hippius address set-default'"
-                    )
+                    
+                    if has_default:
+                        print(
+                            "Please provide an account address with '--account_address' or the default address may be invalid."
+                        )
+                    else:
+                        print(
+                            "Please provide an account address with '--account_address' or set a default with:"
+                        )
+                        print("  hippius address set-default <your_account_address>")
                     return 1
 
         # Get files for the account using the new profile-based method
@@ -560,12 +585,21 @@ def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=
                 if default_address:
                     account_address = default_address
                 else:
+                    has_default = get_default_address() is not None
+
                     print(
                         "Error: No account address provided, and client has no keypair."
                     )
-                    print(
-                        "Please provide an account address with '--account_address' or set a default with 'hippius address set-default'"
-                    )
+
+                    if has_default:
+                        print(
+                            "Please provide an account address with '--account_address' or the default address may be invalid."
+                        )
+                    else:
+                        print(
+                            "Please provide an account address with '--account_address' or set a default with:"
+                        )
+                        print("  hippius address set-default <your_account_address>")
                     return 1
 
         # First, get all user files using the profile method
@@ -1463,12 +1497,6 @@ def handle_default_address_clear():
         print("No default address was set")
 
     return 0
-
-
-def get_default_address():
-    """Get the default address for read-only operations"""
-    config = load_config()
-    return config["substrate"].get("default_address")
 
 
 def main():
