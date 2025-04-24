@@ -22,13 +22,27 @@ from typing import List, Optional
 from dotenv import load_dotenv
 
 # Import SDK components
-from hippius_sdk import (HippiusClient, decrypt_seed_phrase, delete_account,
-                         encrypt_seed_phrase, get_account_address,
-                         get_active_account, get_all_config, get_config_value,
-                         get_encryption_key, get_seed_phrase,
-                         initialize_from_env, list_accounts, load_config,
-                         reset_config, save_config, set_active_account,
-                         set_config_value, set_encryption_key, set_seed_phrase)
+from hippius_sdk import (
+    HippiusClient,
+    decrypt_seed_phrase,
+    delete_account,
+    encrypt_seed_phrase,
+    get_account_address,
+    get_active_account,
+    get_all_config,
+    get_config_value,
+    get_encryption_key,
+    get_seed_phrase,
+    initialize_from_env,
+    list_accounts,
+    load_config,
+    reset_config,
+    save_config,
+    set_active_account,
+    set_config_value,
+    set_encryption_key,
+    set_seed_phrase,
+)
 from hippius_sdk.substrate import FileInput
 
 try:
