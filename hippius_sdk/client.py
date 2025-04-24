@@ -272,9 +272,10 @@ class HippiusClient:
             ImportError: If PyNaCl is not installed
         """
         try:
-            import nacl.utils
-            import nacl.secret
             import base64
+
+            import nacl.secret
+            import nacl.utils
 
             # Generate a random key
             key = nacl.utils.random(nacl.secret.SecretBox.KEY_SIZE)
