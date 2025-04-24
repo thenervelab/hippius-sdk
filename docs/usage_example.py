@@ -7,6 +7,7 @@ This example demonstrates how to use the Hippius SDK to upload and download file
 import os
 import shutil
 import time
+
 from hippius_sdk import HippiusClient
 
 # Configuration

@@ -2,21 +2,20 @@
 IPFS operations for the Hippius SDK.
 """
 
-import os
-import json
-import requests
 import base64
-import time
-import tempfile
 import hashlib
+import json
+import os
+import tempfile
+import time
 import uuid
-from typing import Dict, Any, Optional, Union, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import ipfshttpclient
+import requests
 from dotenv import load_dotenv
-from hippius_sdk.config import (
-    get_config_value,
-    get_encryption_key,
-)
+
+from hippius_sdk.config import get_config_value, get_encryption_key
 
 # Import PyNaCl for encryption
 try:
@@ -704,8 +703,9 @@ class IPFSClient:
 
             # If the above doesn't work, try the standard CID decoding
             try:
-                import base58
                 import binascii
+
+                import base58
 
                 # Try to decode hex to binary then to base58 for CIDv0
                 try:
@@ -1585,7 +1585,7 @@ class IPFSClient:
 
         # Step 2: Import substrate client if we need it
         if substrate_client is None:
-            from hippius_sdk.substrate import SubstrateClient, FileInput
+            from hippius_sdk.substrate import FileInput, SubstrateClient
 
             substrate_client = SubstrateClient()
         else:
