@@ -3,10 +3,11 @@ Tests for the Substrate client.
 """
 
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+from substrateinterface.exceptions import SubstrateRequestException
 
 from hippius_sdk.substrate import SubstrateClient
-from substrateinterface.exceptions import SubstrateRequestException
 
 
 class TestSubstrateClient(unittest.TestCase):

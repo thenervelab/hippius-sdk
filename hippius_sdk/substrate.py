@@ -4,19 +4,17 @@ Substrate operations for the Hippius SDK.
 Note: This functionality is coming soon and not implemented yet.
 """
 
-import os
 import json
+import os
 import uuid
-from typing import Dict, Any, Optional, List, Union
-from substrateinterface import SubstrateInterface, Keypair
+from typing import Any, Dict, List, Optional, Union
+
 from dotenv import load_dotenv
-from hippius_sdk.config import (
-    get_config_value,
-    get_seed_phrase,
-    set_seed_phrase,
-    get_account_address,
-    get_active_account,
-)
+from substrateinterface import Keypair, SubstrateInterface
+
+from hippius_sdk.config import (get_account_address, get_active_account,
+                                get_config_value, get_seed_phrase,
+                                set_seed_phrase)
 
 # Load environment variables
 load_dotenv()
@@ -275,6 +273,7 @@ class SubstrateClient:
 
             # Step 2: Upload the JSON file to IPFS
             import tempfile
+
             from hippius_sdk.ipfs import IPFSClient
 
             ipfs_client = IPFSClient()
@@ -776,9 +775,9 @@ class SubstrateClient:
                 if file_size:
                     size_bytes = file_size
                     if size_bytes >= 1024 * 1024:
-                        processed_file[
-                            "size_formatted"
-                        ] = f"{size_bytes / (1024 * 1024):.2f} MB"
+                        processed_file["size_formatted"] = (
+                            f"{size_bytes / (1024 * 1024):.2f} MB"
+                        )
                     else:
                         processed_file["size_formatted"] = f"{size_bytes / 1024:.2f} KB"
                 else:

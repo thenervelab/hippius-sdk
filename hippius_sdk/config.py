@@ -5,13 +5,13 @@ This module handles loading and saving configuration from the user's home direct
 specifically in ~/.hippius/config.
 """
 
-import os
-import json
 import base64
-import hashlib
 import getpass
+import hashlib
+import json
+import os
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Union, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Define constants
 CONFIG_DIR = os.path.expanduser("~/.hippius")
@@ -196,9 +196,10 @@ def _derive_key_from_password(
     """
     # Import cryptography for PBKDF2
     try:
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-        from cryptography.hazmat.primitives import hashes
         import os
+
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
     except ImportError:
         raise ImportError(
             "cryptography is required for password-based encryption. Install it with: pip install cryptography"

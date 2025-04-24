@@ -3,13 +3,11 @@ Main client for the Hippius SDK.
 """
 
 import os
-from typing import Dict, Any, Optional, List, Union, Tuple, Set
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+
+from hippius_sdk.config import get_config_value, get_encryption_key
 from hippius_sdk.ipfs import IPFSClient
-from hippius_sdk.substrate import SubstrateClient, FileInput
-from hippius_sdk.config import (
-    get_config_value,
-    get_encryption_key,
-)
+from hippius_sdk.substrate import FileInput, SubstrateClient
 
 
 class HippiusClient:
@@ -272,9 +270,10 @@ class HippiusClient:
             ImportError: If PyNaCl is not installed
         """
         try:
-            import nacl.utils
-            import nacl.secret
             import base64
+
+            import nacl.secret
+            import nacl.utils
 
             # Generate a random key
             key = nacl.utils.random(nacl.secret.SecretBox.KEY_SIZE)

@@ -2,11 +2,11 @@
 Tests for the IPFS client.
 """
 
-import os
 import json
+import os
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from hippius_sdk.ipfs import IPFSClient
 

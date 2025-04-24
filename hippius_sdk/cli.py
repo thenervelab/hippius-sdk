@@ -6,47 +6,34 @@ This module provides CLI tools for working with the Hippius SDK, including
 utilities for encryption key generation, file operations, and marketplace interactions.
 """
 
-import base64
 import argparse
-import os
-import sys
-import time
-import json
-from typing import Optional, List
-import getpass
+import base64
 import concurrent.futures
-import threading
+import getpass
+import json
+import os
 import random
+import sys
+import threading
+import time
 import uuid
+from typing import List, Optional
 
-# Import SDK components
-from hippius_sdk import HippiusClient
-from hippius_sdk.substrate import FileInput
-from hippius_sdk import (
-    get_config_value,
-    set_config_value,
-    get_encryption_key,
-    set_encryption_key,
-    load_config,
-    save_config,
-    get_all_config,
-    reset_config,
-    initialize_from_env,
-    get_seed_phrase,
-    set_seed_phrase,
-    encrypt_seed_phrase,
-    decrypt_seed_phrase,
-    get_active_account,
-    set_active_account,
-    list_accounts,
-    delete_account,
-    get_account_address,
-)
 from dotenv import load_dotenv
 
+# Import SDK components
+from hippius_sdk import (HippiusClient, decrypt_seed_phrase, delete_account,
+                         encrypt_seed_phrase, get_account_address,
+                         get_active_account, get_all_config, get_config_value,
+                         get_encryption_key, get_seed_phrase,
+                         initialize_from_env, list_accounts, load_config,
+                         reset_config, save_config, set_active_account,
+                         set_config_value, set_encryption_key, set_seed_phrase)
+from hippius_sdk.substrate import FileInput
+
 try:
-    import nacl.utils
     import nacl.secret
+    import nacl.utils
 except ImportError:
     ENCRYPTION_AVAILABLE = False
 else:
@@ -168,9 +155,9 @@ def create_client(args):
         ipfs_gateway=gateway,
         ipfs_api_url=api_url,
         substrate_url=substrate_url,
-        substrate_seed_phrase=args.seed_phrase
-        if hasattr(args, "seed_phrase")
-        else None,
+        substrate_seed_phrase=(
+            args.seed_phrase if hasattr(args, "seed_phrase") else None
+        ),
         seed_phrase_password=args.password if hasattr(args, "password") else None,
         account_name=args.account if hasattr(args, "account") else None,
         encrypt_by_default=encrypt,
@@ -418,11 +405,11 @@ def handle_credits(client, account_address):
                     account_address = default_address
                 else:
                     has_default = get_default_address() is not None
-                    
+
                     print(
                         "Error: No account address provided, and client has no keypair."
                     )
-                    
+
                     if has_default:
                         print(
                             "Please provide an account address with '--account_address' or the default address may be invalid."
@@ -471,11 +458,11 @@ def handle_files(client, account_address, show_all_miners=False):
                     account_address = default_address
                 else:
                     has_default = get_default_address() is not None
-                    
+
                     print(
                         "Error: No account address provided, and client has no keypair."
                     )
-                    
+
                     if has_default:
                         print(
                             "Please provide an account address with '--account_address' or the default address may be invalid."
@@ -1979,18 +1966,18 @@ examples:
             return handle_files(
                 client,
                 args.account_address,
-                show_all_miners=args.all_miners
-                if hasattr(args, "all_miners")
-                else False,
+                show_all_miners=(
+                    args.all_miners if hasattr(args, "all_miners") else False
+                ),
             )
 
         elif args.command == "ec-files":
             return handle_ec_files(
                 client,
                 args.account_address,
-                show_all_miners=args.all_miners
-                if hasattr(args, "all_miners")
-                else False,
+                show_all_miners=(
+                    args.all_miners if hasattr(args, "all_miners") else False
+                ),
                 show_chunks=args.show_chunks if hasattr(args, "show_chunks") else False,
             )
 

@@ -10,11 +10,12 @@ Requirements:
     - zfec (pip install zfec)
 """
 
+import argparse
 import os
+import random
 import sys
 import time
-import random
-import argparse
+
 from hippius_sdk import HippiusClient
 
 
