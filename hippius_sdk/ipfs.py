@@ -2,26 +2,20 @@
 IPFS operations for the Hippius SDK.
 """
 
-import os
-import json
-
-import httpx
-import requests
-import time
-import tempfile
 import hashlib
 import json
 import os
 import tempfile
 import time
 import uuid
-from typing import Dict, Any, Optional, Union, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import httpx
 import ipfshttpclient
+import requests
 from dotenv import load_dotenv
-from hippius_sdk.config import (
-    get_config_value,
-    get_encryption_key,
-)
+
+from hippius_sdk.config import get_config_value, get_encryption_key
 
 # Import PyNaCl for encryption
 try:
@@ -90,7 +84,7 @@ class IPFSClient:
         self._initialize_encryption(encrypt_by_default, encryption_key)
 
     def _initialize_encryption(
-            self, encrypt_by_default: Optional[bool], encryption_key: Optional[bytes]
+        self, encrypt_by_default: Optional[bool], encryption_key: Optional[bytes]
     ):
         """Initialize encryption settings from parameters or configuration."""
         # Check if encryption is available
@@ -116,9 +110,9 @@ class IPFSClient:
 
         # Check if we have a valid key and can encrypt
         self.encryption_available = (
-                ENCRYPTION_AVAILABLE
-                and self.encryption_key is not None
-                and len(self.encryption_key) == nacl.secret.SecretBox.KEY_SIZE
+            ENCRYPTION_AVAILABLE
+            and self.encryption_key is not None
+            and len(self.encryption_key) == nacl.secret.SecretBox.KEY_SIZE
         )
 
         # If encryption is requested but not available, warn the user
@@ -187,11 +181,11 @@ class IPFSClient:
             )
 
     async def upload_file(
-            self,
-            file_path: str,
-            include_formatted_size: bool = True,
-            encrypt: Optional[bool] = None,
-            max_retries: int = 3,
+        self,
+        file_path: str,
+        include_formatted_size: bool = True,
+        encrypt: Optional[bool] = None,
+        max_retries: int = 3,
     ) -> Dict[str, Any]:
         """
         Upload a file to IPFS with optional encryption.
@@ -276,10 +270,10 @@ class IPFSClient:
         return result
 
     async def upload_directory(
-            self,
-            dir_path: str,
-            include_formatted_size: bool = True,
-            encrypt: Optional[bool] = None,
+        self,
+        dir_path: str,
+        include_formatted_size: bool = True,
+        encrypt: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Upload a directory to IPFS with optional encryption of files.
@@ -481,11 +475,11 @@ class IPFSClient:
         return cid
 
     async def download_file(
-            self,
-            cid: str,
-            output_path: str,
-            decrypt: Optional[bool] = None,
-            max_retries: int = 3,
+        self,
+        cid: str,
+        output_path: str,
+        decrypt: Optional[bool] = None,
+        max_retries: int = 3,
     ) -> Dict[str, Any]:
         """
         Download a file from IPFS with optional decryption.
@@ -609,11 +603,11 @@ class IPFSClient:
                 os.unlink(temp_file_path)
 
     async def cat(
-            self,
-            cid: str,
-            max_display_bytes: int = 1024,
-            format_output: bool = True,
-            decrypt: Optional[bool] = None,
+        self,
+        cid: str,
+        max_display_bytes: int = 1024,
+        format_output: bool = True,
+        decrypt: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Get the content of a file from IPFS with optional decryption.
@@ -747,14 +741,14 @@ class IPFSClient:
         }
 
     def erasure_code_file(
-            self,
-            file_path: str,
-            k: int = 3,
-            m: int = 5,
-            chunk_size: int = 1024 * 1024,  # 1MB chunks
-            encrypt: Optional[bool] = None,
-            max_retries: int = 3,
-            verbose: bool = True,
+        self,
+        file_path: str,
+        k: int = 3,
+        m: int = 5,
+        chunk_size: int = 1024 * 1024,  # 1MB chunks
+        encrypt: Optional[bool] = None,
+        max_retries: int = 3,
+        verbose: bool = True,
     ) -> Dict[str, Any]:
         """
         Split a file using erasure coding, then upload the chunks to IPFS.
@@ -831,7 +825,7 @@ class IPFSClient:
         chunks = []
         chunk_positions = []
         for i in range(0, len(file_data), chunk_size):
-            chunk = file_data[i: i + chunk_size]
+            chunk = file_data[i : i + chunk_size]
             chunks.append(chunk)
             chunk_positions.append(i)
 
@@ -911,8 +905,8 @@ class IPFSClient:
 
                 # Calculate how many bytes each sub-block should have
                 sub_block_size = (
-                                         len(chunk) + k - 1
-                                 ) // k  # ceiling division for even distribution
+                    len(chunk) + k - 1
+                ) // k  # ceiling division for even distribution
 
                 # Split the chunk into exactly k sub-blocks of equal size (padding as needed)
                 sub_blocks = []
@@ -1025,12 +1019,12 @@ class IPFSClient:
             return metadata
 
     def reconstruct_from_erasure_code(
-            self,
-            metadata_cid: str,
-            output_file: str,
-            temp_dir: str = None,
-            max_retries: int = 3,
-            verbose: bool = True,
+        self,
+        metadata_cid: str,
+        output_file: str,
+        temp_dir: str = None,
+        max_retries: int = 3,
+        verbose: bool = True,
     ) -> str:
         """
         Reconstruct a file from erasure-coded chunks using its metadata.
@@ -1253,16 +1247,16 @@ class IPFSClient:
                 temp_dir_obj.cleanup()
 
     def store_erasure_coded_file(
-            self,
-            file_path: str,
-            k: int = 3,
-            m: int = 5,
-            chunk_size: int = 1024 * 1024,  # 1MB chunks
-            encrypt: Optional[bool] = None,
-            miner_ids: List[str] = None,
-            substrate_client=None,
-            max_retries: int = 3,
-            verbose: bool = True,
+        self,
+        file_path: str,
+        k: int = 3,
+        m: int = 5,
+        chunk_size: int = 1024 * 1024,  # 1MB chunks
+        encrypt: Optional[bool] = None,
+        miner_ids: List[str] = None,
+        substrate_client=None,
+        max_retries: int = 3,
+        verbose: bool = True,
     ) -> Dict[str, Any]:
         """
         Erasure code a file, upload the chunks to IPFS, and store in the Hippius marketplace.

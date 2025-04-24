@@ -3,13 +3,11 @@ Main client for the Hippius SDK.
 """
 
 import os
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
+
+from hippius_sdk.config import get_config_value, get_encryption_key
 from hippius_sdk.ipfs import IPFSClient
 from hippius_sdk.substrate import SubstrateClient
-from hippius_sdk.config import (
-    get_config_value,
-    get_encryption_key,
-)
 
 
 class HippiusClient:

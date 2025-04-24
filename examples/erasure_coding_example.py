@@ -11,13 +11,12 @@ Requirements:
 """
 
 import argparse
+import asyncio
 import os
 import random
 import sys
 import time
-import random
-import argparse
-import asyncio
+
 from hippius_sdk import HippiusClient
 
 
@@ -54,7 +53,9 @@ def create_test_file(file_path, size_mb=10):
     return file_path
 
 
-async def erasure_code_example(file_path, k=3, m=5, chunk_size=1024 * 1024, encrypt=False):
+async def erasure_code_example(
+    file_path, k=3, m=5, chunk_size=1024 * 1024, encrypt=False
+):
     """Demonstrate erasure coding functionality."""
     print("\n=== Erasure Coding Example ===")
     print(f"File: {file_path}")

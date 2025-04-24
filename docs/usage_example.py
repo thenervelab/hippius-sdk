@@ -134,7 +134,9 @@ async def check_file_exists_example(cid):
     fake_cid = "QmThisIsNotARealCIDForTestingPurposes123456789"
     try:
         fake_result = await client.exists(fake_cid)
-        print(f"CID {fake_result['formatted_cid']} exists on IPFS: {fake_result['exists']}")
+        print(
+            f"CID {fake_result['formatted_cid']} exists on IPFS: {fake_result['exists']}"
+        )
     except Exception as e:
         print(f"Error checking fake CID: {e}")
 
@@ -181,7 +183,7 @@ def format_examples():
 
 def create_test_file(path: str, size_kb: int = 100) -> None:
     """Create a test file of specified size."""
-    with open(path, 'w') as f:
+    with open(path, "w") as f:
         # Create a file with random-looking content
         for i in range(size_kb):
             f.write(f"This is line {i} of test data for erasure coding test. " * 20)
@@ -196,6 +198,7 @@ async def test_erasure_coding():
         # Check if zfec is installed
         try:
             import zfec
+
             print("zfec is installed, proceeding with erasure coding test")
         except ImportError:
             print("zfec package is not installed. Skipping erasure coding test.")
@@ -207,7 +210,9 @@ async def test_erasure_coding():
         test_file = "test_erasure_coding.txt"
         with open(test_file, "w") as f:
             f.write("This is a simple test file for erasure coding.\n")
-            f.write("The file doesn't need to be large for testing basic functionality.\n")
+            f.write(
+                "The file doesn't need to be large for testing basic functionality.\n"
+            )
 
         print(f"Test file created: {test_file}")
         print("Testing basic file operations first...")

@@ -568,7 +568,9 @@ def handle_files(client, account_address, show_all_miners=False):
     return 0
 
 
-async def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=False):
+async def handle_ec_files(
+    client, account_address, show_all_miners=False, show_chunks=False
+):
     """Handle the ec-files command to show only erasure-coded files"""
     print("Looking for erasure-coded files...")
     try:

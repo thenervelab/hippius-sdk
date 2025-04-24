@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Dict, Any
+from typing import Any, Dict
 
 import httpx
 
@@ -10,7 +10,9 @@ class AsyncIPFSClient:
     Asynchronous IPFS client using httpx.
     """
 
-    def __init__(self, api_url: str = "http://localhost:5001", gateway: str = "https://ipfs.io"):
+    def __init__(
+        self, api_url: str = "http://localhost:5001", gateway: str = "https://ipfs.io"
+    ):
         # Handle multiaddr format
         if api_url and api_url.startswith("/"):
             # Extract host and port from multiaddr
@@ -54,12 +56,9 @@ class AsyncIPFSClient:
         Returns:
             Dict containing the CID and other information
         """
-        with open(file_path, 'rb') as f:
-            files = {'file': f}
-            response = await self.client.post(
-                f"{self.api_url}/api/v0/add",
-                files=files
-            )
+        with open(file_path, "rb") as f:
+            files = {"file": f}
+            response = await self.client.post(f"{self.api_url}/api/v0/add", files=files)
             response.raise_for_status()
             return response.json()
 
@@ -74,11 +73,8 @@ class AsyncIPFSClient:
         Returns:
             Dict containing the CID and other information
         """
-        files = {'file': (filename, data)}
-        response = await self.client.post(
-            f"{self.api_url}/api/v0/add",
-            files=files
-        )
+        files = {"file": (filename, data)}
+        response = await self.client.post(f"{self.api_url}/api/v0/add", files=files)
         response.raise_for_status()
         return response.json()
 
@@ -165,50 +161,52 @@ class AsyncIPFSClient:
             Path to the saved file
         """
         content = await self.cat(cid)
-        with open(output_path, 'wb') as f:
+        with open(output_path, "wb") as f:
             f.write(content)
         return output_path
-        
-    async def add_directory(self, dir_path: str, recursive: bool = True) -> Dict[str, Any]:
+
+    async def add_directory(
+        self, dir_path: str, recursive: bool = True
+    ) -> Dict[str, Any]:
         """
         Add a directory to IPFS.
-        
+
         Args:
             dir_path: Path to the directory to add
-            
+
         Returns:
             Dict containing the CID and other information about the directory
-            
+
         Raises:
             FileNotFoundError: If the directory doesn't exist
             httpx.HTTPError: If the IPFS API request fails
         """
         if not os.path.isdir(dir_path):
             raise FileNotFoundError(f"Directory {dir_path} not found")
-            
+
         # Collect all files in the directory
         files = []
         for root, _, filenames in os.walk(dir_path):
             for filename in filenames:
                 file_path = os.path.join(root, filename)
                 rel_path = os.path.relpath(file_path, dir_path)
-                
+
                 with open(file_path, "rb") as f:
                     file_content = f.read()
-                
+
                 # Add the file to the multipart request
                 files.append(
                     ("file", (rel_path, file_content, "application/octet-stream"))
                 )
-        
+
         # Make the request with directory flags
         response = await self.client.post(
             f"{self.api_url}/api/v0/add?recursive=true&wrap-with-directory=true",
             files=files,
-            timeout=300.0  # 5 minute timeout for directory uploads
+            timeout=300.0,  # 5 minute timeout for directory uploads
         )
         response.raise_for_status()
-        
+
         # The IPFS API returns a JSON object for each file, one per line
         # The last one should be the directory itself
         lines = response.text.strip().split("\n")

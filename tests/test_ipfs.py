@@ -2,33 +2,34 @@
 Tests for the AsyncIPFSClient and IPFSClient classes using pytest style.
 """
 
+import json
 import os
 import tempfile
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+import httpx
 import pytest
 import pytest_asyncio
-import httpx
-import json
-from unittest.mock import AsyncMock, MagicMock, patch, Mock
 
-from hippius_sdk.ipfs import IPFSClient, AsyncIPFSClient
+from hippius_sdk.ipfs import AsyncIPFSClient, IPFSClient
 
 
 class MockResponse:
     """A custom mock response class that properly handles async methods."""
-    
+
     def __init__(self, status_code=200, json_data=None, content=None, text=None):
         self.status_code = status_code
         self._json_data = json_data or {"Hash": "QmTest123", "Size": "123"}
         self.content = content or b"Test content"
         self.text = text or '{"Hash":"QmTest123","Size":"123"}'
-        
+
     def json(self):
         """
         In AsyncIPFSClient, response.json() is called without await,
         which means ipfs_core.py is treating json() as a synchronous method.
         """
         return self._json_data
-        
+
     def raise_for_status(self):
         """
         In AsyncIPFSClient, response.raise_for_status() is called without await,
@@ -43,18 +44,18 @@ class MockResponse:
 async def mock_httpx_client():
     """Create a mock httpx client with properly configured async returns."""
     client = AsyncMock()
-    
+
     # Configure standard response
     response = MockResponse()
-    
+
     # Set up the client methods to return the response
     client.post.return_value = response
     client.get.return_value = response
     client.head.return_value = response
-    
+
     # Make aclose properly awaitable
     client.aclose = AsyncMock()
-    
+
     return client
 
 
@@ -63,7 +64,7 @@ async def mock_dir_response():
     """Create a mock response for directory tests."""
     return MockResponse(
         text='{"Hash":"QmFile123","Name":"test_file.txt"}\n{"Hash":"QmDir123","Name":"temp_dir"}',
-        json_data={"Hash": "QmDir123", "Name": "temp_dir"}
+        json_data={"Hash": "QmDir123", "Name": "temp_dir"},
     )
 
 
@@ -158,7 +159,10 @@ async def test_cat(async_ipfs_client, mock_httpx_client):
 
     # Verify the correct endpoint was called
     mock_httpx_client.post.assert_called_once()
-    assert mock_httpx_client.post.call_args[0][0] == f"http://localhost:5001/api/v0/cat?arg={cid}"
+    assert (
+        mock_httpx_client.post.call_args[0][0]
+        == f"http://localhost:5001/api/v0/cat?arg={cid}"
+    )
 
     # Check the result
     assert result == b"Test content"
@@ -173,7 +177,10 @@ async def test_pin(async_ipfs_client, mock_httpx_client):
 
     # Verify the correct endpoint was called
     mock_httpx_client.post.assert_called_once()
-    assert mock_httpx_client.post.call_args[0][0] == f"http://localhost:5001/api/v0/pin/add?arg={cid}"
+    assert (
+        mock_httpx_client.post.call_args[0][0]
+        == f"http://localhost:5001/api/v0/pin/add?arg={cid}"
+    )
 
     # Check the result
     assert result == {"Hash": "QmTest123", "Size": "123"}
@@ -188,7 +195,10 @@ async def test_ls(async_ipfs_client, mock_httpx_client):
 
     # Verify the correct endpoint was called
     mock_httpx_client.post.assert_called_once()
-    assert mock_httpx_client.post.call_args[0][0] == f"http://localhost:5001/api/v0/ls?arg={cid}"
+    assert (
+        mock_httpx_client.post.call_args[0][0]
+        == f"http://localhost:5001/api/v0/ls?arg={cid}"
+    )
 
     # Check the result
     assert result == {"Hash": "QmTest123", "Size": "123"}
@@ -237,11 +247,14 @@ async def test_download_file(async_ipfs_client, mock_httpx_client, tmp_path):
 
     # Verify the correct endpoint was called
     mock_httpx_client.post.assert_called_once()
-    assert mock_httpx_client.post.call_args[0][0] == f"http://localhost:5001/api/v0/cat?arg={cid}"
+    assert (
+        mock_httpx_client.post.call_args[0][0]
+        == f"http://localhost:5001/api/v0/cat?arg={cid}"
+    )
 
     # Check the file was written correctly
     assert os.path.exists(output_path)
-    with open(output_path, 'rb') as f:
+    with open(output_path, "rb") as f:
         content = f.read()
     assert content == b"Test content"
 
@@ -250,16 +263,18 @@ async def test_download_file(async_ipfs_client, mock_httpx_client, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_add_directory(async_ipfs_client, temp_dir, mock_httpx_client, mock_dir_response):
+async def test_add_directory(
+    async_ipfs_client, temp_dir, mock_httpx_client, mock_dir_response
+):
     """Test adding a directory to IPFS."""
     # Update the mock client to return our directory-specific response
     mock_httpx_client.post.return_value = mock_dir_response
-    
+
     # Call the method
     result = await async_ipfs_client.add_directory(temp_dir)
 
     print(result, type(result))
-    
+
     # Verify the correct endpoint was called with directory flags
     mock_httpx_client.post.assert_called_once()
     args, kwargs = mock_httpx_client.post.call_args
@@ -267,7 +282,7 @@ async def test_add_directory(async_ipfs_client, temp_dir, mock_httpx_client, moc
     assert "recursive=true" in args[0]
     assert "wrap-with-directory=true" in args[0]
     assert "files" in kwargs
-    
+
     # Check the result
     assert result == {"Hash": "QmDir123", "Name": "temp_dir"}
 
@@ -275,7 +290,7 @@ async def test_add_directory(async_ipfs_client, temp_dir, mock_httpx_client, moc
 @pytest.mark.asyncio
 async def test_client_context_manager(mock_httpx_client):
     """Test using the AsyncIPFSClient as a context manager."""
-    with patch('httpx.AsyncClient', return_value=mock_httpx_client):
+    with patch("httpx.AsyncClient", return_value=mock_httpx_client):
         async with AsyncIPFSClient() as client:
             result = await client.add_str("Test context manager")
             assert result == {"Hash": "QmTest123", "Size": "123"}
@@ -286,22 +301,28 @@ async def test_client_context_manager(mock_httpx_client):
 
 # IPFSClient tests that use the AsyncIPFSClient
 
+
 @pytest.fixture
 def mock_async_ipfs_client():
     """Create a mock AsyncIPFSClient."""
     client = AsyncMock()
+
     # Configure the mock to return awaitable values
     async def add_file_mock(*args, **kwargs):
         return {"Hash": "QmTest123"}
+
     async def add_directory_mock(*args, **kwargs):
         return {"Hash": "QmDir123"}
+
     async def cat_mock(*args, **kwargs):
         return b"Test content"
+
     async def ls_mock(*args, **kwargs):
         return True
+
     async def pin_mock(*args, **kwargs):
         return {"Pins": ["QmTest123"]}
-        
+
     client.add_file = add_file_mock
     client.add_directory = add_directory_mock
     client.cat = cat_mock
@@ -313,7 +334,7 @@ def mock_async_ipfs_client():
 @pytest.mark.asyncio
 async def test_ipfs_client_upload_file(temp_file):
     """Test IPFSClient.upload_file method."""
-    with patch('hippius_sdk.ipfs.AsyncIPFSClient') as mock_async_client_class:
+    with patch("hippius_sdk.ipfs.AsyncIPFSClient") as mock_async_client_class:
         # Create a properly mocked async client
         mock_client = AsyncMock()
         mock_client.add_file = AsyncMock(return_value={"Hash": "QmTest123"})
@@ -336,10 +357,10 @@ async def test_ipfs_client_upload_file(temp_file):
 @pytest.mark.asyncio
 async def test_ipfs_client_upload_directory(temp_dir):
     """Test IPFSClient.upload_directory method."""
-    with patch('hippius_sdk.ipfs.AsyncIPFSClient') as mock_async_client_class:
+    with patch("hippius_sdk.ipfs.AsyncIPFSClient") as mock_async_client_class:
         # Create a properly mocked async client
         mock_client = AsyncMock()
-            
+
         mock_client.add_directory.return_value = {"Hash": "QmDir123"}
         mock_async_client_class.return_value = mock_client
 
@@ -360,10 +381,10 @@ async def test_ipfs_client_upload_directory(temp_dir):
 @pytest.mark.asyncio
 async def test_ipfs_client_cat():
     """Test IPFSClient.cat method."""
-    with patch('hippius_sdk.ipfs.AsyncIPFSClient') as mock_async_client_class:
+    with patch("hippius_sdk.ipfs.AsyncIPFSClient") as mock_async_client_class:
         # Create a properly mocked async client
         mock_client = AsyncMock()
-        
+
         # Use AsyncMock with return_value instead of a function definition
         mock_client.cat = AsyncMock(return_value=b"Test content")
         mock_async_client_class.return_value = mock_client
@@ -385,10 +406,10 @@ async def test_ipfs_client_cat():
 @pytest.mark.asyncio
 async def test_ipfs_client_exists():
     """Test IPFSClient.exists method."""
-    with patch('hippius_sdk.ipfs.AsyncIPFSClient') as mock_async_client_class:
+    with patch("hippius_sdk.ipfs.AsyncIPFSClient") as mock_async_client_class:
         # Create a properly mocked async client
         mock_client = AsyncMock()
-        
+
         # Use AsyncMock with return_value instead of a function definition
         mock_client.ls = AsyncMock(return_value=True)
         mock_async_client_class.return_value = mock_client
@@ -409,10 +430,10 @@ async def test_ipfs_client_exists():
 @pytest.mark.asyncio
 async def test_ipfs_client_pin():
     """Test IPFSClient.pin method."""
-    with patch('hippius_sdk.ipfs.AsyncIPFSClient') as mock_async_client_class:
+    with patch("hippius_sdk.ipfs.AsyncIPFSClient") as mock_async_client_class:
         # Create a properly mocked async client
         mock_client = AsyncMock()
-        
+
         # Use AsyncMock with return_value instead of a function definition
         mock_client.pin = AsyncMock(return_value={"Pins": ["QmTest123"]})
         mock_async_client_class.return_value = mock_client
@@ -435,19 +456,21 @@ async def test_ipfs_client_download_file(tmp_path):
     """Test IPFSClient.download_file method with mocked requests.get."""
     test_cid = "QmTest123"
     output_path = os.path.join(tmp_path, "downloaded.txt")
-    
-    with patch('requests.get') as mock_get:
+
+    with patch("requests.get") as mock_get:
         mock_response = Mock()
         mock_response.raise_for_status = Mock()
         mock_response.iter_content.return_value = [b"Test ", b"content"]
         mock_get.return_value = mock_response
-        
+
         client = IPFSClient(gateway="https://ipfs.example.com")
         result = await client.download_file(test_cid, output_path)
-        
+
         # Verify requests.get was called
-        mock_get.assert_called_once_with(f"https://ipfs.example.com/ipfs/{test_cid}", stream=True)
-        
+        mock_get.assert_called_once_with(
+            f"https://ipfs.example.com/ipfs/{test_cid}", stream=True
+        )
+
         # Check the result
         assert result["success"] is True
         assert result["output_path"] == output_path
