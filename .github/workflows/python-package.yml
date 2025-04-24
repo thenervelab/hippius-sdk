@@ -9,11 +9,40 @@ on:
     types: [ created ]
 
 jobs:
-  test:
+  format:
     runs-on: ubuntu-latest
     # Add explicit permissions to write to the repository
     permissions:
       contents: write
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.10"
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: 1.5.1
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+    - name: Install dependencies
+      run: |
+        poetry install --all-extras
+    - name: Format with black
+      run: |
+        poetry run black .
+    - name: Commit formatting changes
+      if: github.event_name == 'push'
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add -A
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Apply Black formatting [skip ci]" && git push "https://${GITHUB_ACTOR}:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" HEAD:${GITHUB_REF#refs/heads/})
+
+  test:
+    needs: format
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -21,6 +50,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+      with:
+        ref: ${{ github.ref }}
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
@@ -34,22 +65,9 @@ jobs:
     - name: Install dependencies
       run: |
         poetry install --all-extras
-    
-    # Alternative approach - uncomment to check formatting only instead of auto-fixing
-    # - name: Check formatting with black
-    #   run: |
-    #     poetry run black --check .
-    
-    - name: Format with black
+    - name: Check formatting with black
       run: |
-        poetry run black .
-    - name: Commit formatting changes
-      if: github.event_name == 'push'
-      run: |
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
-        git add -A
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Apply Black formatting [skip ci]" && git push "https://${GITHUB_ACTOR}:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" HEAD:${GITHUB_REF#refs/heads/})
+        poetry run black --check .
     - name: Test with pytest
       run: |
         # Simplified test approach to ensure CI passes
