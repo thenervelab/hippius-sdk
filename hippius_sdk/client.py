@@ -3,9 +3,9 @@ Main client for the Hippius SDK.
 """
 
 import os
-from typing import Dict, Any, Optional, List, Union, Tuple, Set
+from typing import Dict, Any, Optional, List
 from hippius_sdk.ipfs import IPFSClient
-from hippius_sdk.substrate import SubstrateClient, FileInput
+from hippius_sdk.substrate import SubstrateClient
 from hippius_sdk.config import (
     get_config_value,
     get_encryption_key,
@@ -92,7 +92,7 @@ class HippiusClient:
             print(f"Warning: Could not initialize Substrate client: {e}")
             self.substrate_client = None
 
-    def upload_file(
+    async def upload_file(
         self, file_path: str, encrypt: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
@@ -116,9 +116,9 @@ class HippiusClient:
             ValueError: If encryption is requested but not available
         """
         # Use the enhanced IPFSClient method directly with encryption parameter
-        return self.ipfs_client.upload_file(file_path, encrypt=encrypt)
+        return await self.ipfs_client.upload_file(file_path, encrypt=encrypt)
 
-    def upload_directory(
+    async def upload_directory(
         self, dir_path: str, encrypt: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
@@ -143,9 +143,9 @@ class HippiusClient:
             ValueError: If encryption is requested but not available
         """
         # Use the enhanced IPFSClient method directly with encryption parameter
-        return self.ipfs_client.upload_directory(dir_path, encrypt=encrypt)
+        return await self.ipfs_client.upload_directory(dir_path, encrypt=encrypt)
 
-    def download_file(
+    async def download_file(
         self, cid: str, output_path: str, decrypt: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
@@ -169,9 +169,9 @@ class HippiusClient:
             requests.RequestException: If the download fails
             ValueError: If decryption is requested but fails
         """
-        return self.ipfs_client.download_file(cid, output_path, decrypt=decrypt)
+        return await self.ipfs_client.download_file(cid, output_path, decrypt=decrypt)
 
-    def cat(
+    async def cat(
         self,
         cid: str,
         max_display_bytes: int = 1024,
@@ -196,7 +196,7 @@ class HippiusClient:
                 - text_preview/hex_preview: Preview of the content
                 - decrypted: Whether the file was decrypted
         """
-        return self.ipfs_client.cat(
+        return await self.ipfs_client.cat(
             cid, max_display_bytes, format_output, decrypt=decrypt
         )
 

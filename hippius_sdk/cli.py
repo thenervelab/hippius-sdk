@@ -174,12 +174,12 @@ def create_client(args):
     return client
 
 
-def handle_download(client, cid, output_path, decrypt=None):
+async def handle_download(client, cid, output_path, decrypt=None):
     """Handle the download command"""
     print(f"Downloading {cid} to {output_path}...")
 
     # Use the enhanced download method which returns formatted information
-    result = client.download_file(cid, output_path, decrypt=decrypt)
+    result = await client.download_file(cid, output_path, decrypt=decrypt)
 
     print(f"Download successful in {result['elapsed_seconds']} seconds!")
     print(f"Saved to: {result['output_path']}")
@@ -191,10 +191,10 @@ def handle_download(client, cid, output_path, decrypt=None):
     return 0
 
 
-def handle_exists(client, cid):
+async def handle_exists(client, cid):
     """Handle the exists command"""
     print(f"Checking if CID {cid} exists on IPFS...")
-    result = client.exists(cid)
+    result = await client.exists(cid)
 
     # Use the formatted CID from the result
     formatted_cid = result["formatted_cid"]
@@ -210,12 +210,12 @@ def handle_exists(client, cid):
     return 0
 
 
-def handle_cat(client, cid, max_size, decrypt=None):
+async def handle_cat(client, cid, max_size, decrypt=None):
     """Handle the cat command"""
     print(f"Retrieving content of CID {cid}...")
     try:
         # Use the enhanced cat method with formatting
-        result = client.cat(cid, max_display_bytes=max_size, decrypt=decrypt)
+        result = await client.cat(cid, max_display_bytes=max_size, decrypt=decrypt)
 
         # Display file information
         print(
@@ -248,7 +248,7 @@ def handle_cat(client, cid, max_size, decrypt=None):
     return 0
 
 
-def handle_store(client, file_path, miner_ids, encrypt=None):
+async def handle_store(client, file_path, miner_ids, encrypt=None):
     """Handle the store command"""
     if not os.path.exists(file_path):
         print(f"Error: File {file_path} not found")
@@ -258,7 +258,7 @@ def handle_store(client, file_path, miner_ids, encrypt=None):
     start_time = time.time()
 
     # Use the enhanced upload_file method that returns formatted information
-    result = client.upload_file(file_path, encrypt=encrypt)
+    result = await client.upload_file(file_path, encrypt=encrypt)
 
     ipfs_elapsed_time = time.time() - start_time
 
@@ -300,7 +300,7 @@ def handle_store(client, file_path, miner_ids, encrypt=None):
     return 0
 
 
-def handle_store_dir(client, dir_path, miner_ids, encrypt=None):
+async def handle_store_dir(client, dir_path, miner_ids, encrypt=None):
     """Handle the store-dir command"""
     if not os.path.isdir(dir_path):
         print(f"Error: Directory {dir_path} not found")
@@ -324,7 +324,7 @@ def handle_store_dir(client, dir_path, miner_ids, encrypt=None):
     for file_path, rel_path in all_files:
         try:
             print(f"  Uploading: {rel_path}")
-            file_result = client.upload_file(file_path, encrypt=encrypt)
+            file_result = await client.upload_file(file_path, encrypt=encrypt)
             individual_cids.append(
                 {
                     "path": rel_path,
@@ -344,7 +344,7 @@ def handle_store_dir(client, dir_path, miner_ids, encrypt=None):
             print(f"    Error uploading {rel_path}: {e}")
 
     # Now upload the entire directory
-    result = client.upload_directory(dir_path, encrypt=encrypt)
+    result = await client.upload_directory(dir_path, encrypt=encrypt)
 
     ipfs_elapsed_time = time.time() - start_time
 
@@ -542,7 +542,7 @@ def handle_files(client, account_address, show_all_miners=False):
     return 0
 
 
-def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=False):
+async def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=False):
     """Handle the ec-files command to show only erasure-coded files"""
     print("Looking for erasure-coded files...")
     try:
@@ -602,7 +602,7 @@ def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=
                     # Fetch and parse the metadata to get original file info
                     try:
                         # Use the formatted CID, not the raw hex-encoded version
-                        metadata = client.ipfs_client.cat(formatted_cid)
+                        metadata = await client.ipfs_client.cat(formatted_cid)
 
                         # Check if we have text content
                         if metadata.get("is_text", False):

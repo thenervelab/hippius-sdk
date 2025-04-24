@@ -1,5 +1,0 @@
-This is a nested file inside the test_upload directory.
-Testing nested directory uploads is important to ensure
-the directory structure is preserved in IPFS.
-
-The Hippius SDK should maintain this hierarchy when uploading. 
