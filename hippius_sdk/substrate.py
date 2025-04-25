@@ -780,9 +780,9 @@ class SubstrateClient:
                 if file_size:
                     size_bytes = file_size
                     if size_bytes >= 1024 * 1024:
-                        processed_file["size_formatted"] = (
-                            f"{size_bytes / (1024 * 1024):.2f} MB"
-                        )
+                        processed_file[
+                            "size_formatted"
+                        ] = f"{size_bytes / (1024 * 1024):.2f} MB"
                     else:
                         processed_file["size_formatted"] = f"{size_bytes / 1024:.2f} KB"
                 else:
