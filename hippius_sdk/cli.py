@@ -522,10 +522,10 @@ def handle_files(client, account_address, show_all_miners=False):
                 if "size_formatted" in file and file["size_formatted"] is not None:
                     size_formatted = file["size_formatted"]
                     file_size = file.get("file_size", 0)
-                    if file_size is not None:
+                    if file_size is not None and file_size > 0:
                         print(f"  File size: {file_size:,} bytes ({size_formatted})")
                     else:
-                        print(f"  File size: Unknown")
+                        print(f"  File size: {size_formatted}")
                 else:
                     print(f"  File size: Unknown")
 
