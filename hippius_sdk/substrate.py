@@ -761,6 +761,7 @@ class SubstrateClient:
                     file.get("size")
                     or file.get("fileSize")
                     or file.get("file_size")
+                    or file.get("file_size_in_bytes")
                     or 0
                 )
 
@@ -772,7 +773,7 @@ class SubstrateClient:
                         "miner_ids", []
                     ),  # Try to get miners if available
                     "miner_count": len(file.get("miner_ids", [])),  # Count the miners
-                    "file_size": file_size,
+                    "file_size": file_size or 0,
                 }
 
                 # Add formatted file size if available
