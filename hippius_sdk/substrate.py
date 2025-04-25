@@ -761,9 +761,7 @@ class SubstrateClient:
                     file.get("size")
                     or file.get("fileSize")
                     or file.get("file_size")
-                    or file.get(
-                        "file_size_in_bytes"
-                    )
+                    or file.get("file_size_in_bytes")
                     or 0
                 )
 
