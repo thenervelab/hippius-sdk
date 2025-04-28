@@ -5,6 +5,7 @@ IPFS operations for the Hippius SDK.
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 import time
 import uuid
@@ -15,6 +16,8 @@ import requests
 
 from hippius_sdk.config import get_config_value, get_encryption_key
 from hippius_sdk.ipfs_core import AsyncIPFSClient
+from hippius_sdk.substrate import FileInput, SubstrateClient
+from hippius_sdk.utils import format_cid, format_size
 
 # Import PyNaCl for encryption
 try:
@@ -349,8 +352,6 @@ class IPFSClient:
                     cid = result["Hash"]
             finally:
                 # Clean up the temporary directory
-                import shutil
-
                 shutil.rmtree(temp_dir, ignore_errors=True)
         else:
             # Get directory info
@@ -405,14 +406,7 @@ class IPFSClient:
         Returns:
             str: Human-readable size string (e.g., '1.23 MB', '456.78 KB')
         """
-        if size_bytes >= 1024 * 1024 * 1024:
-            return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
-        elif size_bytes >= 1024 * 1024:
-            return f"{size_bytes / (1024 * 1024):.2f} MB"
-        elif size_bytes >= 1024:
-            return f"{size_bytes / 1024:.2f} KB"
-        else:
-            return f"{size_bytes} bytes"
+        return format_size(size_bytes)
 
     def format_cid(self, cid: str) -> str:
         """
@@ -426,52 +420,7 @@ class IPFSClient:
         Returns:
             str: Formatted CID string
         """
-        # If it already looks like a proper CID, return it as is
-        if cid.startswith(("Qm", "bafy", "bafk", "bafyb", "bafzb", "b")):
-            return cid
-
-        # Check if it's a hex string
-        if all(c in "0123456789abcdefABCDEF" for c in cid):
-            # First try the special case where the hex string is actually ASCII encoded
-            try:
-                # Try to decode the hex as ASCII characters
-                hex_bytes = bytes.fromhex(cid)
-                ascii_str = hex_bytes.decode("ascii")
-
-                # If the decoded string starts with a valid CID prefix, return it
-                if ascii_str.startswith(("Qm", "bafy", "bafk", "bafyb", "bafzb", "b")):
-                    return ascii_str
-            except Exception:
-                pass
-
-            # If the above doesn't work, try the standard CID decoding
-            try:
-                import binascii
-
-                import base58
-
-                # Try to decode hex to binary then to base58 for CIDv0
-                try:
-                    binary_data = binascii.unhexlify(cid)
-                    if (
-                        len(binary_data) > 2
-                        and binary_data[0] == 0x12
-                        and binary_data[1] == 0x20
-                    ):
-                        # This looks like a CIDv0 (Qm...)
-                        decoded_cid = base58.b58encode(binary_data).decode("utf-8")
-                        return decoded_cid
-                except Exception:
-                    pass
-
-                # If not successful, just return hex with 0x prefix as fallback
-                return f"0x{cid}"
-            except ImportError:
-                # If base58 is not available, return hex with prefix
-                return f"0x{cid}"
-
-        # Default case - return as is
-        return cid
+        return format_cid(cid)
 
     async def download_file(
         self,
@@ -1063,7 +1012,9 @@ class IPFSClient:
                 print(f"Downloading metadata file (CID: {metadata_cid})...")
 
             metadata_path = os.path.join(temp_dir, "metadata.json")
-            await self.download_file(metadata_cid, metadata_path, max_retries=max_retries)
+            await self.download_file(
+                metadata_cid, metadata_path, max_retries=max_retries
+            )
 
             if verbose:
                 metadata_download_time = time.time() - start_time
@@ -1291,14 +1242,9 @@ class IPFSClient:
             verbose=verbose,
         )
 
-        # Step 2: Import substrate client if we need it
+        # Step 2: Create substrate client if we need it
         if substrate_client is None:
-            from hippius_sdk.substrate import FileInput, SubstrateClient
-
             substrate_client = SubstrateClient()
-        else:
-            # Just get the FileInput class
-            from hippius_sdk.substrate import FileInput
 
         original_file = metadata["original_file"]
         metadata_cid = metadata["metadata_cid"]

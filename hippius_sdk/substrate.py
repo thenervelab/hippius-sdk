@@ -6,8 +6,9 @@ Note: This functionality is coming soon and not implemented yet.
 
 import json
 import os
+import tempfile
 import uuid
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
 from dotenv import load_dotenv
 from substrateinterface import Keypair, SubstrateInterface
@@ -19,6 +20,7 @@ from hippius_sdk.config import (
     get_seed_phrase,
     set_seed_phrase,
 )
+from hippius_sdk.utils import hex_to_ipfs_cid
 
 # Load environment variables
 load_dotenv()
@@ -276,8 +278,7 @@ class SubstrateClient:
             print(f"Created file list with {len(file_list)} entries")
 
             # Step 2: Upload the JSON file to IPFS
-            import tempfile
-
+            # Defer import to avoid circular imports
             from hippius_sdk.ipfs import IPFSClient
 
             ipfs_client = IPFSClient()
@@ -322,7 +323,7 @@ class SubstrateClient:
             except Exception as e:
                 print(f"Warning: Error composing call: {e}")
                 print("Attempting to use IpfsPallet.storeFile instead...")
-                
+
                 # Try with IpfsPallet.storeFile as an alternative
                 alt_call_params = {
                     "fileHash": files_list_cid,
@@ -339,8 +340,16 @@ class SubstrateClient:
                 call=call, keypair=self._keypair
             )
 
+            print(f"Payment info: {json.dumps(payment_info, indent=2)}")
+
+            # Convert partialFee from Substrate (10^18 units) to a more readable format
             estimated_fee = payment_info.get("partialFee", 0)
-            print(f"Estimated transaction fee: {estimated_fee}")
+            estimated_fee_formatted = (
+                float(estimated_fee) / 1_000_000_000_000_000_000 if estimated_fee else 0
+            )
+            print(
+                f"Estimated transaction fee: {estimated_fee} ({estimated_fee_formatted:.10f} tokens)"
+            )
 
             # Create a signed extrinsic
             extrinsic = self._substrate.create_signed_extrinsic(
@@ -695,6 +704,7 @@ class SubstrateClient:
             print(f"Decoded IPFS CID: {profile_cid}")
 
             # Fetch the profile JSON from IPFS
+            # Defer import to avoid circular imports
             from hippius_sdk.ipfs import IPFSClient
 
             ipfs_client = IPFSClient()
@@ -795,9 +805,9 @@ class SubstrateClient:
                 if file_size:
                     size_bytes = file_size
                     if size_bytes >= 1024 * 1024:
-                        processed_file["size_formatted"] = (
-                            f"{size_bytes / (1024 * 1024):.2f} MB"
-                        )
+                        processed_file[
+                            "size_formatted"
+                        ] = f"{size_bytes / (1024 * 1024):.2f} MB"
                     else:
                         processed_file["size_formatted"] = f"{size_bytes / 1024:.2f} KB"
                 else:
@@ -812,7 +822,9 @@ class SubstrateClient:
             print(error_msg)
             raise ValueError(error_msg)
 
-    def get_pinning_status(self, account_address: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_pinning_status(
+        self, account_address: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Get the status of file pinning requests for an account.
 
@@ -881,9 +893,12 @@ class SubstrateClient:
                     result = self._substrate.query(
                         module="IpfsPallet",
                         storage_function="UserStorageRequests",
-                        params=[account_address, None]  # Try with a None second parameter
+                        params=[
+                            account_address,
+                            None,
+                        ],  # Try with a None second parameter
                     )
-                    
+
                     # If the query returns a nested structure, extract it
                     if result.value and isinstance(result.value, list):
                         # Convert to a list format similar to query_map for processing
@@ -903,20 +918,20 @@ class SubstrateClient:
 
             # Process the storage requests
             storage_requests = []
-            
+
             if not results_list:
                 print(f"No storage requests found for account: {account_address}")
                 return []
-                
+
             print(f"Found {len(results_list)} storage request entries")
-            
+
             for i, (key, value) in enumerate(results_list):
                 try:
                     # For debugging, print raw data
                     print(f"Entry {i+1}:")
                     print(f"  Raw key: {key}, type: {type(key)}")
                     print(f"  Raw value: {value}, type: {type(value)}")
-                    
+
                     # Extract file hash from key if possible
                     file_hash_hex = None
                     if key is not None:
@@ -928,7 +943,7 @@ class SubstrateClient:
                             file_hash_hex = key[2:]
                         else:
                             file_hash_hex = str(key)
-                    
+
                     # Try to extract value data
                     request_data = None
                     if isinstance(value, dict):
@@ -937,31 +952,31 @@ class SubstrateClient:
                         request_data = value
                     elif hasattr(value, "__dict__"):
                         # Convert object to dict
-                        request_data = {k: getattr(value, k) for k in dir(value) 
-                                      if not k.startswith('_') and not callable(getattr(value, k))}
-                    
+                        request_data = {
+                            k: getattr(value, k)
+                            for k in dir(value)
+                            if not k.startswith("_") and not callable(getattr(value, k))
+                        }
+
                     # If we can't extract data, just use value as string for debugging
                     if request_data is None:
                         request_data = {"raw_value": str(value)}
-                    
+
                     # Create formatted request with available data
-                    formatted_request = {
-                        "raw_key": str(key),
-                        "raw_value": str(value)
-                    }
-                    
+                    formatted_request = {"raw_key": str(key), "raw_value": str(value)}
+
                     # Directly extract file_name from the value if it's a dict-like object
                     if hasattr(value, "get"):
                         if value.get("file_name"):
                             formatted_request["file_name"] = value.get("file_name")
                         elif value.get("fileName"):
                             formatted_request["file_name"] = value.get("fileName")
-                    
+
                     # Add CID if we have it
                     if file_hash_hex:
                         file_cid = self._hex_to_ipfs_cid(file_hash_hex)
                         formatted_request["cid"] = file_cid
-                    
+
                     # Add other fields from request_data if available
                     for source_field, target_field in [
                         ("fileName", "file_name"),
@@ -981,13 +996,15 @@ class SubstrateClient:
                             formatted_request[target_field] = request_data[source_field]
                         # Fallback to attribute access for different types of objects
                         elif hasattr(value, source_field):
-                            formatted_request[target_field] = getattr(value, source_field)
-                    
+                            formatted_request[target_field] = getattr(
+                                value, source_field
+                            )
+
                     storage_requests.append(formatted_request)
-                    
+
                 except Exception as e:
                     print(f"Error processing request entry {i+1}: {e}")
-            
+
             print(f"Successfully processed {len(storage_requests)} storage requests")
             return storage_requests
 
@@ -1006,46 +1023,4 @@ class SubstrateClient:
         Returns:
             str: Regular IPFS CID
         """
-        # First, try to decode as ASCII if it's a hex representation of ASCII characters
-        try:
-            if hex_string.startswith("0x"):
-                hex_string = hex_string[2:]
-
-            bytes_data = bytes.fromhex(hex_string)
-            ascii_str = bytes_data.decode("ascii")
-
-            # If the decoded string starts with a valid CID prefix, return it
-            if ascii_str.startswith(("Qm", "bafy", "bafk", "bafyb", "bafzb", "b")):
-                return ascii_str
-        except Exception:
-            # If ASCII decoding fails, continue with other methods
-            pass
-
-        # Try to decode as a binary CID
-        try:
-            import base58
-
-            if hex_string.startswith("0x"):
-                hex_string = hex_string[2:]
-
-            binary_data = bytes.fromhex(hex_string)
-
-            # Check if it matches CIDv0 pattern (starts with 0x12, 0x20)
-            if (
-                len(binary_data) > 2
-                and binary_data[0] == 0x12
-                and binary_data[1] == 0x20
-            ):
-                # CIDv0 (Qm...)
-                return base58.b58encode(binary_data).decode("utf-8")
-
-            # If it doesn't match CIDv0, for CIDv1 just return the hex without 0x prefix
-            # since adding 0x breaks IPFS gateway URLs
-            return hex_string
-        except ImportError:
-            # If base58 is not available
-            print("Warning: base58 module not available for proper CID conversion")
-            return hex_string
-        except Exception as e:
-            print(f"Error converting hex to CID: {e}")
-            return hex_string
+        return hex_to_ipfs_cid(hex_string)
