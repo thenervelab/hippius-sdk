@@ -50,5 +50,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
-anyio_backends = ["asyncio"]
 asyncio_default_fixture_loop_scope = "function"
