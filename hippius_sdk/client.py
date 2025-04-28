@@ -287,7 +287,7 @@ class HippiusClient:
                 "PyNaCl is required for encryption. Install it with: pip install pynacl"
             )
 
-    def erasure_code_file(
+    async def erasure_code_file(
         self,
         file_path: str,
         k: int = 3,
@@ -321,7 +321,7 @@ class HippiusClient:
             ValueError: If erasure coding is not available or parameters are invalid
             RuntimeError: If chunk uploads fail
         """
-        return self.ipfs_client.erasure_code_file(
+        return await self.ipfs_client.erasure_code_file(
             file_path=file_path,
             k=k,
             m=m,
@@ -331,7 +331,7 @@ class HippiusClient:
             verbose=verbose,
         )
 
-    def reconstruct_from_erasure_code(
+    async def reconstruct_from_erasure_code(
         self,
         metadata_cid: str,
         output_file: str,
@@ -356,7 +356,7 @@ class HippiusClient:
             ValueError: If reconstruction fails
             RuntimeError: If not enough chunks can be downloaded
         """
-        return self.ipfs_client.reconstruct_from_erasure_code(
+        return await self.ipfs_client.reconstruct_from_erasure_code(
             metadata_cid=metadata_cid,
             output_file=output_file,
             temp_dir=temp_dir,
@@ -364,7 +364,7 @@ class HippiusClient:
             verbose=verbose,
         )
 
-    def store_erasure_coded_file(
+    async def store_erasure_coded_file(
         self,
         file_path: str,
         k: int = 3,
@@ -397,7 +397,7 @@ class HippiusClient:
             ValueError: If parameters are invalid
             RuntimeError: If processing fails
         """
-        return self.ipfs_client.store_erasure_coded_file(
+        return await self.ipfs_client.store_erasure_coded_file(
             file_path=file_path,
             k=k,
             m=m,

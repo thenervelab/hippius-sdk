@@ -618,7 +618,7 @@ async def handle_ec_files(
                     return 1
 
         # First, get all user files using the profile method
-        files = client.substrate_client.get_user_files_from_profile(account_address)
+        files = await client.substrate_client.get_user_files_from_profile(account_address)
 
         # Filter for metadata files (ending with .ec_metadata)
         ec_metadata_files = []
@@ -786,7 +786,7 @@ async def handle_ec_files(
     return 0
 
 
-def handle_erasure_code(
+async def handle_erasure_code(
     client, file_path, k, m, chunk_size, miner_ids, encrypt=None, verbose=True
 ):
     """Handle the erasure-code command"""
@@ -828,7 +828,7 @@ def handle_erasure_code(
             choice = input("> ").strip().lower()
 
             if choice in ("y", "yes"):
-                return handle_erasure_code_directory(
+                return await handle_erasure_code_directory(
                     client, file_path, k, m, chunk_size, miner_ids, encrypt, verbose
                 )
         else:
@@ -893,7 +893,7 @@ def handle_erasure_code(
 
     try:
         # Use the store_erasure_coded_file method directly from HippiusClient
-        result = client.store_erasure_coded_file(
+        result = await client.store_erasure_coded_file(
             file_path=file_path,
             k=k,
             m=m,
@@ -959,7 +959,7 @@ def handle_erasure_code(
         return 1
 
 
-def handle_erasure_code_directory(
+async def handle_erasure_code_directory(
     client, dir_path, k, m, chunk_size, miner_ids, encrypt=None, verbose=True
 ):
     """Apply erasure coding to each file in a directory individually"""
@@ -1039,7 +1039,7 @@ def handle_erasure_code_directory(
 
         try:
             # Use the store_erasure_coded_file method directly from HippiusClient
-            result = client.store_erasure_coded_file(
+            result = await client.store_erasure_coded_file(
                 file_path=file_path,
                 k=k,
                 m=m,
@@ -1107,7 +1107,7 @@ def handle_erasure_code_directory(
     return 0 if failed == 0 else 1
 
 
-def handle_reconstruct(client, metadata_cid, output_file, verbose=True):
+async def handle_reconstruct(client, metadata_cid, output_file, verbose=True):
     """Handle the reconstruct command for erasure-coded files"""
     # Check if zfec is installed
     try:
@@ -1126,7 +1126,7 @@ def handle_reconstruct(client, metadata_cid, output_file, verbose=True):
 
     try:
         # Use the reconstruct_from_erasure_code method
-        result = client.reconstruct_from_erasure_code(
+        result = await client.reconstruct_from_erasure_code(
             metadata_cid=metadata_cid, output_file=output_file, verbose=verbose
         )
 
@@ -2270,7 +2270,7 @@ examples:
             )
 
         elif args.command == "erasure-code":
-            return handle_erasure_code(
+            return run_async_handler(handle_erasure_code,
                 client,
                 args.file_path,
                 args.k,
@@ -2282,7 +2282,7 @@ examples:
             )
 
         elif args.command == "reconstruct":
-            return handle_reconstruct(
+            return run_async_handler(handle_reconstruct,
                 client, args.metadata_cid, args.output_file, verbose=args.verbose
             )
 

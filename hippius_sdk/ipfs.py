@@ -739,7 +739,7 @@ class IPFSClient:
             "message": message,
         }
 
-    def erasure_code_file(
+    async def erasure_code_file(
         self,
         file_path: str,
         k: int = 3,
@@ -966,7 +966,7 @@ class IPFSClient:
 
                     # Upload the chunk to IPFS
                     try:
-                        chunk_cid = self.upload_file(
+                        chunk_cid = await self.upload_file(
                             chunk_path, max_retries=max_retries
                         )
 
@@ -1000,7 +1000,7 @@ class IPFSClient:
                 print("Uploading metadata file...")
 
             # Upload the metadata file to IPFS
-            metadata_cid_result = self.upload_file(
+            metadata_cid_result = await self.upload_file(
                 metadata_path, max_retries=max_retries
             )
 
@@ -1017,7 +1017,7 @@ class IPFSClient:
 
             return metadata
 
-    def reconstruct_from_erasure_code(
+    async def reconstruct_from_erasure_code(
         self,
         metadata_cid: str,
         output_file: str,
@@ -1063,7 +1063,7 @@ class IPFSClient:
                 print(f"Downloading metadata file (CID: {metadata_cid})...")
 
             metadata_path = os.path.join(temp_dir, "metadata.json")
-            self.download_file(metadata_cid, metadata_path, max_retries=max_retries)
+            await self.download_file(metadata_cid, metadata_path, max_retries=max_retries)
 
             if verbose:
                 metadata_download_time = time.time() - start_time
@@ -1137,7 +1137,7 @@ class IPFSClient:
                             if isinstance(chunk["cid"], dict) and "cid" in chunk["cid"]
                             else chunk["cid"]
                         )
-                        self.download_file(
+                        await self.download_file(
                             chunk_cid, chunk_path, max_retries=max_retries
                         )
                         chunks_downloaded += 1
@@ -1245,7 +1245,7 @@ class IPFSClient:
             if temp_dir_obj is not None:
                 temp_dir_obj.cleanup()
 
-    def store_erasure_coded_file(
+    async def store_erasure_coded_file(
         self,
         file_path: str,
         k: int = 3,
@@ -1281,7 +1281,7 @@ class IPFSClient:
             RuntimeError: If processing fails
         """
         # Step 1: Erasure code the file and upload chunks
-        metadata = self.erasure_code_file(
+        metadata = await self.erasure_code_file(
             file_path=file_path,
             k=k,
             m=m,
@@ -1345,7 +1345,7 @@ class IPFSClient:
                     f"Submitting storage request for 1 metadata file and {len(metadata['chunks'])} chunks..."
                 )
 
-            tx_hash = substrate_client.storage_request(
+            tx_hash = await substrate_client.storage_request(
                 files=all_file_inputs, miner_ids=miner_ids
             )
 

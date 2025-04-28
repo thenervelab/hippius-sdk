@@ -326,7 +326,8 @@ async def test_store_cid(mock_substrate_interface, mock_keypair, mock_config):
         assert tx_hash == "0xabcdef1234567890"
 
 
-def test_get_user_files_from_profile(mock_substrate_interface, mock_keypair, mock_config):
+@pytest.mark.asyncio
+async def test_get_user_files_from_profile(mock_substrate_interface, mock_keypair, mock_config):
     """Verify retrieval of user files from the blockchain profile.
     
     Tests that the get_user_files_from_profile method:
@@ -349,7 +350,7 @@ def test_get_user_files_from_profile(mock_substrate_interface, mock_keypair, moc
 
     # Mock IPFSClient
     mock_ipfs = MagicMock()
-    mock_ipfs.cat.return_value = {
+    mock_ipfs.cat = AsyncMock(return_value={
         "is_text": True,
         "content": json.dumps({
             "files": [
@@ -360,11 +361,11 @@ def test_get_user_files_from_profile(mock_substrate_interface, mock_keypair, moc
                 }
             ]
         })
-    }
+    })
 
     with patch.object(SubstrateClient, '_hex_to_ipfs_cid', return_value="QmProfileCID"):
         with patch("hippius_sdk.ipfs.IPFSClient", return_value=mock_ipfs):
-            files = client.get_user_files_from_profile()
+            files = await client.get_user_files_from_profile()
             mock_substrate.query.assert_called_once_with(
                 module="IpfsPallet",
                 storage_function="UserProfile",
