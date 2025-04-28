@@ -462,7 +462,7 @@ def handle_credits(client, account_address):
     return 0
 
 
-def handle_files(client, account_address, show_all_miners=False):
+async def handle_files(client, account_address, show_all_miners=False):
     """
     Display files stored by a user in a nice format.
 
@@ -502,7 +502,7 @@ def handle_files(client, account_address, show_all_miners=False):
 
         # Get files for the account using the new profile-based method
         print(f"Retrieving files for account: {account_address}")
-        files = client.substrate_client.get_user_files_from_profile(account_address)
+        files = await client.substrate_client.get_user_files_from_profile(account_address)
 
         # Check if any files were found
         if not files:
@@ -2245,7 +2245,7 @@ examples:
             return handle_credits(client, args.account_address)
 
         elif args.command == "files":
-            return handle_files(
+            return run_async_handler(handle_files,
                 client,
                 args.account_address,
                 show_all_miners=(

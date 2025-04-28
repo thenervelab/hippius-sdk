@@ -584,7 +584,7 @@ class SubstrateClient:
             print(error_msg)
             raise ValueError(error_msg)
 
-    def get_user_files(
+    async def get_user_files(
         self,
         account_address: Optional[str] = None,
         truncate_miners: bool = True,
@@ -619,9 +619,9 @@ class SubstrateClient:
         """
         # For backward compatibility, this method now calls get_user_files_from_profile
         # with appropriate conversions
-        return self.get_user_files_from_profile(account_address)
+        return await self.get_user_files_from_profile(account_address)
 
-    def get_user_files_from_profile(
+    async def get_user_files_from_profile(
         self,
         account_address: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
@@ -700,7 +700,7 @@ class SubstrateClient:
             ipfs_client = IPFSClient()
 
             print(f"Fetching user profile from IPFS: {profile_cid}")
-            profile_data = ipfs_client.cat(profile_cid)
+            profile_data = await ipfs_client.cat(profile_cid)
 
             # Parse the JSON content
             if not profile_data.get("is_text", False):
