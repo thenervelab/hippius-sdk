@@ -3,7 +3,7 @@ Tests for the Substrate client.
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
@@ -220,7 +220,8 @@ def test_set_seed_phrase_empty(mock_substrate_interface, mock_keypair, mock_conf
 
 
 @patch("hippius_sdk.substrate.uuid.uuid4")
-def test_storage_request(mock_uuid, mock_substrate_interface, mock_keypair, mock_config,
+@pytest.mark.asyncio
+async def test_storage_request(mock_uuid, mock_substrate_interface, mock_keypair, mock_config,
                          mock_temp_file):
     """Verify the storage_request method submits transactions correctly.
     
@@ -237,7 +238,8 @@ def test_storage_request(mock_uuid, mock_substrate_interface, mock_keypair, mock
 
     mock_uuid.return_value = "test-uuid"
     mock_ipfs = MagicMock()
-    mock_ipfs.upload_file.return_value = {"cid": "QmTestCID"}
+    # Create an awaitable mock for the async upload_file method
+    mock_ipfs.upload_file = AsyncMock(return_value={"cid": "QmTestCID"})
     mock_ipfs_class = MagicMock(return_value=mock_ipfs)
 
     seed_phrase = "test seed phrase"
@@ -266,7 +268,7 @@ def test_storage_request(mock_uuid, mock_substrate_interface, mock_keypair, mock
 
     with patch("hippius_sdk.ipfs.IPFSClient", mock_ipfs_class), \
             patch("tempfile.NamedTemporaryFile", mock_tempfile.NamedTemporaryFile):
-        tx_hash = client.storage_request(files)
+        tx_hash = await client.storage_request(files)
 
     expected_json = json.dumps([
         {"filename": "file1.txt", "cid": "QmHash1"},
@@ -294,7 +296,8 @@ def test_storage_request(mock_uuid, mock_substrate_interface, mock_keypair, mock
     assert tx_hash == "0xabcdef1234567890"
 
 
-def test_store_cid(mock_substrate_interface, mock_keypair, mock_config):
+@pytest.mark.asyncio
+async def test_store_cid(mock_substrate_interface, mock_keypair, mock_config):
     """Verify the store_cid method correctly delegates to storage_request.
     
     Tests that the store_cid method:
@@ -307,10 +310,13 @@ def test_store_cid(mock_substrate_interface, mock_keypair, mock_config):
 
     # Mock the storage_request method
     with patch.object(SubstrateClient, 'storage_request') as mock_storage_request:
+        # Create an async mock
         mock_storage_request.return_value = "0xabcdef1234567890"
+        # Make it properly awaitable
+        mock_storage_request.side_effect = AsyncMock(return_value="0xabcdef1234567890")
 
         client = SubstrateClient(url=url)
-        tx_hash = client.store_cid("QmTestCID", "test.txt")
+        tx_hash = await client.store_cid("QmTestCID", "test.txt")
 
         # Check storage_request was called with correct parameters
         mock_storage_request.assert_called_once()
