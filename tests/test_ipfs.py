@@ -2,7 +2,6 @@
 Tests for the AsyncIPFSClient and IPFSClient classes using pytest style.
 """
 
-import json
 import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -11,7 +10,8 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from hippius_sdk.ipfs import AsyncIPFSClient, IPFSClient
+from hippius_sdk.ipfs import IPFSClient
+from hippius_sdk.ipfs_core import AsyncIPFSClient
 
 
 class MockResponse:
@@ -334,12 +334,11 @@ def mock_async_ipfs_client():
 @pytest.mark.asyncio
 async def test_ipfs_client_upload_file(temp_file):
     """Test IPFSClient.upload_file method."""
-    with patch("hippius_sdk.ipfs.AsyncIPFSClient") as mock_async_client_class:
-        # Create a properly mocked async client
-        mock_client = AsyncMock()
-        mock_client.add_file = AsyncMock(return_value={"Hash": "QmTest123"})
-        mock_async_client_class.return_value = mock_client
+    mock_client = AsyncMock()
+    mock_client.add_file = AsyncMock(return_value={"Hash": "QmTest123"})
+    mock_async_ipfs_client = MagicMock(return_value=mock_client)
 
+    with patch.dict("hippius_sdk.ipfs.__dict__", {"AsyncIPFSClient": mock_async_ipfs_client}):
         client = IPFSClient(api_url="http://localhost:5001")
         result = await client.upload_file(temp_file)
 
@@ -357,13 +356,15 @@ async def test_ipfs_client_upload_file(temp_file):
 @pytest.mark.asyncio
 async def test_ipfs_client_upload_directory(temp_dir):
     """Test IPFSClient.upload_directory method."""
-    with patch("hippius_sdk.ipfs.AsyncIPFSClient") as mock_async_client_class:
-        # Create a properly mocked async client
-        mock_client = AsyncMock()
-
-        mock_client.add_directory.return_value = {"Hash": "QmDir123"}
-        mock_async_client_class.return_value = mock_client
-
+    # Create a properly mocked async client
+    mock_client = AsyncMock()
+    mock_client.add_directory.return_value = {"Hash": "QmDir123"}
+    
+    # Create a mock class for AsyncIPFSClient
+    mock_async_ipfs_client = MagicMock(return_value=mock_client)
+    
+    # Patch the module namespace to include our mock AsyncIPFSClient
+    with patch.dict("hippius_sdk.ipfs.__dict__", {"AsyncIPFSClient": mock_async_ipfs_client}):
         client = IPFSClient(api_url="http://localhost:5001")
         result = await client.upload_directory(temp_dir)
 
@@ -381,14 +382,11 @@ async def test_ipfs_client_upload_directory(temp_dir):
 @pytest.mark.asyncio
 async def test_ipfs_client_cat():
     """Test IPFSClient.cat method."""
-    with patch("hippius_sdk.ipfs.AsyncIPFSClient") as mock_async_client_class:
-        # Create a properly mocked async client
-        mock_client = AsyncMock()
-
-        # Use AsyncMock with return_value instead of a function definition
-        mock_client.cat = AsyncMock(return_value=b"Test content")
-        mock_async_client_class.return_value = mock_client
-
+    mock_client = AsyncMock()
+    mock_client.cat = AsyncMock(return_value=b"Test content")
+    mock_async_ipfs_client = MagicMock(return_value=mock_client)
+    
+    with patch.dict("hippius_sdk.ipfs.__dict__", {"AsyncIPFSClient": mock_async_ipfs_client}):
         client = IPFSClient(api_url="http://localhost:5001")
         result = await client.cat("QmTest123")
 
@@ -406,14 +404,11 @@ async def test_ipfs_client_cat():
 @pytest.mark.asyncio
 async def test_ipfs_client_exists():
     """Test IPFSClient.exists method."""
-    with patch("hippius_sdk.ipfs.AsyncIPFSClient") as mock_async_client_class:
-        # Create a properly mocked async client
-        mock_client = AsyncMock()
-
-        # Use AsyncMock with return_value instead of a function definition
-        mock_client.ls = AsyncMock(return_value=True)
-        mock_async_client_class.return_value = mock_client
-
+    mock_client = AsyncMock()
+    mock_client.ls = AsyncMock(return_value=True)
+    mock_async_ipfs_client = MagicMock(return_value=mock_client)
+    
+    with patch.dict("hippius_sdk.ipfs.__dict__", {"AsyncIPFSClient": mock_async_ipfs_client}):
         client = IPFSClient(api_url="http://localhost:5001")
         result = await client.exists("QmTest123")
 
@@ -430,14 +425,11 @@ async def test_ipfs_client_exists():
 @pytest.mark.asyncio
 async def test_ipfs_client_pin():
     """Test IPFSClient.pin method."""
-    with patch("hippius_sdk.ipfs.AsyncIPFSClient") as mock_async_client_class:
-        # Create a properly mocked async client
-        mock_client = AsyncMock()
-
-        # Use AsyncMock with return_value instead of a function definition
-        mock_client.pin = AsyncMock(return_value={"Pins": ["QmTest123"]})
-        mock_async_client_class.return_value = mock_client
-
+    mock_client = AsyncMock()
+    mock_client.pin = AsyncMock(return_value={"Pins": ["QmTest123"]})
+    mock_async_ipfs_client = MagicMock(return_value=mock_client)
+    
+    with patch.dict("hippius_sdk.ipfs.__dict__", {"AsyncIPFSClient": mock_async_ipfs_client}):
         client = IPFSClient(api_url="http://localhost:5001")
         result = await client.pin("QmTest123")
 
@@ -456,8 +448,11 @@ async def test_ipfs_client_download_file(tmp_path):
     """Test IPFSClient.download_file method with mocked requests.get."""
     test_cid = "QmTest123"
     output_path = os.path.join(tmp_path, "downloaded.txt")
+    mock_client = AsyncMock()
+    mock_async_ipfs_client = MagicMock(return_value=mock_client)
 
-    with patch("requests.get") as mock_get:
+    with patch("requests.get") as mock_get, \
+         patch.dict("hippius_sdk.ipfs.__dict__", {"AsyncIPFSClient": mock_async_ipfs_client}):
         mock_response = Mock()
         mock_response.raise_for_status = Mock()
         mock_response.iter_content.return_value = [b"Test ", b"content"]

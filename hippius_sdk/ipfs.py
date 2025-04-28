@@ -8,14 +8,13 @@ import os
 import tempfile
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional
 
 import httpx
-import ipfshttpclient
 import requests
-from dotenv import load_dotenv
 
 from hippius_sdk.config import get_config_value, get_encryption_key
+from hippius_sdk.ipfs_core import AsyncIPFSClient
 
 # Import PyNaCl for encryption
 try:
