@@ -7,11 +7,16 @@ specifically in ~/.hippius/config.
 
 import base64
 import getpass
-import hashlib
 import json
 import os
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
+
+import nacl.secret
+import nacl.utils
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from dotenv import load_dotenv
+from substrateinterface import Keypair
 
 # Define constants
 CONFIG_DIR = os.path.expanduser("~/.hippius")
@@ -84,7 +89,7 @@ def load_config() -> Dict[str, Any]:
         return config
     except Exception as e:
         print(f"Warning: Could not load configuration file: {e}")
-        print(f"Using default configuration")
+        print("Using default configuration")
         return DEFAULT_CONFIG.copy()
 
 
@@ -194,12 +199,10 @@ def _derive_key_from_password(
     Returns:
         Tuple[bytes, bytes]: (derived_key, salt)
     """
-    # Import cryptography for PBKDF2
     try:
-        import os
-
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+        # Verify PBKDF2HMAC is already imported at the top
+        if not PBKDF2HMAC:
+            raise ImportError("PBKDF2HMAC not available")
     except ImportError:
         raise ImportError(
             "cryptography is required for password-based encryption. Install it with: pip install cryptography"
@@ -238,10 +241,10 @@ def encrypt_with_password(data: str, password: str) -> Tuple[str, str]:
         # Derive key from password with a new salt
         key, salt = _derive_key_from_password(password)
 
-        # Import NaCl for encryption
+        # Verify NaCl is available (imported at the top)
         try:
-            import nacl.secret
-            import nacl.utils
+            if not hasattr(nacl, "secret") or not hasattr(nacl, "utils"):
+                raise ImportError("NaCl modules not available")
         except ImportError:
             raise ValueError(
                 "PyNaCl is required for encryption. Install it with: pip install pynacl"
@@ -283,10 +286,10 @@ def decrypt_with_password(encrypted_data: str, salt: str, password: str) -> str:
         # Derive the key from the password and salt
         key, _ = _derive_key_from_password(password, salt_bytes)
 
-        # Import NaCl for decryption
+        # Verify NaCl is available (imported at the top)
         try:
-            import nacl.secret
-            import nacl.utils
+            if not hasattr(nacl, "secret") or not hasattr(nacl, "utils"):
+                raise ImportError("NaCl modules not available")
         except ImportError:
             raise ValueError(
                 "PyNaCl is required for decryption. Install it with: pip install pynacl"
@@ -334,8 +337,6 @@ def encrypt_seed_phrase(
         # Get the SS58 address from the seed phrase
         ss58_address = None
         try:
-            from substrateinterface import Keypair
-
             keypair = Keypair.create_from_mnemonic(seed_phrase)
             ss58_address = keypair.ss58_address
         except Exception as e:
@@ -514,8 +515,6 @@ def set_seed_phrase(
         # Get the SS58 address from the seed phrase
         ss58_address = None
         try:
-            from substrateinterface import Keypair
-
             keypair = Keypair.create_from_mnemonic(seed_phrase)
             ss58_address = keypair.ss58_address
         except Exception as e:
@@ -670,13 +669,7 @@ def initialize_from_env() -> None:
 
     This is useful for maintaining backward compatibility with .env files.
     """
-    # Load dotenv first to get environment variables
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv()
-    except ImportError:
-        pass
+    load_dotenv()
 
     config = load_config()
     changed = False

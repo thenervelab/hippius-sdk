@@ -2,20 +2,22 @@
 IPFS operations for the Hippius SDK.
 """
 
-import base64
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional
 
-import ipfshttpclient
+import httpx
 import requests
-from dotenv import load_dotenv
 
 from hippius_sdk.config import get_config_value, get_encryption_key
+from hippius_sdk.ipfs_core import AsyncIPFSClient
+from hippius_sdk.substrate import FileInput, SubstrateClient
+from hippius_sdk.utils import format_cid, format_size
 
 # Import PyNaCl for encryption
 try:
@@ -70,39 +72,17 @@ class IPFSClient:
 
         self.gateway = gateway.rstrip("/")
         self.api_url = api_url
-        self.client = None
 
         # Extract base URL from API URL for HTTP fallback
         self.base_url = api_url
 
-        # Connect to IPFS daemon
-        if api_url:
-            try:
-                # Only attempt to use ipfshttpclient if the URL is in multiaddr format (starts with /)
-                if api_url.startswith("/"):
-                    self.client = ipfshttpclient.connect(api_url)
-                else:
-                    # For regular HTTP URLs, we'll use the HTTP API directly
-                    print(f"Using HTTP API at {api_url} for IPFS operations")
-            except ipfshttpclient.exceptions.ConnectionError as e:
-                print(f"Warning: Could not connect to IPFS node at {api_url}: {e}")
-                print(f"Falling back to HTTP API for uploads")
-                # We'll use HTTP API fallback for uploads
-                try:
-                    # Try to connect to local IPFS daemon as fallback
-                    self.client = ipfshttpclient.connect()
-                except ipfshttpclient.exceptions.ConnectionError:
-                    # No IPFS connection available, but HTTP API fallback will be used
-                    pass
-        else:
-            try:
-                # Try to connect to local IPFS daemon
-                self.client = ipfshttpclient.connect()
-            except ipfshttpclient.exceptions.ConnectionError:
-                # No local IPFS daemon connection available
-                pass
+        try:
+            self.client = AsyncIPFSClient(api_url)
+        except httpx.ConnectError as e:
+            print(f"Warning: Could not connect to IPFS node at {api_url}: {e}")
+            # Try to connect to local IPFS daemon as fallback
+            self.client = AsyncIPFSClient()
 
-        # Initialize encryption settings
         self._initialize_encryption(encrypt_by_default, encryption_key)
 
     def _initialize_encryption(
@@ -140,7 +120,7 @@ class IPFSClient:
         # If encryption is requested but not available, warn the user
         if self.encrypt_by_default and not self.encryption_available:
             print(
-                f"Warning: Encryption requested but not available. Check that PyNaCl is installed and a valid encryption key is provided."
+                "Warning: Encryption requested but not available. Check that PyNaCl is installed and a valid encryption key is provided."
             )
 
     def encrypt_data(self, data: bytes) -> bytes:
@@ -202,102 +182,7 @@ class IPFSClient:
                 f"Decryption failed: {str(e)}. Incorrect key or corrupted data?"
             )
 
-    def _upload_via_http_api(self, file_path: str, max_retries: int = 3) -> str:
-        """
-        Upload a file to IPFS using the HTTP API.
-
-        This is a fallback method when ipfshttpclient is not available.
-
-        Args:
-            file_path: Path to the file to upload
-            max_retries: Maximum number of retry attempts (default: 3)
-
-        Returns:
-            str: Content Identifier (CID) of the uploaded file
-
-        Raises:
-            ConnectionError: If the upload fails
-        """
-        if not self.base_url:
-            raise ConnectionError("No IPFS API URL provided for HTTP upload")
-
-        # Retry logic
-        retries = 0
-        last_error = None
-
-        while retries < max_retries:
-            try:
-                # Show progress for large files
-                file_size = os.path.getsize(file_path)
-                if file_size > 1024 * 1024:  # If file is larger than 1MB
-                    print(f"  Uploading {file_size/1024/1024:.2f} MB file...")
-
-                # Prepare the file for upload
-                with open(file_path, "rb") as file:
-                    files = {
-                        "file": (
-                            os.path.basename(file_path),
-                            file,
-                            "application/octet-stream",
-                        )
-                    }
-
-                    # Make HTTP POST request to the IPFS HTTP API with a timeout
-                    print(
-                        f"  Sending request to {self.base_url}/api/v0/add... (attempt {retries+1}/{max_retries})"
-                    )
-                    upload_url = f"{self.base_url}/api/v0/add"
-                    response = requests.post(
-                        upload_url,
-                        files=files,
-                        timeout=120,  # 2 minute timeout for uploads
-                    )
-                    response.raise_for_status()
-
-                    # Parse the response JSON
-                    result = response.json()
-                    print(f"  Upload successful! CID: {result['Hash']}")
-                    return result["Hash"]
-
-            except (
-                requests.exceptions.Timeout,
-                requests.exceptions.ConnectionError,
-                requests.exceptions.RequestException,
-            ) as e:
-                # Save the error and retry
-                last_error = e
-                retries += 1
-                wait_time = 2**retries  # Exponential backoff: 2, 4, 8 seconds
-                print(f"  Upload attempt {retries} failed: {str(e)}")
-                if retries < max_retries:
-                    print(f"  Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-            except Exception as e:
-                # For other exceptions, don't retry
-                raise ConnectionError(f"Failed to upload file via HTTP API: {str(e)}")
-
-        # If we've exhausted all retries
-        if last_error:
-            error_type = type(last_error).__name__
-            if isinstance(last_error, requests.exceptions.Timeout):
-                raise ConnectionError(
-                    f"Timeout when uploading to {self.base_url} after {max_retries} attempts. The server is not responding."
-                )
-            elif isinstance(last_error, requests.exceptions.ConnectionError):
-                raise ConnectionError(
-                    f"Failed to connect to IPFS node at {self.base_url} after {max_retries} attempts: {str(last_error)}"
-                )
-            else:
-                raise ConnectionError(
-                    f"Failed to upload file via HTTP API after {max_retries} attempts. Last error ({error_type}): {str(last_error)}"
-                )
-
-        # This should never happen, but just in case
-        raise ConnectionError(
-            f"Failed to upload file to {self.base_url} after {max_retries} attempts for unknown reasons."
-        )
-
-    def upload_file(
+    async def upload_file(
         self,
         file_path: str,
         include_formatted_size: bool = True,
@@ -364,19 +249,8 @@ class IPFSClient:
                 # Use the original file for upload
                 upload_path = file_path
 
-            # Upload to IPFS
-            if self.client:
-                # Use IPFS client
-                result = self.client.add(upload_path)
-                cid = result["Hash"]
-            elif self.base_url:
-                # Fallback to using HTTP API
-                cid = self._upload_via_http_api(upload_path, max_retries=max_retries)
-            else:
-                # No connection or API URL available
-                raise ConnectionError(
-                    "No IPFS connection available. Please provide a valid api_url or ensure a local IPFS daemon is running."
-                )
+            result = await self.client.add_file(upload_path)
+            cid = result["Hash"]
 
         finally:
             # Clean up temporary file if created
@@ -397,7 +271,7 @@ class IPFSClient:
 
         return result
 
-    def upload_directory(
+    async def upload_directory(
         self,
         dir_path: str,
         include_formatted_size: bool = True,
@@ -471,20 +345,13 @@ class IPFSClient:
                         total_size_bytes += os.path.getsize(file_path)
 
                 # Use temp_dir instead of dir_path for upload
-                if self.client:
-                    result = self.client.add(temp_dir, recursive=True)
-                    if isinstance(result, list):
-                        cid = result[-1]["Hash"]
-                    else:
-                        cid = result["Hash"]
-                elif self.base_url:
-                    cid = self._upload_directory_via_http_api(temp_dir)
+                result = await self.client.add_directory(temp_dir)
+                if isinstance(result, list):
+                    cid = result[-1]["Hash"]
                 else:
-                    raise ConnectionError("No IPFS connection available")
+                    cid = result["Hash"]
             finally:
                 # Clean up the temporary directory
-                import shutil
-
                 shutil.rmtree(temp_dir, ignore_errors=True)
         else:
             # Get directory info
@@ -503,22 +370,13 @@ class IPFSClient:
                         pass
 
             # Upload to IPFS
-            if self.client:
-                # Use IPFS client
-                result = self.client.add(dir_path, recursive=True)
-                if isinstance(result, list):
-                    # Get the last item, which should be the directory itself
-                    cid = result[-1]["Hash"]
-                else:
-                    cid = result["Hash"]
-            elif self.base_url:
-                # Fallback to using HTTP API
-                cid = self._upload_directory_via_http_api(dir_path)
+
+            result = await self.client.add_directory(dir_path)
+            if isinstance(result, list):
+                # Get the last item, which should be the directory itself
+                cid = result[-1]["Hash"]
             else:
-                # No connection or API URL available
-                raise ConnectionError(
-                    "No IPFS connection available. Please provide a valid api_url or ensure a local IPFS daemon is running."
-                )
+                cid = result["Hash"]
 
         # Get dirname in case it wasn't set (for encryption path)
         dirname = os.path.basename(dir_path)
@@ -538,120 +396,6 @@ class IPFSClient:
 
         return result
 
-    def _upload_directory_via_http_api(
-        self, dir_path: str, max_retries: int = 3
-    ) -> str:
-        """
-        Upload a directory to IPFS using the HTTP API.
-
-        This is a limited implementation and may not support all directory features.
-
-        Args:
-            dir_path: Path to the directory to upload
-            max_retries: Maximum number of retry attempts (default: 3)
-
-        Returns:
-            str: Content Identifier (CID) of the uploaded directory
-
-        Raises:
-            ConnectionError: If the upload fails
-        """
-        if not self.base_url:
-            raise ConnectionError("No IPFS API URL provided for HTTP upload")
-
-        # Retry logic
-        retries = 0
-        last_error = None
-
-        while retries < max_retries:
-            try:
-                # This is a simplified approach - we'll upload the directory with recursive flag
-                files = []
-
-                print(f"  Preparing directory contents for upload...")
-                # Collect all files in the directory
-                for root, _, filenames in os.walk(dir_path):
-                    for filename in filenames:
-                        file_path = os.path.join(root, filename)
-                        rel_path = os.path.relpath(file_path, dir_path)
-
-                        with open(file_path, "rb") as f:
-                            file_content = f.read()
-
-                        # Add the file to the multipart request
-                        files.append(
-                            (
-                                "file",
-                                (rel_path, file_content, "application/octet-stream"),
-                            )
-                        )
-
-                # Create a request with the directory flag
-                upload_url = f"{self.base_url}/api/v0/add?recursive=true&wrap-with-directory=true"
-
-                print(
-                    f"  Sending directory upload request to {self.base_url}/api/v0/add... (attempt {retries+1}/{max_retries})"
-                )
-                print(f"  Uploading {len(files)} files...")
-
-                # Make HTTP POST request with timeout
-                response = requests.post(
-                    upload_url,
-                    files=files,
-                    timeout=300,  # 5 minute timeout for directory uploads
-                )
-                response.raise_for_status()
-
-                # The IPFS API returns a JSON object for each file, one per line
-                # The last one should be the directory itself
-                lines = response.text.strip().split("\n")
-                if not lines:
-                    raise ConnectionError("Empty response from IPFS API")
-
-                last_item = json.loads(lines[-1])
-                print(f"  Directory upload successful! CID: {last_item['Hash']}")
-                return last_item["Hash"]
-
-            except (
-                requests.exceptions.Timeout,
-                requests.exceptions.ConnectionError,
-                requests.exceptions.RequestException,
-            ) as e:
-                # Save the error and retry
-                last_error = e
-                retries += 1
-                wait_time = 2**retries  # Exponential backoff: 2, 4, 8 seconds
-                print(f"  Upload attempt {retries} failed: {str(e)}")
-                if retries < max_retries:
-                    print(f"  Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-            except Exception as e:
-                # For other exceptions, don't retry
-                raise ConnectionError(
-                    f"Failed to upload directory via HTTP API: {str(e)}"
-                )
-
-        # If we've exhausted all retries
-        if last_error:
-            error_type = type(last_error).__name__
-            if isinstance(last_error, requests.exceptions.Timeout):
-                raise ConnectionError(
-                    f"Timeout when uploading directory to {self.base_url} after {max_retries} attempts. The server is not responding."
-                )
-            elif isinstance(last_error, requests.exceptions.ConnectionError):
-                raise ConnectionError(
-                    f"Failed to connect to IPFS node at {self.base_url} after {max_retries} attempts: {str(last_error)}"
-                )
-            else:
-                raise ConnectionError(
-                    f"Failed to upload directory via HTTP API after {max_retries} attempts. Last error ({error_type}): {str(last_error)}"
-                )
-
-        # This should never happen, but just in case
-        raise ConnectionError(
-            f"Failed to upload directory to {self.base_url} after {max_retries} attempts for unknown reasons."
-        )
-
     def format_size(self, size_bytes: int) -> str:
         """
         Format a size in bytes to a human-readable string.
@@ -662,14 +406,7 @@ class IPFSClient:
         Returns:
             str: Human-readable size string (e.g., '1.23 MB', '456.78 KB')
         """
-        if size_bytes >= 1024 * 1024 * 1024:
-            return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
-        elif size_bytes >= 1024 * 1024:
-            return f"{size_bytes / (1024 * 1024):.2f} MB"
-        elif size_bytes >= 1024:
-            return f"{size_bytes / 1024:.2f} KB"
-        else:
-            return f"{size_bytes} bytes"
+        return format_size(size_bytes)
 
     def format_cid(self, cid: str) -> str:
         """
@@ -683,54 +420,9 @@ class IPFSClient:
         Returns:
             str: Formatted CID string
         """
-        # If it already looks like a proper CID, return it as is
-        if cid.startswith(("Qm", "bafy", "bafk", "bafyb", "bafzb", "b")):
-            return cid
+        return format_cid(cid)
 
-        # Check if it's a hex string
-        if all(c in "0123456789abcdefABCDEF" for c in cid):
-            # First try the special case where the hex string is actually ASCII encoded
-            try:
-                # Try to decode the hex as ASCII characters
-                hex_bytes = bytes.fromhex(cid)
-                ascii_str = hex_bytes.decode("ascii")
-
-                # If the decoded string starts with a valid CID prefix, return it
-                if ascii_str.startswith(("Qm", "bafy", "bafk", "bafyb", "bafzb", "b")):
-                    return ascii_str
-            except Exception:
-                pass
-
-            # If the above doesn't work, try the standard CID decoding
-            try:
-                import binascii
-
-                import base58
-
-                # Try to decode hex to binary then to base58 for CIDv0
-                try:
-                    binary_data = binascii.unhexlify(cid)
-                    if (
-                        len(binary_data) > 2
-                        and binary_data[0] == 0x12
-                        and binary_data[1] == 0x20
-                    ):
-                        # This looks like a CIDv0 (Qm...)
-                        decoded_cid = base58.b58encode(binary_data).decode("utf-8")
-                        return decoded_cid
-                except Exception:
-                    pass
-
-                # If not successful, just return hex with 0x prefix as fallback
-                return f"0x{cid}"
-            except ImportError:
-                # If base58 is not available, return hex with prefix
-                return f"0x{cid}"
-
-        # Default case - return as is
-        return cid
-
-    def download_file(
+    async def download_file(
         self,
         cid: str,
         output_path: str,
@@ -858,7 +550,7 @@ class IPFSClient:
             if temp_file_path and os.path.exists(temp_file_path):
                 os.unlink(temp_file_path)
 
-    def cat(
+    async def cat(
         self,
         cid: str,
         max_display_bytes: int = 1024,
@@ -898,14 +590,7 @@ class IPFSClient:
                 "Decryption requested but not available. Check that PyNaCl is installed and a valid encryption key is provided."
             )
 
-        # Get the content
-        if self.client:
-            content = self.client.cat(cid)
-        else:
-            url = f"{self.gateway}/ipfs/{cid}"
-            response = requests.get(url)
-            response.raise_for_status()
-            content = response.content
+        content = await self.client.cat(cid)
 
         # Decrypt if needed
         if should_decrypt:
@@ -940,7 +625,7 @@ class IPFSClient:
 
         return result
 
-    def exists(self, cid: str) -> Dict[str, Any]:
+    async def exists(self, cid: str) -> Dict[str, Any]:
         """
         Check if a CID exists on IPFS.
 
@@ -956,19 +641,7 @@ class IPFSClient:
         """
         formatted_cid = self.format_cid(cid)
         gateway_url = f"{self.gateway}/ipfs/{cid}"
-
-        try:
-            if self.client:
-                # We'll try to get the file stats
-                self.client.ls(cid)
-                exists = True
-            else:
-                # Try to access through gateway
-                url = f"{self.gateway}/ipfs/{cid}"
-                response = requests.head(url)
-                exists = response.status_code == 200
-        except (ipfshttpclient.exceptions.ErrorResponse, requests.RequestException):
-            exists = False
+        exists = await self.client.ls(cid)
 
         return {
             "exists": exists,
@@ -977,7 +650,7 @@ class IPFSClient:
             "gateway_url": gateway_url if exists else None,
         }
 
-    def pin(self, cid: str) -> Dict[str, Any]:
+    async def pin(self, cid: str) -> Dict[str, Any]:
         """
         Pin a CID to IPFS to keep it available.
 
@@ -996,31 +669,15 @@ class IPFSClient:
         """
         formatted_cid = self.format_cid(cid)
 
-        if not self.client and self.base_url:
-            # Try using HTTP API for pinning
-            try:
-                url = f"{self.base_url}/api/v0/pin/add?arg={cid}"
-                response = requests.post(url)
-                response.raise_for_status()
-                success = True
-                message = "Successfully pinned via HTTP API"
-            except requests.RequestException as e:
-                success = False
-                message = f"Failed to pin: {str(e)}"
-        elif not self.client:
-            raise ConnectionError(
-                "No IPFS connection available. Please provide a valid api_url or ensure a local IPFS daemon is running."
-            )
-
         try:
             if self.client:
-                self.client.pin.add(cid)
+                await self.client.pin(cid)
                 success = True
                 message = "Successfully pinned"
             else:
                 success = False
                 message = "No IPFS client available"
-        except ipfshttpclient.exceptions.ErrorResponse as e:
+        except httpx.HTTPError as e:
             success = False
             message = f"Failed to pin: {str(e)}"
 
@@ -1031,7 +688,7 @@ class IPFSClient:
             "message": message,
         }
 
-    def erasure_code_file(
+    async def erasure_code_file(
         self,
         file_path: str,
         k: int = 3,
@@ -1092,7 +749,7 @@ class IPFSClient:
         file_id = str(uuid.uuid4())
 
         if verbose:
-            print(f"Processing file: {file_name} ({file_size/1024/1024:.2f} MB)")
+            print(f"Processing file: {file_name} ({file_size / 1024 / 1024:.2f} MB)")
             print(
                 f"Erasure coding parameters: k={k}, m={m} (need {k}/{m} chunks to reconstruct)"
             )
@@ -1226,7 +883,7 @@ class IPFSClient:
                 all_encoded_chunks.append(encoded_chunks)
 
                 if verbose and (i + 1) % 10 == 0:
-                    print(f"  Encoded {i+1}/{len(chunks)} chunks")
+                    print(f"  Encoded {i + 1}/{len(chunks)} chunks")
             except Exception as e:
                 # If encoding fails, provide more helpful error message
                 error_msg = f"Error encoding chunk {i}: {str(e)}"
@@ -1258,7 +915,7 @@ class IPFSClient:
 
                     # Upload the chunk to IPFS
                     try:
-                        chunk_cid = self.upload_file(
+                        chunk_cid = await self.upload_file(
                             chunk_path, max_retries=max_retries
                         )
 
@@ -1289,10 +946,10 @@ class IPFSClient:
                 json.dump(metadata, f, indent=2)
 
             if verbose:
-                print(f"Uploading metadata file...")
+                print("Uploading metadata file...")
 
             # Upload the metadata file to IPFS
-            metadata_cid_result = self.upload_file(
+            metadata_cid_result = await self.upload_file(
                 metadata_path, max_retries=max_retries
             )
 
@@ -1301,15 +958,15 @@ class IPFSClient:
             metadata["metadata_cid"] = metadata_cid
 
             if verbose:
-                print(f"Erasure coding complete!")
+                print("Erasure coding complete!")
                 print(f"Metadata CID: {metadata_cid}")
-                print(f"Original file size: {file_size/1024/1024:.2f} MB")
+                print(f"Original file size: {file_size / 1024 / 1024:.2f} MB")
                 print(f"Total chunks: {len(chunks) * m}")
                 print(f"Minimum chunks needed: {k * len(chunks)}")
 
             return metadata
 
-    def reconstruct_from_erasure_code(
+    async def reconstruct_from_erasure_code(
         self,
         metadata_cid: str,
         output_file: str,
@@ -1355,7 +1012,9 @@ class IPFSClient:
                 print(f"Downloading metadata file (CID: {metadata_cid})...")
 
             metadata_path = os.path.join(temp_dir, "metadata.json")
-            self.download_file(metadata_cid, metadata_path, max_retries=max_retries)
+            await self.download_file(
+                metadata_cid, metadata_path, max_retries=max_retries
+            )
 
             if verbose:
                 metadata_download_time = time.time() - start_time
@@ -1376,13 +1035,13 @@ class IPFSClient:
 
             if verbose:
                 print(
-                    f"File: {original_file['name']} ({original_file['size']/1024/1024:.2f} MB)"
+                    f"File: {original_file['name']} ({original_file['size'] / 1024 / 1024:.2f} MB)"
                 )
                 print(
                     f"Erasure coding parameters: k={k}, m={m} (need {k} of {m} chunks to reconstruct)"
                 )
                 if is_encrypted:
-                    print(f"Encrypted: Yes")
+                    print("Encrypted: Yes")
 
             # Step 3: Group chunks by their original chunk index
             chunks_by_original = {}
@@ -1429,7 +1088,7 @@ class IPFSClient:
                             if isinstance(chunk["cid"], dict) and "cid" in chunk["cid"]
                             else chunk["cid"]
                         )
-                        self.download_file(
+                        await self.download_file(
                             chunk_cid, chunk_path, max_retries=max_retries
                         )
                         chunks_downloaded += 1
@@ -1487,7 +1146,7 @@ class IPFSClient:
 
             # Step 5: Combine the reconstructed chunks into a file
             if verbose:
-                print(f"Combining reconstructed chunks...")
+                print("Combining reconstructed chunks...")
 
             # Concatenate all chunks
             file_data = b"".join(reconstructed_chunks)
@@ -1505,7 +1164,7 @@ class IPFSClient:
                     )
 
                 if verbose:
-                    print(f"Decrypting file data...")
+                    print("Decrypting file data...")
 
                 file_data = self.decrypt_data(file_data)
 
@@ -1519,11 +1178,11 @@ class IPFSClient:
                 expected_hash = original_file["hash"]
 
                 if actual_hash != expected_hash:
-                    print(f"Warning: File hash mismatch!")
+                    print("Warning: File hash mismatch!")
                     print(f"  Expected: {expected_hash}")
                     print(f"  Actual:   {actual_hash}")
                 elif verbose:
-                    print(f"Hash verification successful!")
+                    print("Hash verification successful!")
 
             total_time = time.time() - start_time
             if verbose:
@@ -1537,7 +1196,7 @@ class IPFSClient:
             if temp_dir_obj is not None:
                 temp_dir_obj.cleanup()
 
-    def store_erasure_coded_file(
+    async def store_erasure_coded_file(
         self,
         file_path: str,
         k: int = 3,
@@ -1573,7 +1232,7 @@ class IPFSClient:
             RuntimeError: If processing fails
         """
         # Step 1: Erasure code the file and upload chunks
-        metadata = self.erasure_code_file(
+        metadata = await self.erasure_code_file(
             file_path=file_path,
             k=k,
             m=m,
@@ -1583,14 +1242,9 @@ class IPFSClient:
             verbose=verbose,
         )
 
-        # Step 2: Import substrate client if we need it
+        # Step 2: Create substrate client if we need it
         if substrate_client is None:
-            from hippius_sdk.substrate import FileInput, SubstrateClient
-
             substrate_client = SubstrateClient()
-        else:
-            # Just get the FileInput class
-            from hippius_sdk.substrate import FileInput
 
         original_file = metadata["original_file"]
         metadata_cid = metadata["metadata_cid"]
@@ -1612,7 +1266,7 @@ class IPFSClient:
 
         # Step 4: Add all chunks to the storage request
         if verbose:
-            print(f"Adding all chunks to storage request...")
+            print("Adding all chunks to storage request...")
 
         for i, chunk in enumerate(metadata["chunks"]):
             # Extract the CID string from the chunk's cid dictionary
@@ -1637,12 +1291,12 @@ class IPFSClient:
                     f"Submitting storage request for 1 metadata file and {len(metadata['chunks'])} chunks..."
                 )
 
-            tx_hash = substrate_client.storage_request(
+            tx_hash = await substrate_client.storage_request(
                 files=all_file_inputs, miner_ids=miner_ids
             )
 
             if verbose:
-                print(f"Successfully stored all files in marketplace!")
+                print("Successfully stored all files in marketplace!")
                 print(f"Transaction hash: {tx_hash}")
                 print(f"Metadata CID: {metadata_cid}")
                 print(

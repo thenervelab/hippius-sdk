@@ -2,279 +2,393 @@
 Tests for the Substrate client.
 """
 
-import unittest
-from unittest.mock import MagicMock, patch
+import json
+from unittest.mock import MagicMock, patch, AsyncMock
 
-from substrateinterface.exceptions import SubstrateRequestException
+import pytest
 
-from hippius_sdk.substrate import SubstrateClient
+from hippius_sdk.substrate import FileInput, SubstrateClient
 
 
-class TestSubstrateClient(unittest.TestCase):
-    """Test cases for the Substrate client."""
+@pytest.fixture
+def mock_substrate_interface():
+    """Create a mock SubstrateInterface."""
+    with patch("hippius_sdk.substrate.SubstrateInterface") as mock_interface:
+        mock_substrate = MagicMock()
+        mock_interface.return_value = mock_substrate
+        yield mock_substrate, mock_interface
 
-    def setUp(self):
-        """Set up test fixtures."""
-        self.url = "wss://hippius.example.com"
 
-        # Setup mock for SubstrateInterface
-        self.patcher = patch("hippius_sdk.substrate.SubstrateInterface")
-        self.mock_substrate_interface = self.patcher.start()
-        self.mock_substrate = MagicMock()
-        self.mock_substrate_interface.return_value = self.mock_substrate
-
-        # Setup mock for Keypair
-        self.keypair_patcher = patch("hippius_sdk.substrate.Keypair")
-        self.mock_keypair_class = self.keypair_patcher.start()
-        self.mock_keypair = MagicMock()
-        self.mock_keypair.ss58_address = (
+@pytest.fixture
+def mock_keypair():
+    """Create a mock Keypair."""
+    with patch("hippius_sdk.substrate.Keypair") as mock_keypair_class:
+        mock_keypair_obj = MagicMock()
+        mock_keypair_obj.ss58_address = (
             "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
         )
-        self.mock_keypair_class.create_from_private_key.return_value = self.mock_keypair
+        mock_keypair_class.create_from_mnemonic.return_value = mock_keypair_obj
+        yield mock_keypair_obj, mock_keypair_class
 
-    def tearDown(self):
-        """Tear down test fixtures."""
-        self.patcher.stop()
-        self.keypair_patcher.stop()
 
-    def test_init_without_private_key(self):
-        """Test initializing without a private key."""
-        client = SubstrateClient(url=self.url)
+@pytest.fixture
+def mock_config():
+    """Create a mock for config functions."""
+    with patch("hippius_sdk.substrate.get_config_value") as mock_get_config:
+        url = "wss://hippius.example.com"
+        mock_get_config.return_value = url
+        yield mock_get_config, url
 
-        self.mock_substrate_interface.assert_called_once_with(url=self.url)
-        self.assertEqual(client.substrate, self.mock_substrate)
-        self.assertIsNone(client.keypair)
 
-    def test_init_with_private_key(self):
-        """Test initializing with a private key."""
-        private_key = (
-            "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        )
-        client = SubstrateClient(url=self.url, private_key=private_key)
+@pytest.fixture
+def mock_temp_file():
+    """Create a mock temporary file."""
+    mock_file = MagicMock()
+    mock_file.name = "/tmp/test_file.json"
+    return mock_file
 
-        self.mock_substrate_interface.assert_called_once_with(url=self.url)
-        self.mock_keypair_class.create_from_private_key.assert_called_once_with(
-            private_key
-        )
-        self.assertEqual(client.substrate, self.mock_substrate)
-        self.assertEqual(client.keypair, self.mock_keypair)
 
-    def test_set_private_key(self):
-        """Test setting a private key after initialization."""
-        client = SubstrateClient(url=self.url)
-        private_key = (
-            "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        )
+def test_init_without_seed_phrase(mock_substrate_interface, mock_keypair, mock_config):
+    """Verify the SubstrateClient initializes properly with only a URL.
 
-        client.set_private_key(private_key)
+    Tests that when initialized without a seed phrase, the client:
+    - Sets the URL correctly
+    - Doesn't create a substrate connection yet (lazy loading)
+    - Keeps keypair and seed phrase as None
+    """
+    _, url = mock_config
 
-        self.mock_keypair_class.create_from_private_key.assert_called_once_with(
-            private_key
-        )
-        self.assertEqual(client.keypair, self.mock_keypair)
+    # The API has changed - the _read_only flag is no longer set during initialization
+    # Let's patch the get_account_address to control the _read_only flag
+    with patch("hippius_sdk.substrate.get_account_address", return_value=None):
+        client = SubstrateClient(url=url)
 
-    def test_store_cid_without_keypair(self):
-        """Test storing a CID without a keypair."""
-        client = SubstrateClient(url=self.url)
+        # Initial state should not create substrate connection yet (lazy loading)
+        assert client.url == url
+        assert client._substrate is None
+        assert client._keypair is None
+        assert client._seed_phrase is None
 
-        with self.assertRaises(ValueError):
-            client.store_cid("QmTest123")
 
-    def test_store_cid_with_keypair(self):
-        """Test storing a CID with a keypair."""
-        private_key = (
-            "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        )
-        client = SubstrateClient(url=self.url, private_key=private_key)
+def test_init_with_seed_phrase(mock_substrate_interface, mock_keypair, mock_config):
+    """Verify the SubstrateClient initializes properly with a seed phrase.
 
-        # Mock the compose_call, create_signed_extrinsic, and submit_extrinsic methods
-        mock_call = MagicMock()
-        self.mock_substrate.compose_call.return_value = mock_call
+    Tests that when initialized with a seed phrase, the client:
+    - Stores the seed phrase correctly
+    - Sets read-only mode to False
+    - Creates a keypair from the provided seed phrase
+    """
+    mock_keypair_obj, mock_keypair_class = mock_keypair
+    _, url = mock_config
 
-        mock_extrinsic = MagicMock()
-        self.mock_substrate.create_signed_extrinsic.return_value = mock_extrinsic
+    seed_phrase = "test seed phrase"
+    client = SubstrateClient(url=url, seed_phrase=seed_phrase)
 
-        mock_receipt = MagicMock()
-        mock_receipt.extrinsic_hash = "0xabcdef1234567890"
-        self.mock_substrate.submit_extrinsic.return_value = mock_receipt
+    # Check seed phrase is stored and keypair is created
+    assert client._seed_phrase == seed_phrase
+    assert client._read_only is False
+    mock_keypair_class.create_from_mnemonic.assert_called_with(seed_phrase)
 
-        # Call the method
-        cid = "QmTest123"
-        metadata = {"key": "value"}
-        tx_hash = client.store_cid(cid, metadata)
 
-        # Verify the calls
-        self.mock_substrate.compose_call.assert_called_once_with(
-            call_module="HippiusStorage",
-            call_function="store_cid",
-            call_params={"cid": cid, "metadata": str(metadata)},
-        )
+def test_connect(mock_substrate_interface, mock_keypair, mock_config):
+    """Verify the client can connect to a Substrate node.
 
-        self.mock_substrate.create_signed_extrinsic.assert_called_once_with(
-            call=mock_call, keypair=self.mock_keypair
-        )
+    Tests that the connect method:
+    - Initializes the SubstrateInterface with the correct parameters
+    - Sets the _substrate attribute with the connection
+    - Returns True on successful connection
+    """
+    mock_substrate, mock_interface = mock_substrate_interface
+    _, url = mock_config
 
-        self.mock_substrate.submit_extrinsic.assert_called_once_with(
-            extrinsic=mock_extrinsic, wait_for_inclusion=True
-        )
+    client = SubstrateClient(url=url)
+    result = client.connect()
 
-        self.assertEqual(tx_hash, "0xabcdef1234567890")
+    # Should have connected to substrate
+    mock_interface.assert_called_once_with(
+        url=url,
+        ss58_format=42,
+        type_registry_preset="substrate-node-template",
+    )
+    assert client._substrate == mock_substrate
+    assert result is True
 
-    def test_get_cid_metadata(self):
-        """Test retrieving CID metadata."""
-        client = SubstrateClient(url=self.url)
 
-        # Mock the query method
-        mock_result = MagicMock()
-        mock_result.value = "sample metadata"
-        self.mock_substrate.query.return_value = mock_result
+def test_connect_with_seed_phrase(mock_substrate_interface, mock_keypair, mock_config):
+    """Verify connecting with a seed phrase creates a keypair.
 
-        # Call the method
-        cid = "QmTest123"
-        metadata = client.get_cid_metadata(cid)
+    Tests that when connecting with a seed phrase:
+    - The client creates a keypair from the seed phrase
+    - The account address is set from the keypair's SS58 address
+    - The client is not in read-only mode
+    - The connection returns True for success
+    """
+    mock_keypair_obj, mock_keypair_class = mock_keypair
+    _, url = mock_config
 
-        # Verify the calls
-        self.mock_substrate.query.assert_called_once_with(
-            module="HippiusStorage", storage_function="CIDMetadata", params=[cid]
-        )
+    mock_keypair_class.reset_mock()
 
-        self.assertEqual(metadata, {"metadata": "sample metadata"})
+    seed_phrase = "test seed phrase"
+    client = SubstrateClient(url=url, seed_phrase=seed_phrase)
 
-    def test_get_cid_metadata_not_found(self):
-        """Test retrieving CID metadata when the CID is not found."""
-        client = SubstrateClient(url=self.url)
+    mock_keypair_class.reset_mock()
+    result = client.connect()
 
-        # Mock the query method
-        mock_result = MagicMock()
-        mock_result.value = None
-        self.mock_substrate.query.return_value = mock_result
+    mock_keypair_class.create_from_mnemonic.assert_called_once_with(seed_phrase)
+    assert client._keypair == mock_keypair_obj
+    assert client._account_address == mock_keypair_obj.ss58_address
+    assert client._read_only is False
+    assert result is True
 
-        # Call the method
-        cid = "QmTest123"
-        with self.assertRaises(ValueError):
-            client.get_cid_metadata(cid)
 
-    def test_get_account_cids(self):
-        """Test retrieving CIDs associated with an account."""
-        client = SubstrateClient(url=self.url)
+def test_connect_with_exception(mock_substrate_interface, mock_keypair, mock_config):
+    """Verify connection exceptions are handled properly.
 
-        # Mock the query_map method
-        mock_item1 = (MagicMock(), MagicMock())
-        mock_item1[1].value = "QmTest123"
+    Tests that when the SubstrateInterface raises an exception:
+    - The client's connect method wraps it in a ConnectionError
+    - The exception is propagated to the caller
+    """
+    mock_substrate, mock_interface = mock_substrate_interface
+    mock_interface.side_effect = Exception("Connection error")
+    _, url = mock_config
 
-        mock_item2 = (MagicMock(), MagicMock())
-        mock_item2[1].value = "QmTest456"
+    client = SubstrateClient(url=url)
 
-        self.mock_substrate.query_map.return_value = [mock_item1, mock_item2]
+    with pytest.raises(ConnectionError):
+        client.connect()
 
-        # Call the method
-        account_address = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
-        cids = client.get_account_cids(account_address)
 
-        # Verify the calls
-        self.mock_substrate.query_map.assert_called_once_with(
-            module="HippiusStorage",
-            storage_function="AccountCIDs",
-            params=[account_address],
-        )
+def test_ensure_keypair_with_seed_phrase(
+    mock_substrate_interface, mock_keypair, mock_config
+):
+    """Verify _ensure_keypair creates a keypair from a seed phrase.
 
-        self.assertEqual(cids, ["QmTest123", "QmTest456"])
+    Tests that the internal _ensure_keypair method:
+    - Creates a keypair from the stored seed phrase when keypair is None
+    - Sets the keypair attribute properly
+    - Returns True on successful keypair creation
+    """
+    mock_keypair_obj, mock_keypair_class = mock_keypair
+    _, url = mock_config
 
-    def test_delete_cid(self):
-        """Test deleting a CID from the blockchain."""
-        private_key = (
-            "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        )
-        client = SubstrateClient(url=self.url, private_key=private_key)
+    seed_phrase = "test seed phrase"
+    client = SubstrateClient(url=url, seed_phrase=seed_phrase)
 
-        # Mock the compose_call, create_signed_extrinsic, and submit_extrinsic methods
-        mock_call = MagicMock()
-        self.mock_substrate.compose_call.return_value = mock_call
+    # Reset mock to test _ensure_keypair directly
+    mock_keypair_class.reset_mock()
+    client._keypair = None
 
-        mock_extrinsic = MagicMock()
-        self.mock_substrate.create_signed_extrinsic.return_value = mock_extrinsic
+    result = client._ensure_keypair()
 
-        mock_receipt = MagicMock()
-        mock_receipt.extrinsic_hash = "0xabcdef1234567890"
-        self.mock_substrate.submit_extrinsic.return_value = mock_receipt
+    # Should create keypair from seed phrase
+    mock_keypair_class.create_from_mnemonic.assert_called_once_with(seed_phrase)
+    assert client._keypair == mock_keypair_obj
+    assert result is True
 
-        # Call the method
-        cid = "QmTest123"
-        tx_hash = client.delete_cid(cid)
 
-        # Verify the calls
-        self.mock_substrate.compose_call.assert_called_once_with(
-            call_module="HippiusStorage",
-            call_function="delete_cid",
-            call_params={"cid": cid},
-        )
+def test_set_seed_phrase(mock_substrate_interface, mock_keypair, mock_config):
+    """Verify setting a seed phrase after initialization.
 
-        self.mock_substrate.create_signed_extrinsic.assert_called_once_with(
-            call=mock_call, keypair=self.mock_keypair
-        )
+    Tests that the set_seed_phrase method:
+    - Updates the stored seed phrase
+    - Sets read-only mode to False
+    - Creates a new keypair from the provided seed phrase
+    """
+    mock_keypair_obj, mock_keypair_class = mock_keypair
+    _, url = mock_config
 
-        self.mock_substrate.submit_extrinsic.assert_called_once_with(
-            extrinsic=mock_extrinsic, wait_for_inclusion=True
-        )
+    client = SubstrateClient(url=url)
+    seed_phrase = "new test seed phrase"
 
-        self.assertEqual(tx_hash, "0xabcdef1234567890")
+    client.set_seed_phrase(seed_phrase)
 
-    def test_get_storage_fee(self):
-        """Test getting the storage fee for a file size."""
-        client = SubstrateClient(url=self.url)
+    # Should store seed phrase and create keypair
+    assert client._seed_phrase == seed_phrase
+    assert client._read_only is False
+    mock_keypair_class.create_from_mnemonic.assert_called_with(seed_phrase)
 
-        # Mock the query method
-        mock_result = MagicMock()
-        mock_result.value = 0.1  # 0.1 tokens per MB
-        self.mock_substrate.query.return_value = mock_result
 
-        # Call the method
-        file_size_mb = 10.0
-        fee = client.get_storage_fee(file_size_mb)
+def test_set_seed_phrase_empty(mock_substrate_interface, mock_keypair, mock_config):
+    """Verify setting an empty seed phrase raises ValueError.
 
-        # Verify the calls
-        self.mock_substrate.query.assert_called_once_with(
-            module="HippiusStorage", storage_function="StorageFeePerMB"
-        )
+    Tests that the set_seed_phrase method:
+    - Validates that the seed phrase is not empty
+    - Raises a ValueError when an empty string is provided
+    """
+    _, url = mock_config
 
-        self.assertEqual(fee, 1.0)  # 0.1 * 10.0 = 1.0
+    client = SubstrateClient(url=url)
 
-    def test_get_account_balance(self):
-        """Test getting the balance of an account."""
-        client = SubstrateClient(url=self.url, private_key="0x1234")
+    with pytest.raises(ValueError):
+        client.set_seed_phrase("")
 
-        # Mock the query method
-        mock_result = MagicMock()
-        mock_result.value = {
-            "data": {
-                "free": 1000000000000000000,  # 1 token
-                "reserved": 500000000000000000,  # 0.5 tokens
-                "miscFrozen": 200000000000000000,  # 0.2 tokens
-                "feeFrozen": 100000000000000000,  # 0.1 tokens
-            }
+
+@patch("hippius_sdk.substrate.uuid.uuid4")
+@pytest.mark.asyncio
+async def test_storage_request(
+    mock_uuid, mock_substrate_interface, mock_keypair, mock_config, mock_temp_file
+):
+    """Verify the storage_request method submits transactions correctly.
+
+    Tests that the storage_request method:
+    - Creates a JSON file with file metadata
+    - Uploads the metadata file to IPFS
+    - Composes a storage_request call with the correct parameters
+    - Signs and submits the extrinsic transaction
+    - Returns the transaction hash on success
+    """
+    mock_substrate, _ = mock_substrate_interface
+    mock_keypair_obj, _ = mock_keypair
+    _, url = mock_config
+
+    mock_uuid.return_value = "test-uuid"
+    mock_ipfs = MagicMock()
+    # Create an awaitable mock for the async upload_file method
+    mock_ipfs.upload_file = AsyncMock(return_value={"cid": "QmTestCID"})
+    mock_ipfs_class = MagicMock(return_value=mock_ipfs)
+
+    seed_phrase = "test seed phrase"
+    client = SubstrateClient(url=url, seed_phrase=seed_phrase)
+    client._substrate = mock_substrate
+
+    mock_call = MagicMock()
+    mock_substrate.compose_call.return_value = mock_call
+
+    mock_extrinsic = MagicMock()
+    mock_substrate.create_signed_extrinsic.return_value = mock_extrinsic
+
+    mock_receipt = MagicMock()
+    mock_receipt.extrinsic_hash = "0xabcdef1234567890"
+    mock_substrate.submit_extrinsic.return_value = mock_receipt
+
+    mock_substrate.get_payment_info.return_value = {"partialFee": 0.1}
+
+    files = [FileInput("QmHash1", "file1.txt"), FileInput("QmHash2", "file2.jpg")]
+
+    mock_tempfile = MagicMock()
+    mock_tempfile.NamedTemporaryFile.return_value.__enter__.return_value = (
+        mock_temp_file
+    )
+
+    with patch("hippius_sdk.ipfs.IPFSClient", mock_ipfs_class), patch(
+        "tempfile.NamedTemporaryFile", mock_tempfile.NamedTemporaryFile
+    ):
+        tx_hash = await client.storage_request(files)
+
+    expected_json = json.dumps(
+        [
+            {"filename": "file1.txt", "cid": "QmHash1"},
+            {"filename": "file2.jpg", "cid": "QmHash2"},
+        ],
+        indent=2,
+    )
+
+    mock_temp_file.write.assert_called_once_with(expected_json)
+    mock_ipfs.upload_file.assert_called_once_with(mock_temp_file.name)
+    mock_substrate.compose_call.assert_called_once()
+    call_args = mock_substrate.compose_call.call_args[1]
+
+    assert call_args["call_module"] == "Marketplace"
+    assert call_args["call_function"] == "storage_request"
+    assert call_args["call_params"]["files_input"][0]["file_hash"] == "QmTestCID"
+
+    # Check extrinsic was created and submitted
+    mock_substrate.create_signed_extrinsic.assert_called_once_with(
+        call=mock_call, keypair=mock_keypair_obj
+    )
+    mock_substrate.submit_extrinsic.assert_called_once_with(
+        extrinsic=mock_extrinsic, wait_for_inclusion=True
+    )
+
+    # Check return value
+    assert tx_hash == "0xabcdef1234567890"
+
+
+@pytest.mark.asyncio
+async def test_store_cid(mock_substrate_interface, mock_keypair, mock_config):
+    """Verify the store_cid method correctly delegates to storage_request.
+
+    Tests that the store_cid method:
+    - Creates a FileInput with the correct CID and filename
+    - Calls storage_request with the FileInput in a list
+    - Returns the transaction hash from storage_request
+    """
+    mock_substrate, _ = mock_substrate_interface
+    _, url = mock_config
+
+    # Mock the storage_request method
+    with patch.object(SubstrateClient, "storage_request") as mock_storage_request:
+        # Create an async mock
+        mock_storage_request.return_value = "0xabcdef1234567890"
+        # Make it properly awaitable
+        mock_storage_request.side_effect = AsyncMock(return_value="0xabcdef1234567890")
+
+        client = SubstrateClient(url=url)
+        tx_hash = await client.store_cid("QmTestCID", "test.txt")
+
+        # Check storage_request was called with correct parameters
+        mock_storage_request.assert_called_once()
+        file_input = mock_storage_request.call_args[0][0][0]
+        assert file_input.file_hash == "QmTestCID"
+        assert file_input.file_name == "test.txt"
+        assert tx_hash == "0xabcdef1234567890"
+
+
+@pytest.mark.asyncio
+async def test_get_user_files_from_profile(
+    mock_substrate_interface, mock_keypair, mock_config
+):
+    """Verify retrieval of user files from the blockchain profile.
+
+    Tests that the get_user_files_from_profile method:
+    - Queries the IpfsPallet UserProfile storage for the account
+    - Converts the hex-encoded CID to an IPFS CID format
+    - Retrieves the profile content from IPFS
+    - Parses the JSON content with file metadata
+    - Returns the file list with correct hash, name, and size
+    """
+    mock_substrate, _ = mock_substrate_interface
+    _, url = mock_config
+
+    client = SubstrateClient(url=url)
+    client._substrate = mock_substrate
+    client._account_address = "test_account_address"
+
+    mock_result = MagicMock()
+    mock_result.value = "1234abcd"  # Hex-encoded CID
+    mock_substrate.query.return_value = mock_result
+
+    # Mock IPFSClient
+    mock_ipfs = MagicMock()
+    mock_ipfs.cat = AsyncMock(
+        return_value={
+            "is_text": True,
+            "content": json.dumps(
+                {
+                    "files": [
+                        {
+                            "file_hash": "QmTestFile1",
+                            "file_name": "test_file1.txt",
+                            "size": 1024,
+                        }
+                    ]
+                }
+            ),
         }
-        self.mock_substrate.query.return_value = mock_result
+    )
 
-        # Call the method
-        balance = client.get_account_balance()
+    with patch.object(SubstrateClient, "_hex_to_ipfs_cid", return_value="QmProfileCID"):
+        with patch("hippius_sdk.ipfs.IPFSClient", return_value=mock_ipfs):
+            files = await client.get_user_files_from_profile()
+            mock_substrate.query.assert_called_once_with(
+                module="IpfsPallet",
+                storage_function="UserProfile",
+                params=["test_account_address"],
+            )
 
-        # Verify the calls
-        self.mock_substrate.query.assert_called_once_with(
-            module="System",
-            storage_function="Account",
-            params=[self.mock_keypair.ss58_address],
-        )
+            mock_ipfs.cat.assert_called_once_with("QmProfileCID")
 
-        expected_balance = {
-            "free": 1.0,
-            "reserved": 0.5,
-            "total": 1.5,
-            "misc_frozen": 0.2,
-            "fee_frozen": 0.1,
-        }
-
-        self.assertEqual(balance, expected_balance)
-
-
-if __name__ == "__main__":
-    unittest.main()
+            assert len(files) == 1
+            assert files[0]["file_hash"] == "QmTestFile1"
+            assert files[0]["file_name"] == "test_file1.txt"
+            assert files[0]["file_size"] == 1024

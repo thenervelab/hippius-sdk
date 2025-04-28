@@ -7,9 +7,11 @@ utilities for encryption key generation, file operations, and marketplace intera
 """
 
 import argparse
+import asyncio
 import base64
 import concurrent.futures
 import getpass
+import inspect
 import json
 import os
 import random
@@ -181,12 +183,12 @@ def create_client(args):
     return client
 
 
-def handle_download(client, cid, output_path, decrypt=None):
+async def handle_download(client, cid, output_path, decrypt=None):
     """Handle the download command"""
     print(f"Downloading {cid} to {output_path}...")
 
     # Use the enhanced download method which returns formatted information
-    result = client.download_file(cid, output_path, decrypt=decrypt)
+    result = await client.download_file(cid, output_path, decrypt=decrypt)
 
     print(f"Download successful in {result['elapsed_seconds']} seconds!")
     print(f"Saved to: {result['output_path']}")
@@ -198,10 +200,10 @@ def handle_download(client, cid, output_path, decrypt=None):
     return 0
 
 
-def handle_exists(client, cid):
+async def handle_exists(client, cid):
     """Handle the exists command"""
     print(f"Checking if CID {cid} exists on IPFS...")
-    result = client.exists(cid)
+    result = await client.exists(cid)
 
     # Use the formatted CID from the result
     formatted_cid = result["formatted_cid"]
@@ -217,12 +219,12 @@ def handle_exists(client, cid):
     return 0
 
 
-def handle_cat(client, cid, max_size, decrypt=None):
+async def handle_cat(client, cid, max_size, decrypt=None):
     """Handle the cat command"""
     print(f"Retrieving content of CID {cid}...")
     try:
         # Use the enhanced cat method with formatting
-        result = client.cat(cid, max_display_bytes=max_size, decrypt=decrypt)
+        result = await client.cat(cid, max_display_bytes=max_size, decrypt=decrypt)
 
         # Display file information
         print(
@@ -255,7 +257,7 @@ def handle_cat(client, cid, max_size, decrypt=None):
     return 0
 
 
-def handle_store(client, file_path, miner_ids, encrypt=None):
+async def handle_store(client, file_path, miner_ids, encrypt=None):
     """Handle the store command"""
     if not os.path.exists(file_path):
         print(f"Error: File {file_path} not found")
@@ -265,7 +267,7 @@ def handle_store(client, file_path, miner_ids, encrypt=None):
     start_time = time.time()
 
     # Use the enhanced upload_file method that returns formatted information
-    result = client.upload_file(file_path, encrypt=encrypt)
+    result = await client.upload_file(file_path, encrypt=encrypt)
 
     ipfs_elapsed_time = time.time() - start_time
 
@@ -282,11 +284,23 @@ def handle_store(client, file_path, miner_ids, encrypt=None):
     start_time = time.time()
 
     try:
+        # Check if we have credits
+        try:
+            if hasattr(client.substrate_client, "get_free_credits"):
+                credits = client.substrate_client.get_free_credits()
+                print(f"Account credits: {credits}")
+                if credits <= 0:
+                    print(
+                        f"Warning: Account has no free credits (current: {credits}). Transaction may fail."
+                    )
+        except Exception as e:
+            print(f"Warning: Could not check free credits: {e}")
+
         # Create a file input object for the marketplace
         file_input = {"fileHash": result["cid"], "fileName": result["filename"]}
 
-        # Store on Substrate
-        client.substrate_client.storage_request([file_input], miner_ids)
+        # Store on Substrate - now it's an async call
+        tx_hash = await client.substrate_client.storage_request([file_input], miner_ids)
 
         substrate_elapsed_time = time.time() - start_time
         print(
@@ -307,7 +321,7 @@ def handle_store(client, file_path, miner_ids, encrypt=None):
     return 0
 
 
-def handle_store_dir(client, dir_path, miner_ids, encrypt=None):
+async def handle_store_dir(client, dir_path, miner_ids, encrypt=None):
     """Handle the store-dir command"""
     if not os.path.isdir(dir_path):
         print(f"Error: Directory {dir_path} not found")
@@ -331,7 +345,7 @@ def handle_store_dir(client, dir_path, miner_ids, encrypt=None):
     for file_path, rel_path in all_files:
         try:
             print(f"  Uploading: {rel_path}")
-            file_result = client.upload_file(file_path, encrypt=encrypt)
+            file_result = await client.upload_file(file_path, encrypt=encrypt)
             individual_cids.append(
                 {
                     "path": rel_path,
@@ -351,7 +365,7 @@ def handle_store_dir(client, dir_path, miner_ids, encrypt=None):
             print(f"    Error uploading {rel_path}: {e}")
 
     # Now upload the entire directory
-    result = client.upload_directory(dir_path, encrypt=encrypt)
+    result = await client.upload_directory(dir_path, encrypt=encrypt)
 
     ipfs_elapsed_time = time.time() - start_time
 
@@ -384,7 +398,7 @@ def handle_store_dir(client, dir_path, miner_ids, encrypt=None):
             file_inputs.append({"fileHash": item["cid"], "fileName": item["filename"]})
 
         # Store all files in a single batch request
-        client.substrate_client.storage_request(file_inputs, miner_ids)
+        tx_hash = await client.substrate_client.storage_request(file_inputs, miner_ids)
 
         substrate_elapsed_time = time.time() - start_time
         print(
@@ -450,7 +464,7 @@ def handle_credits(client, account_address):
     return 0
 
 
-def handle_files(client, account_address, show_all_miners=False):
+async def handle_files(client, account_address, show_all_miners=False):
     """
     Display files stored by a user in a nice format.
 
@@ -490,7 +504,9 @@ def handle_files(client, account_address, show_all_miners=False):
 
         # Get files for the account using the new profile-based method
         print(f"Retrieving files for account: {account_address}")
-        files = client.substrate_client.get_user_files_from_profile(account_address)
+        files = await client.substrate_client.get_user_files_from_profile(
+            account_address
+        )
 
         # Check if any files were found
         if not files:
@@ -568,7 +584,9 @@ def handle_files(client, account_address, show_all_miners=False):
     return 0
 
 
-def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=False):
+async def handle_ec_files(
+    client, account_address, show_all_miners=False, show_chunks=False
+):
     """Handle the ec-files command to show only erasure-coded files"""
     print("Looking for erasure-coded files...")
     try:
@@ -604,7 +622,9 @@ def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=
                     return 1
 
         # First, get all user files using the profile method
-        files = client.substrate_client.get_user_files_from_profile(account_address)
+        files = await client.substrate_client.get_user_files_from_profile(
+            account_address
+        )
 
         # Filter for metadata files (ending with .ec_metadata)
         ec_metadata_files = []
@@ -637,7 +657,7 @@ def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=
                     # Fetch and parse the metadata to get original file info
                     try:
                         # Use the formatted CID, not the raw hex-encoded version
-                        metadata = client.ipfs_client.cat(formatted_cid)
+                        metadata = await client.ipfs_client.cat(formatted_cid)
 
                         # Check if we have text content
                         if metadata.get("is_text", False):
@@ -772,7 +792,7 @@ def handle_ec_files(client, account_address, show_all_miners=False, show_chunks=
     return 0
 
 
-def handle_erasure_code(
+async def handle_erasure_code(
     client, file_path, k, m, chunk_size, miner_ids, encrypt=None, verbose=True
 ):
     """Handle the erasure-code command"""
@@ -814,7 +834,7 @@ def handle_erasure_code(
             choice = input("> ").strip().lower()
 
             if choice in ("y", "yes"):
-                return handle_erasure_code_directory(
+                return await handle_erasure_code_directory(
                     client, file_path, k, m, chunk_size, miner_ids, encrypt, verbose
                 )
         else:
@@ -879,7 +899,7 @@ def handle_erasure_code(
 
     try:
         # Use the store_erasure_coded_file method directly from HippiusClient
-        result = client.store_erasure_coded_file(
+        result = await client.store_erasure_coded_file(
             file_path=file_path,
             k=k,
             m=m,
@@ -945,7 +965,7 @@ def handle_erasure_code(
         return 1
 
 
-def handle_erasure_code_directory(
+async def handle_erasure_code_directory(
     client, dir_path, k, m, chunk_size, miner_ids, encrypt=None, verbose=True
 ):
     """Apply erasure coding to each file in a directory individually"""
@@ -1025,7 +1045,7 @@ def handle_erasure_code_directory(
 
         try:
             # Use the store_erasure_coded_file method directly from HippiusClient
-            result = client.store_erasure_coded_file(
+            result = await client.store_erasure_coded_file(
                 file_path=file_path,
                 k=k,
                 m=m,
@@ -1093,7 +1113,7 @@ def handle_erasure_code_directory(
     return 0 if failed == 0 else 1
 
 
-def handle_reconstruct(client, metadata_cid, output_file, verbose=True):
+async def handle_reconstruct(client, metadata_cid, output_file, verbose=True):
     """Handle the reconstruct command for erasure-coded files"""
     # Check if zfec is installed
     try:
@@ -1112,7 +1132,7 @@ def handle_reconstruct(client, metadata_cid, output_file, verbose=True):
 
     try:
         # Use the reconstruct_from_erasure_code method
-        result = client.reconstruct_from_erasure_code(
+        result = await client.reconstruct_from_erasure_code(
             metadata_cid=metadata_cid, output_file=output_file, verbose=verbose
         )
 
@@ -1500,6 +1520,261 @@ def handle_default_address_clear():
     return 0
 
 
+async def handle_pinning_status(
+    client, account_address, verbose=False, show_contents=True
+):
+    """Handle the pinning-status command"""
+    print("Checking file pinning status...")
+    try:
+        # Get the account address we're querying
+        if account_address is None:
+            # If no address provided, first try to get from keypair (if available)
+            if (
+                hasattr(client.substrate_client, "_keypair")
+                and client.substrate_client._keypair is not None
+            ):
+                account_address = client.substrate_client._keypair.ss58_address
+            else:
+                # Try to get the default address
+                default_address = get_default_address()
+                if default_address:
+                    account_address = default_address
+                else:
+                    has_default = get_default_address() is not None
+                    print(
+                        "Error: No account address provided, and client has no keypair."
+                    )
+                    if has_default:
+                        print(
+                            "Please provide an account address with '--account_address' or the default address may be invalid."
+                        )
+                    else:
+                        print(
+                            "Please provide an account address with '--account_address' or set a default with:"
+                        )
+                        print("  hippius address set-default <your_account_address>")
+                    return 1
+
+        storage_requests = client.substrate_client.get_pinning_status(account_address)
+
+        # Check if any storage requests were found
+        if not storage_requests:
+            print(f"No pinning requests found for account: {account_address}")
+            return 0
+
+        print(
+            f"\nFound {len(storage_requests)} pinning requests for account: {account_address}"
+        )
+        print("-" * 80)
+
+        # Format and display each storage request
+        for i, request in enumerate(storage_requests, 1):
+            try:
+                print(f"Request {i}:")
+
+                # Display CID if available
+                cid = None
+                if "cid" in request:
+                    cid = request.get("cid", "Unknown")
+                    print(f"  CID: {cid}")
+
+                # Display file name if available
+                if "file_name" in request:
+                    file_name = request.get("file_name", "Unknown")
+                    print(f"  File name: {file_name}")
+                elif "raw_value" in request and "file_name" in request["raw_value"]:
+                    # Try to extract from raw value if it's available
+                    try:
+                        raw_value = request["raw_value"]
+                        if isinstance(raw_value, str) and "{" in raw_value:
+                            # It's a string representation of a dict, try to extract the file_name
+                            if "'file_name': " in raw_value:
+                                start_idx = raw_value.find("'file_name': '") + len(
+                                    "'file_name': '"
+                                )
+                                end_idx = raw_value.find("'", start_idx)
+                                if start_idx > 0 and end_idx > start_idx:
+                                    file_name = raw_value[start_idx:end_idx]
+                                    print(f"  File name: {file_name}")
+                    except Exception:
+                        pass
+
+                # Display total replicas if available
+                if "total_replicas" in request:
+                    total_replicas = request.get("total_replicas", 0)
+                    print(f"  Total replicas: {total_replicas}")
+
+                # Display owner if available
+                if "owner" in request:
+                    owner = request.get("owner", "Unknown")
+                    print(f"  Owner: {owner}")
+
+                # Display timestamps if available
+                if "created_at" in request:
+                    created_at = request.get("created_at", 0)
+                    if created_at > 0:
+                        print(f"  Created at block: {created_at}")
+
+                if "last_charged_at" in request:
+                    last_charged_at = request.get("last_charged_at", 0)
+                    if last_charged_at > 0:
+                        print(f"  Last charged at block: {last_charged_at}")
+
+                # Display assignment status and progress info
+                status_text = "Awaiting validator"
+                if "is_assigned" in request:
+                    is_assigned = request.get("is_assigned", False)
+                    if is_assigned:
+                        status_text = "Assigned to miners"
+
+                # Enhanced status info
+                if "miner_ids" in request and "total_replicas" in request:
+                    miner_ids = request.get("miner_ids", [])
+                    total_replicas = request.get("total_replicas", 0)
+
+                    if len(miner_ids) > 0:
+                        if len(miner_ids) == total_replicas:
+                            status_text = "Fully pinned"
+                        else:
+                            status_text = "Partially pinned"
+
+                print(f"  Status: {status_text}")
+
+                # Display validator if available
+                if "selected_validator" in request:
+                    validator = request.get("selected_validator", "")
+                    if validator:
+                        print(f"  Selected validator: {validator}")
+
+                # Display miners if available
+                if "miner_ids" in request:
+                    miner_ids = request.get("miner_ids", [])
+                    if miner_ids:
+                        print(f"  Assigned miners: {len(miner_ids)}")
+                        for miner in miner_ids[:3]:  # Show first 3 miners
+                            print(f"    - {miner}")
+                        if len(miner_ids) > 3:
+                            print(f"    ... and {len(miner_ids) - 3} more")
+                    else:
+                        print(f"  Assigned miners: None")
+
+                    # Calculate pinning percentage if we have total_replicas
+                    if "total_replicas" in request and request["total_replicas"] > 0:
+                        total_replicas = request["total_replicas"]
+                        pinning_pct = (len(miner_ids) / total_replicas) * 100
+                        print(
+                            f"  Pinning progress: {pinning_pct:.1f}% ({len(miner_ids)}/{total_replicas} miners)"
+                        )
+
+                # Display raw data for debugging
+                if verbose:
+                    print("  Raw data:")
+                    if "raw_key" in request:
+                        print(f"    Key: {request['raw_key']}")
+                    if "raw_value" in request:
+                        print(f"    Value: {request['raw_value']}")
+
+                # Try to fetch the content and determine if it's a file list by inspecting its contents
+                if show_contents and cid:
+                    try:
+                        print("\n  Fetching contents from IPFS...")
+                        # Fetch the contents from IPFS
+                        file_data = await client.ipfs_client.cat(cid)
+
+                        if file_data and file_data.get("is_text", False):
+                            try:
+                                # Try to parse as JSON
+                                content_json = json.loads(
+                                    file_data.get("content", "{}")
+                                )
+
+                                # Detect if this is a file list by checking if it's a list of file objects
+                                is_file_list = False
+                                if (
+                                    isinstance(content_json, list)
+                                    and len(content_json) > 0
+                                ):
+                                    # Check if it looks like a file list
+                                    sample_item = content_json[0]
+                                    if isinstance(sample_item, dict) and (
+                                        "cid" in sample_item
+                                        or "fileHash" in sample_item
+                                        or "filename" in sample_item
+                                        or "fileName" in sample_item
+                                    ):
+                                        is_file_list = True
+
+                                if is_file_list:
+                                    # It's a file list - display the files
+                                    print(
+                                        f"  Content is a file list with {len(content_json)} files:"
+                                    )
+                                    print("  " + "-" * 40)
+                                    for j, file_info in enumerate(content_json, 1):
+                                        filename = file_info.get(
+                                            "filename"
+                                        ) or file_info.get("fileName", "Unknown")
+                                        file_cid = file_info.get(
+                                            "cid"
+                                        ) or file_info.get("fileHash", "Unknown")
+                                        print(f"    File {j}: {filename}")
+                                        print(f"    CID: {file_cid}")
+
+                                        # Show size if available
+                                        if "size" in file_info:
+                                            size = file_info["size"]
+                                            size_formatted = (
+                                                client.format_size(size)
+                                                if hasattr(client, "format_size")
+                                                else f"{size} bytes"
+                                            )
+                                            print(f"    Size: {size_formatted}")
+
+                                        print("  " + "-" * 40)
+                                else:
+                                    # Not a file list, show a compact summary
+                                    content_type = type(content_json).__name__
+                                    preview = str(content_json)
+                                    if len(preview) > 100:
+                                        preview = preview[:100] + "..."
+                                    print(f"  Content type: JSON {content_type}")
+                                    print(f"  Content preview: {preview}")
+                            except json.JSONDecodeError:
+                                # Not JSON, just show text preview
+                                content = file_data.get("content", "")
+                                preview = (
+                                    content[:100] + "..."
+                                    if len(content) > 100
+                                    else content
+                                )
+                                print(f"  Content type: Text")
+                                print(f"  Content preview: {preview}")
+                        else:
+                            # Binary data
+                            content_size = len(file_data.get("content", b""))
+                            size_formatted = (
+                                client.format_size(content_size)
+                                if hasattr(client, "format_size")
+                                else f"{content_size} bytes"
+                            )
+                            print(f"  Content type: Binary data")
+                            print(f"  Content size: {size_formatted}")
+                    except Exception as e:
+                        print(f"  Error fetching file list contents: {e}")
+
+                print("-" * 80)
+            except Exception as e:
+                print(f"  Error displaying request {i}: {e}")
+                print("-" * 80)
+                continue
+
+    except Exception as e:
+        print(f"Error retrieving pinning status: {e}")
+        return 1
+
+    return 0
+
+
 def main():
     """Main CLI entry point for hippius command."""
     # Set up the argument parser
@@ -1531,6 +1806,9 @@ examples:
   
   # View all miners for stored files
   hippius files --all-miners
+  
+  # Check file pinning status
+  hippius pinning-status
   
   # Erasure code a file (Reed-Solomon)
   hippius erasure-code large_file.mp4 --k 3 --m 5
@@ -1678,6 +1956,32 @@ examples:
         )
     )
 
+    # Pinning status command
+    pinning_status_parser = subparsers.add_parser(
+        "pinning-status", help="Check the status of file pinning requests"
+    )
+    pinning_status_parser.add_argument(
+        "--account_address",
+        help="Substrate account to check pinning status for (defaults to your keyfile account)",
+    )
+    pinning_status_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show detailed debug information",
+    )
+    pinning_status_parser.add_argument(
+        "--show-contents",
+        action="store_true",
+        default=True,
+        help="Show the contents of file lists (defaults to true)",
+    )
+    pinning_status_parser.add_argument(
+        "--no-contents",
+        action="store_true",
+        help="Don't show the contents of file lists",
+    )
+
     # Erasure Coded Files command
     ec_files_parser = subparsers.add_parser(
         "ec-files", help="View erasure-coded files stored by you or another account"
@@ -1711,6 +2015,9 @@ examples:
     )
     keygen_parser.add_argument(
         "--copy", action="store_true", help="Copy the generated key to the clipboard"
+    )
+    keygen_parser.add_argument(
+        "--save", action="store_true", help="Save the key to the Hippius configuration"
     )
 
     # Erasure code command
@@ -1897,16 +2204,6 @@ examples:
         parser.print_help()
         return 1
 
-    # Special case for keygen which doesn't need client initialization
-    if args.command == "keygen":
-        # Handle key generation separately
-        if args.copy:
-            return key_generation_cli()
-        else:
-            # Create a new argparse namespace with just the copy flag for compatibility
-            keygen_args = argparse.Namespace(copy=False)
-            return key_generation_cli()
-
     try:
         # Parse miner IDs if provided
         miner_ids = None
@@ -1957,27 +2254,47 @@ examples:
             encryption_key=encryption_key,
         )
 
-        # Handle commands
+        # Handle commands - separate async and sync handlers
+        # Create a helper function to handle async handlers
+        def run_async_handler(handler_func, *args, **kwargs):
+            # Check if the handler is async
+            if inspect.iscoroutinefunction(handler_func):
+                # Run the async handler in the event loop
+                return asyncio.run(handler_func(*args, **kwargs))
+            else:
+                # Run the handler directly
+                return handler_func(*args, **kwargs)
+
+        # Handle commands with the helper function
         if args.command == "download":
-            return handle_download(client, args.cid, args.output_path, decrypt=decrypt)
+            return run_async_handler(
+                handle_download, client, args.cid, args.output_path, decrypt=decrypt
+            )
 
         elif args.command == "exists":
-            return handle_exists(client, args.cid)
+            return run_async_handler(handle_exists, client, args.cid)
 
         elif args.command == "cat":
-            return handle_cat(client, args.cid, args.max_size, decrypt=decrypt)
+            return run_async_handler(
+                handle_cat, client, args.cid, args.max_size, decrypt=decrypt
+            )
 
         elif args.command == "store":
-            return handle_store(client, args.file_path, miner_ids, encrypt=encrypt)
+            return run_async_handler(
+                handle_store, client, args.file_path, miner_ids, encrypt=encrypt
+            )
 
         elif args.command == "store-dir":
-            return handle_store_dir(client, args.dir_path, miner_ids, encrypt=encrypt)
+            return run_async_handler(
+                handle_store_dir, client, args.dir_path, miner_ids, encrypt=encrypt
+            )
 
         elif args.command == "credits":
             return handle_credits(client, args.account_address)
 
         elif args.command == "files":
-            return handle_files(
+            return run_async_handler(
+                handle_files,
                 client,
                 args.account_address,
                 show_all_miners=(
@@ -1985,8 +2302,21 @@ examples:
                 ),
             )
 
+        elif args.command == "pinning-status":
+            show_contents = (
+                not args.no_contents if hasattr(args, "no_contents") else True
+            )
+            return run_async_handler(
+                handle_pinning_status,
+                client,
+                args.account_address,
+                verbose=args.verbose,
+                show_contents=show_contents,
+            )
+
         elif args.command == "ec-files":
-            return handle_ec_files(
+            return run_async_handler(
+                handle_ec_files,
                 client,
                 args.account_address,
                 show_all_miners=(
@@ -1996,7 +2326,8 @@ examples:
             )
 
         elif args.command == "erasure-code":
-            return handle_erasure_code(
+            return run_async_handler(
+                handle_erasure_code,
                 client,
                 args.file_path,
                 args.k,
@@ -2008,9 +2339,28 @@ examples:
             )
 
         elif args.command == "reconstruct":
-            return handle_reconstruct(
-                client, args.metadata_cid, args.output_file, verbose=args.verbose
+            return run_async_handler(
+                handle_reconstruct,
+                client,
+                args.metadata_cid,
+                args.output_file,
+                verbose=args.verbose,
             )
+
+        elif args.command == "keygen":
+            # Generate and save an encryption key
+            client = HippiusClient()
+            encryption_key = client.generate_encryption_key()
+            print(f"Generated encryption key: {encryption_key}")
+
+            # Save to config if requested
+            if hasattr(args, "save") and args.save:
+                print("Saving encryption key to configuration...")
+                handle_config_set("encryption", "encryption_key", encryption_key)
+                print(
+                    "Encryption key saved. Files will not be automatically encrypted unless you set encryption.encrypt_by_default to true"
+                )
+            return 0
 
         elif args.command == "config":
             if args.config_action == "get":

@@ -24,6 +24,7 @@ from hippius_sdk.config import (
     set_seed_phrase,
 )
 from hippius_sdk.ipfs import IPFSClient
+from hippius_sdk.utils import format_cid, format_size, hex_to_ipfs_cid
 
 __version__ = "0.1.13"
 __all__ = [
@@ -47,6 +48,9 @@ __all__ = [
     "list_accounts",
     "delete_account",
     "get_account_address",
+    "format_cid",
+    "format_size",
+    "hex_to_ipfs_cid",
 ]
 
 # Initialize configuration from environment variables for backward compatibility

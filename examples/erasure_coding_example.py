@@ -11,6 +11,7 @@ Requirements:
 """
 
 import argparse
+import asyncio
 import os
 import random
 import sys
@@ -52,7 +53,9 @@ def create_test_file(file_path, size_mb=10):
     return file_path
 
 
-def erasure_code_example(file_path, k=3, m=5, chunk_size=1024 * 1024, encrypt=False):
+async def erasure_code_example(
+    file_path, k=3, m=5, chunk_size=1024 * 1024, encrypt=False
+):
     """Demonstrate erasure coding functionality."""
     print("\n=== Erasure Coding Example ===")
     print(f"File: {file_path}")
@@ -68,7 +71,7 @@ def erasure_code_example(file_path, k=3, m=5, chunk_size=1024 * 1024, encrypt=Fa
     start_time = time.time()
 
     # Erasure code the file
-    result = client.erasure_code_file(
+    result = await client.erasure_code_file(
         file_path=file_path,
         k=k,
         m=m,
@@ -100,7 +103,7 @@ def erasure_code_example(file_path, k=3, m=5, chunk_size=1024 * 1024, encrypt=Fa
     start_time = time.time()
 
     # Reconstruct the file
-    client.reconstruct_from_erasure_code(
+    await client.reconstruct_from_erasure_code(
         metadata_cid=metadata_cid, output_file=reconstructed_path, verbose=True
     )
 
@@ -196,13 +199,15 @@ def main():
     if not os.path.exists(file_path):
         create_test_file(file_path, args.size)
 
-    # Run the example
-    erasure_code_example(
-        file_path=file_path,
-        k=args.k,
-        m=args.m,
-        chunk_size=args.chunk_size,
-        encrypt=args.encrypt,
+    # Run the example with asyncio
+    asyncio.run(
+        erasure_code_example(
+            file_path=file_path,
+            k=args.k,
+            m=args.m,
+            chunk_size=args.chunk_size,
+            encrypt=args.encrypt,
+        )
     )
 
 

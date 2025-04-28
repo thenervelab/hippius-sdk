@@ -2,12 +2,15 @@
 Main client for the Hippius SDK.
 """
 
-import os
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+import base64
+from typing import Any, Dict, List, Optional
+
+import nacl.secret
+import nacl.utils
 
 from hippius_sdk.config import get_config_value, get_encryption_key
 from hippius_sdk.ipfs import IPFSClient
-from hippius_sdk.substrate import FileInput, SubstrateClient
+from hippius_sdk.substrate import SubstrateClient
 
 
 class HippiusClient:
@@ -90,7 +93,7 @@ class HippiusClient:
             print(f"Warning: Could not initialize Substrate client: {e}")
             self.substrate_client = None
 
-    def upload_file(
+    async def upload_file(
         self, file_path: str, encrypt: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
@@ -114,9 +117,9 @@ class HippiusClient:
             ValueError: If encryption is requested but not available
         """
         # Use the enhanced IPFSClient method directly with encryption parameter
-        return self.ipfs_client.upload_file(file_path, encrypt=encrypt)
+        return await self.ipfs_client.upload_file(file_path, encrypt=encrypt)
 
-    def upload_directory(
+    async def upload_directory(
         self, dir_path: str, encrypt: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
@@ -141,9 +144,9 @@ class HippiusClient:
             ValueError: If encryption is requested but not available
         """
         # Use the enhanced IPFSClient method directly with encryption parameter
-        return self.ipfs_client.upload_directory(dir_path, encrypt=encrypt)
+        return await self.ipfs_client.upload_directory(dir_path, encrypt=encrypt)
 
-    def download_file(
+    async def download_file(
         self, cid: str, output_path: str, decrypt: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
@@ -167,9 +170,9 @@ class HippiusClient:
             requests.RequestException: If the download fails
             ValueError: If decryption is requested but fails
         """
-        return self.ipfs_client.download_file(cid, output_path, decrypt=decrypt)
+        return await self.ipfs_client.download_file(cid, output_path, decrypt=decrypt)
 
-    def cat(
+    async def cat(
         self,
         cid: str,
         max_display_bytes: int = 1024,
@@ -194,7 +197,7 @@ class HippiusClient:
                 - text_preview/hex_preview: Preview of the content
                 - decrypted: Whether the file was decrypted
         """
-        return self.ipfs_client.cat(
+        return await self.ipfs_client.cat(
             cid, max_display_bytes, format_output, decrypt=decrypt
         )
 
@@ -270,11 +273,6 @@ class HippiusClient:
             ImportError: If PyNaCl is not installed
         """
         try:
-            import base64
-
-            import nacl.secret
-            import nacl.utils
-
             # Generate a random key
             key = nacl.utils.random(nacl.secret.SecretBox.KEY_SIZE)
 
@@ -287,7 +285,7 @@ class HippiusClient:
                 "PyNaCl is required for encryption. Install it with: pip install pynacl"
             )
 
-    def erasure_code_file(
+    async def erasure_code_file(
         self,
         file_path: str,
         k: int = 3,
@@ -321,7 +319,7 @@ class HippiusClient:
             ValueError: If erasure coding is not available or parameters are invalid
             RuntimeError: If chunk uploads fail
         """
-        return self.ipfs_client.erasure_code_file(
+        return await self.ipfs_client.erasure_code_file(
             file_path=file_path,
             k=k,
             m=m,
@@ -331,7 +329,7 @@ class HippiusClient:
             verbose=verbose,
         )
 
-    def reconstruct_from_erasure_code(
+    async def reconstruct_from_erasure_code(
         self,
         metadata_cid: str,
         output_file: str,
@@ -356,7 +354,7 @@ class HippiusClient:
             ValueError: If reconstruction fails
             RuntimeError: If not enough chunks can be downloaded
         """
-        return self.ipfs_client.reconstruct_from_erasure_code(
+        return await self.ipfs_client.reconstruct_from_erasure_code(
             metadata_cid=metadata_cid,
             output_file=output_file,
             temp_dir=temp_dir,
@@ -364,7 +362,7 @@ class HippiusClient:
             verbose=verbose,
         )
 
-    def store_erasure_coded_file(
+    async def store_erasure_coded_file(
         self,
         file_path: str,
         k: int = 3,
@@ -397,7 +395,7 @@ class HippiusClient:
             ValueError: If parameters are invalid
             RuntimeError: If processing fails
         """
-        return self.ipfs_client.store_erasure_coded_file(
+        return await self.ipfs_client.store_erasure_coded_file(
             file_path=file_path,
             k=k,
             m=m,
