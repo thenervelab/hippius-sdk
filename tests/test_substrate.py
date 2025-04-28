@@ -24,7 +24,9 @@ def mock_keypair():
     """Create a mock Keypair."""
     with patch("hippius_sdk.substrate.Keypair") as mock_keypair_class:
         mock_keypair_obj = MagicMock()
-        mock_keypair_obj.ss58_address = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+        mock_keypair_obj.ss58_address = (
+            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+        )
         mock_keypair_class.create_from_mnemonic.return_value = mock_keypair_obj
         yield mock_keypair_obj, mock_keypair_class
 
@@ -48,7 +50,7 @@ def mock_temp_file():
 
 def test_init_without_seed_phrase(mock_substrate_interface, mock_keypair, mock_config):
     """Verify the SubstrateClient initializes properly with only a URL.
-    
+
     Tests that when initialized without a seed phrase, the client:
     - Sets the URL correctly
     - Doesn't create a substrate connection yet (lazy loading)
@@ -70,7 +72,7 @@ def test_init_without_seed_phrase(mock_substrate_interface, mock_keypair, mock_c
 
 def test_init_with_seed_phrase(mock_substrate_interface, mock_keypair, mock_config):
     """Verify the SubstrateClient initializes properly with a seed phrase.
-    
+
     Tests that when initialized with a seed phrase, the client:
     - Stores the seed phrase correctly
     - Sets read-only mode to False
@@ -90,7 +92,7 @@ def test_init_with_seed_phrase(mock_substrate_interface, mock_keypair, mock_conf
 
 def test_connect(mock_substrate_interface, mock_keypair, mock_config):
     """Verify the client can connect to a Substrate node.
-    
+
     Tests that the connect method:
     - Initializes the SubstrateInterface with the correct parameters
     - Sets the _substrate attribute with the connection
@@ -114,7 +116,7 @@ def test_connect(mock_substrate_interface, mock_keypair, mock_config):
 
 def test_connect_with_seed_phrase(mock_substrate_interface, mock_keypair, mock_config):
     """Verify connecting with a seed phrase creates a keypair.
-    
+
     Tests that when connecting with a seed phrase:
     - The client creates a keypair from the seed phrase
     - The account address is set from the keypair's SS58 address
@@ -141,7 +143,7 @@ def test_connect_with_seed_phrase(mock_substrate_interface, mock_keypair, mock_c
 
 def test_connect_with_exception(mock_substrate_interface, mock_keypair, mock_config):
     """Verify connection exceptions are handled properly.
-    
+
     Tests that when the SubstrateInterface raises an exception:
     - The client's connect method wraps it in a ConnectionError
     - The exception is propagated to the caller
@@ -156,9 +158,11 @@ def test_connect_with_exception(mock_substrate_interface, mock_keypair, mock_con
         client.connect()
 
 
-def test_ensure_keypair_with_seed_phrase(mock_substrate_interface, mock_keypair, mock_config):
+def test_ensure_keypair_with_seed_phrase(
+    mock_substrate_interface, mock_keypair, mock_config
+):
     """Verify _ensure_keypair creates a keypair from a seed phrase.
-    
+
     Tests that the internal _ensure_keypair method:
     - Creates a keypair from the stored seed phrase when keypair is None
     - Sets the keypair attribute properly
@@ -184,7 +188,7 @@ def test_ensure_keypair_with_seed_phrase(mock_substrate_interface, mock_keypair,
 
 def test_set_seed_phrase(mock_substrate_interface, mock_keypair, mock_config):
     """Verify setting a seed phrase after initialization.
-    
+
     Tests that the set_seed_phrase method:
     - Updates the stored seed phrase
     - Sets read-only mode to False
@@ -206,7 +210,7 @@ def test_set_seed_phrase(mock_substrate_interface, mock_keypair, mock_config):
 
 def test_set_seed_phrase_empty(mock_substrate_interface, mock_keypair, mock_config):
     """Verify setting an empty seed phrase raises ValueError.
-    
+
     Tests that the set_seed_phrase method:
     - Validates that the seed phrase is not empty
     - Raises a ValueError when an empty string is provided
@@ -221,10 +225,11 @@ def test_set_seed_phrase_empty(mock_substrate_interface, mock_keypair, mock_conf
 
 @patch("hippius_sdk.substrate.uuid.uuid4")
 @pytest.mark.asyncio
-async def test_storage_request(mock_uuid, mock_substrate_interface, mock_keypair, mock_config,
-                         mock_temp_file):
+async def test_storage_request(
+    mock_uuid, mock_substrate_interface, mock_keypair, mock_config, mock_temp_file
+):
     """Verify the storage_request method submits transactions correctly.
-    
+
     Tests that the storage_request method:
     - Creates a JSON file with file metadata
     - Uploads the metadata file to IPFS
@@ -258,22 +263,25 @@ async def test_storage_request(mock_uuid, mock_substrate_interface, mock_keypair
 
     mock_substrate.get_payment_info.return_value = {"partialFee": 0.1}
 
-    files = [
-        FileInput("QmHash1", "file1.txt"),
-        FileInput("QmHash2", "file2.jpg")
-    ]
+    files = [FileInput("QmHash1", "file1.txt"), FileInput("QmHash2", "file2.jpg")]
 
     mock_tempfile = MagicMock()
-    mock_tempfile.NamedTemporaryFile.return_value.__enter__.return_value = mock_temp_file
+    mock_tempfile.NamedTemporaryFile.return_value.__enter__.return_value = (
+        mock_temp_file
+    )
 
-    with patch("hippius_sdk.ipfs.IPFSClient", mock_ipfs_class), \
-            patch("tempfile.NamedTemporaryFile", mock_tempfile.NamedTemporaryFile):
+    with patch("hippius_sdk.ipfs.IPFSClient", mock_ipfs_class), patch(
+        "tempfile.NamedTemporaryFile", mock_tempfile.NamedTemporaryFile
+    ):
         tx_hash = await client.storage_request(files)
 
-    expected_json = json.dumps([
-        {"filename": "file1.txt", "cid": "QmHash1"},
-        {"filename": "file2.jpg", "cid": "QmHash2"}
-    ], indent=2)
+    expected_json = json.dumps(
+        [
+            {"filename": "file1.txt", "cid": "QmHash1"},
+            {"filename": "file2.jpg", "cid": "QmHash2"},
+        ],
+        indent=2,
+    )
 
     mock_temp_file.write.assert_called_once_with(expected_json)
     mock_ipfs.upload_file.assert_called_once_with(mock_temp_file.name)
@@ -299,7 +307,7 @@ async def test_storage_request(mock_uuid, mock_substrate_interface, mock_keypair
 @pytest.mark.asyncio
 async def test_store_cid(mock_substrate_interface, mock_keypair, mock_config):
     """Verify the store_cid method correctly delegates to storage_request.
-    
+
     Tests that the store_cid method:
     - Creates a FileInput with the correct CID and filename
     - Calls storage_request with the FileInput in a list
@@ -309,7 +317,7 @@ async def test_store_cid(mock_substrate_interface, mock_keypair, mock_config):
     _, url = mock_config
 
     # Mock the storage_request method
-    with patch.object(SubstrateClient, 'storage_request') as mock_storage_request:
+    with patch.object(SubstrateClient, "storage_request") as mock_storage_request:
         # Create an async mock
         mock_storage_request.return_value = "0xabcdef1234567890"
         # Make it properly awaitable
@@ -327,14 +335,16 @@ async def test_store_cid(mock_substrate_interface, mock_keypair, mock_config):
 
 
 @pytest.mark.asyncio
-async def test_get_user_files_from_profile(mock_substrate_interface, mock_keypair, mock_config):
+async def test_get_user_files_from_profile(
+    mock_substrate_interface, mock_keypair, mock_config
+):
     """Verify retrieval of user files from the blockchain profile.
-    
+
     Tests that the get_user_files_from_profile method:
     - Queries the IpfsPallet UserProfile storage for the account
     - Converts the hex-encoded CID to an IPFS CID format
     - Retrieves the profile content from IPFS
-    - Parses the JSON content with file metadata 
+    - Parses the JSON content with file metadata
     - Returns the file list with correct hash, name, and size
     """
     mock_substrate, _ = mock_substrate_interface
@@ -350,26 +360,30 @@ async def test_get_user_files_from_profile(mock_substrate_interface, mock_keypai
 
     # Mock IPFSClient
     mock_ipfs = MagicMock()
-    mock_ipfs.cat = AsyncMock(return_value={
-        "is_text": True,
-        "content": json.dumps({
-            "files": [
+    mock_ipfs.cat = AsyncMock(
+        return_value={
+            "is_text": True,
+            "content": json.dumps(
                 {
-                    "file_hash": "QmTestFile1",
-                    "file_name": "test_file1.txt",
-                    "size": 1024
+                    "files": [
+                        {
+                            "file_hash": "QmTestFile1",
+                            "file_name": "test_file1.txt",
+                            "size": 1024,
+                        }
+                    ]
                 }
-            ]
-        })
-    })
+            ),
+        }
+    )
 
-    with patch.object(SubstrateClient, '_hex_to_ipfs_cid', return_value="QmProfileCID"):
+    with patch.object(SubstrateClient, "_hex_to_ipfs_cid", return_value="QmProfileCID"):
         with patch("hippius_sdk.ipfs.IPFSClient", return_value=mock_ipfs):
             files = await client.get_user_files_from_profile()
             mock_substrate.query.assert_called_once_with(
                 module="IpfsPallet",
                 storage_function="UserProfile",
-                params=["test_account_address"]
+                params=["test_account_address"],
             )
 
             mock_ipfs.cat.assert_called_once_with("QmProfileCID")
