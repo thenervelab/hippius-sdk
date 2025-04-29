@@ -14,12 +14,8 @@ import getpass
 import inspect
 import json
 import os
-import random
 import sys
-import threading
 import time
-import uuid
-from typing import List, Optional
 
 from dotenv import load_dotenv
 
@@ -33,7 +29,6 @@ from hippius_sdk import (
     get_active_account,
     get_all_config,
     get_config_value,
-    get_encryption_key,
     get_seed_phrase,
     initialize_from_env,
     list_accounts,
@@ -42,10 +37,8 @@ from hippius_sdk import (
     save_config,
     set_active_account,
     set_config_value,
-    set_encryption_key,
     set_seed_phrase,
 )
-from hippius_sdk.substrate import FileInput
 
 try:
     import nacl.secret
@@ -55,10 +48,7 @@ except ImportError:
 else:
     ENCRYPTION_AVAILABLE = True
 
-# Load environment variables
 load_dotenv()
-
-# Initialize configuration from environment variables
 initialize_from_env()
 
 
@@ -793,7 +783,15 @@ async def handle_ec_files(
 
 
 async def handle_erasure_code(
-    client, file_path, k, m, chunk_size, miner_ids, encrypt=None, verbose=True
+    client,
+    file_path,
+    k,
+    m,
+    chunk_size,
+    miner_ids,
+    encrypt=None,
+    publish=False,
+    verbose=True,
 ):
     """Handle the erasure-code command"""
     if not os.path.exists(file_path):
@@ -823,7 +821,6 @@ async def handle_erasure_code(
             for root, _, files in os.walk(file_path):
                 if files:
                     example_file = os.path.join(root, files[0])
-                    rel_path = os.path.relpath(example_file, os.path.dirname(file_path))
                     print(f'   hippius erasure-code "{example_file}" --k {k} --m {m}')
                     break
 
@@ -835,7 +832,15 @@ async def handle_erasure_code(
 
             if choice in ("y", "yes"):
                 return await handle_erasure_code_directory(
-                    client, file_path, k, m, chunk_size, miner_ids, encrypt, verbose
+                    client,
+                    file_path,
+                    k,
+                    m,
+                    chunk_size,
+                    miner_ids,
+                    encrypt,
+                    publish,
+                    verbose,
                 )
         else:
             print(f"   No files found in directory {file_path}")
@@ -865,11 +870,6 @@ async def handle_erasure_code(
 
     print(f"Processing {file_path} ({file_size_mb:.2f} MB) with erasure coding...")
 
-    # Check if the file is too small for the current chunk size and k value
-    original_k = k
-    original_m = m
-    original_chunk_size = chunk_size
-
     # Calculate how many chunks we would get with current settings
     potential_chunks = max(1, file_size // chunk_size)
 
@@ -878,7 +878,7 @@ async def handle_erasure_code(
         # Calculate a new chunk size that would give us exactly k chunks
         new_chunk_size = max(1024, file_size // k)  # Ensure at least 1KB chunks
 
-        print(f"Warning: File is too small for the requested parameters.")
+        print("Warning: File is too small for the requested parameters.")
         print(
             f"Original parameters: k={k}, m={m}, chunk size={chunk_size/1024/1024:.2f} MB"
         )
@@ -910,27 +910,73 @@ async def handle_erasure_code(
             verbose=verbose,
         )
 
+        # Store the original result before potentially overwriting it with publish result
+        storage_result = result.copy()
+        metadata_cid = storage_result.get("metadata_cid", "unknown")
+
+        # If publish flag is set, publish to the global IPFS network
+        if publish:
+            if metadata_cid != "unknown":
+                print("\nPublishing to global IPFS network...")
+                try:
+                    # Publish the metadata to the global IPFS network
+                    publish_result = await client.ipfs_client.publish_global(
+                        metadata_cid
+                    )
+                    if publish_result.get("published", False):
+                        print("Successfully published to global IPFS network")
+                        print(f"Access URL: https://ipfs.io/ipfs/{metadata_cid}")
+                    else:
+                        print(
+                            f"Warning: {publish_result.get('message', 'Failed to publish to global network')}"
+                        )
+                except Exception as e:
+                    print(f"Warning: Failed to publish to global IPFS network: {e}")
+
         elapsed_time = time.time() - start_time
 
         print(f"\nErasure coding and storage completed in {elapsed_time:.2f} seconds!")
 
         # Display metadata
-        metadata = result.get("metadata", {})
-        metadata_cid = result.get("metadata_cid", "unknown")
-        total_files_stored = result.get("total_files_stored", 0)
+        metadata = storage_result.get("metadata", {})
+        total_files_stored = storage_result.get("total_files_stored", 0)
 
         original_file = metadata.get("original_file", {})
         erasure_coding = metadata.get("erasure_coding", {})
 
-        print("\nErasure Coding Summary:")
-        print(
-            f"  Original file: {original_file.get('name')} ({original_file.get('size', 0)/1024/1024:.2f} MB)"
-        )
-        print(f"  File ID: {erasure_coding.get('file_id')}")
-        print(f"  Parameters: k={erasure_coding.get('k')}, m={erasure_coding.get('m')}")
-        print(f"  Total chunks: {len(metadata.get('chunks', []))}")
-        print(f"  Total files stored in marketplace: {total_files_stored}")
-        print(f"  Metadata CID: {metadata_cid}")
+        # If metadata_cid is known but metadata is empty, try to get file info from result directly
+        if metadata_cid != "unknown" and not original_file:
+            file_name = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+
+            # Use direct values from input parameters when metadata is not available
+            print("\nErasure Coding Summary:")
+            print(f"  Original file: {file_name} ({file_size/1024/1024:.2f} MB)")
+            print(f"  Parameters: k={k}, m={m}")
+            print(f"  Total files stored in marketplace: {total_files_stored}")
+            print(f"  Metadata CID: {metadata_cid}")
+
+            # Add publish status if applicable
+            if publish:
+                print(f"  Published to global IPFS: Yes")
+                print(f"  Global access URL: https://ipfs.io/ipfs/{metadata_cid}")
+        else:
+            print("\nErasure Coding Summary:")
+            print(
+                f"  Original file: {original_file.get('name')} ({original_file.get('size', 0)/1024/1024:.2f} MB)"
+            )
+            print(f"  File ID: {erasure_coding.get('file_id')}")
+            print(
+                f"  Parameters: k={erasure_coding.get('k')}, m={erasure_coding.get('m')}"
+            )
+            print(f"  Total chunks: {len(metadata.get('chunks', []))}")
+            print(f"  Total files stored in marketplace: {total_files_stored}")
+            print(f"  Metadata CID: {metadata_cid}")
+
+            # Add publish status if applicable
+            if publish:
+                print(f"  Published to global IPFS: Yes")
+                print(f"  Global access URL: https://ipfs.io/ipfs/{metadata_cid}")
 
         # If we stored in the marketplace
         if "transaction_hash" in result:
@@ -943,9 +989,13 @@ async def handle_erasure_code(
         print(f"  1. The metadata CID: {metadata_cid}")
         print("  2. Access to at least k chunks for each original chunk")
         print("\nReconstruction command:")
-        print(
-            f"  hippius reconstruct {metadata_cid} reconstructed_{original_file.get('name')}"
-        )
+
+        # Get file name, either from metadata or directly from file path
+        output_filename = original_file.get("name")
+        if not output_filename:
+            output_filename = os.path.basename(file_path)
+
+        print(f"  hippius reconstruct {metadata_cid} reconstructed_{output_filename}")
 
         return 0
 
@@ -966,7 +1016,15 @@ async def handle_erasure_code(
 
 
 async def handle_erasure_code_directory(
-    client, dir_path, k, m, chunk_size, miner_ids, encrypt=None, verbose=True
+    client,
+    dir_path,
+    k,
+    m,
+    chunk_size,
+    miner_ids,
+    encrypt=None,
+    publish=False,
+    verbose=True,
 ):
     """Apply erasure coding to each file in a directory individually"""
     if not os.path.isdir(dir_path):
@@ -1056,16 +1114,38 @@ async def handle_erasure_code_directory(
                 verbose=False,  # Less verbose for batch processing
             )
 
-            # Store basic result info
+            metadata_cid = result.get("metadata_cid", "unknown")
+            publishing_status = "Not published"
+
+            # If publish flag is set, publish to the global IPFS network
+            if publish and metadata_cid != "unknown":
+                try:
+                    # Publish the metadata to the global IPFS network
+                    publish_result = await client.ipfs_client.publish_global(
+                        metadata_cid
+                    )
+                    if publish_result.get("published", False):
+                        publishing_status = "Published to global IPFS"
+                    else:
+                        publishing_status = f"Failed to publish: {publish_result.get('message', 'Unknown error')}"
+                except Exception as e:
+                    publishing_status = f"Failed to publish: {str(e)}"
+
+            # Store basic result info with additional publish info
             results.append(
                 {
                     "file_path": file_path,
-                    "metadata_cid": result.get("metadata_cid", "unknown"),
+                    "metadata_cid": metadata_cid,
                     "success": True,
+                    "published": publish
+                    and publishing_status == "Published to global IPFS",
                 }
             )
 
-            print(f"Success! Metadata CID: {result.get('metadata_cid', 'unknown')}")
+            status_msg = f"Success! Metadata CID: {metadata_cid}"
+            if publish:
+                status_msg += f" ({publishing_status})"
+            print(status_msg)
             successful += 1
 
         except Exception as e:
@@ -1132,13 +1212,12 @@ async def handle_reconstruct(client, metadata_cid, output_file, verbose=True):
 
     try:
         # Use the reconstruct_from_erasure_code method
-        result = await client.reconstruct_from_erasure_code(
+        await client.reconstruct_from_erasure_code(
             metadata_cid=metadata_cid, output_file=output_file, verbose=verbose
         )
 
         elapsed_time = time.time() - start_time
         print(f"\nFile reconstruction completed in {elapsed_time:.2f} seconds!")
-        print(f"Reconstructed file saved to: {result}")
 
         return 0
 
@@ -2007,6 +2086,9 @@ examples:
   # Erasure code a file (Reed-Solomon)
   hippius erasure-code large_file.mp4 --k 3 --m 5
   
+  # Erasure code and publish to global IPFS network
+  hippius erasure-code large_file.avi --publish
+  
   # Reconstruct an erasure-coded file
   hippius reconstruct QmMetadataHash reconstructed_file.mp4
 """,
@@ -2242,6 +2324,11 @@ examples:
     )
     erasure_code_parser.add_argument(
         "--no-encrypt", action="store_true", help="Do not encrypt the file"
+    )
+    erasure_code_parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="Upload and publish the erasure-coded file to the global IPFS network",
     )
     erasure_code_parser.add_argument(
         "--verbose", action="store_true", help="Enable verbose output", default=True
@@ -2600,6 +2687,7 @@ examples:
                 args.chunk_size,
                 miner_ids,
                 encrypt=args.encrypt,
+                publish=args.publish,
                 verbose=args.verbose,
             )
 

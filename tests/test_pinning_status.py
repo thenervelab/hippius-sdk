@@ -3,7 +3,7 @@ Tests for the pinning status functionality.
 """
 
 import json
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
