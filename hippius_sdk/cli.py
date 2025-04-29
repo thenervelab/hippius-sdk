@@ -414,7 +414,7 @@ async def handle_store_dir(client, dir_path, miner_ids, encrypt=None):
     return 0
 
 
-def handle_credits(client, account_address):
+async def handle_credits(client, account_address):
     """Handle the credits command"""
     print("Checking free credits for the account...")
     try:
@@ -450,7 +450,7 @@ def handle_credits(client, account_address):
 
                     return 1
 
-        credits = client.substrate_client.get_free_credits(account_address)
+        credits = await client.substrate_client.get_free_credits(account_address)
         print(f"\nFree credits: {credits:.6f}")
         raw_value = int(
             credits * 1_000_000_000_000_000_000
@@ -1405,6 +1405,200 @@ def handle_seed_phrase_status(account_name=None):
     return 0
 
 
+def handle_account_create(client, name, encrypt=False):
+    """Handle creating a new account with a generated seed phrase"""
+    print(f"Creating new account '{name}'...")
+
+    # Get password if encryption is requested
+    password = None
+    if encrypt:
+        try:
+            password = getpass.getpass("Enter password to encrypt seed phrase: ")
+            password_confirm = getpass.getpass("Confirm password: ")
+
+            if password != password_confirm:
+                print("Error: Passwords do not match")
+                return 1
+        except KeyboardInterrupt:
+            print("\nOperation cancelled")
+            return 1
+
+    try:
+        # Create the account
+        result = client.substrate_client.create_account(
+            name, encode=encrypt, password=password
+        )
+
+        print(f"Account created successfully!")
+        print(f"Name: {result['name']}")
+        print(f"Address: {result['address']}")
+        print(f"Seed phrase: {result['mnemonic']}")
+        print()
+        print(
+            "IMPORTANT: Please write down your seed phrase and store it in a safe place."
+        )
+        print(
+            "It is the only way to recover your account if you lose access to this configuration."
+        )
+
+        return 0
+    except Exception as e:
+        print(f"Error creating account: {e}")
+        return 1
+
+
+def handle_account_export(client, name=None, file_path=None):
+    """Handle exporting an account to a file"""
+    try:
+        # Export the account
+        exported_file = client.substrate_client.export_account(
+            account_name=name, file_path=file_path
+        )
+
+        print(f"Account exported successfully to: {exported_file}")
+        print("The exported file contains your seed phrase in plain text.")
+        print("Please keep this file secure and do not share it with anyone.")
+
+        return 0
+    except Exception as e:
+        print(f"Error exporting account: {e}")
+        return 1
+
+
+def handle_account_import(client, file_path, encrypt=False):
+    """Handle importing an account from a file"""
+    # Get password if encryption is requested
+    password = None
+    if encrypt:
+        try:
+            password = getpass.getpass("Enter password to encrypt seed phrase: ")
+            password_confirm = getpass.getpass("Confirm password: ")
+
+            if password != password_confirm:
+                print("Error: Passwords do not match")
+                return 1
+        except KeyboardInterrupt:
+            print("\nOperation cancelled")
+            return 1
+
+    try:
+        # Import the account
+        result = client.substrate_client.import_account(
+            file_path, password=password if encrypt else None
+        )
+
+        print(f"Account imported successfully!")
+        print(f"Name: {result['name']}")
+        print(f"Address: {result['address']}")
+
+        if (
+            result.get("original_name")
+            and result.get("original_name") != result["name"]
+        ):
+            print(
+                f"Note: Original name '{result['original_name']}' was already in use, renamed to '{result['name']}'"
+            )
+
+        return 0
+    except Exception as e:
+        print(f"Error importing account: {e}")
+        return 1
+
+
+async def handle_account_info(client, account_name=None, include_history=False):
+    """Handle showing account information"""
+    try:
+        # Get account info - properly await the async method
+        info = await client.substrate_client.get_account_info(
+            account_name, include_history=include_history
+        )
+
+        active_marker = " (active)" if info.get("is_active", False) else ""
+        encoded_status = (
+            "encrypted" if info.get("seed_phrase_encrypted", False) else "plain text"
+        )
+
+        print(f"Account: {info['name']}{active_marker}")
+        print(f"Address: {info['address']}")
+        print(f"Seed phrase: {encoded_status}")
+
+        # Show storage statistics if available
+        if "storage_stats" in info:
+            stats = info["storage_stats"]
+            if "error" in stats:
+                print(f"Storage stats: Error - {stats['error']}")
+            else:
+                print(f"Files stored: {stats['files']}")
+                print(f"Total storage: {stats['size_formatted']}")
+
+        # Show balance if available
+        if "balance" in info:
+            balance = info["balance"]
+            print("\nAccount Balance:")
+            print(f"  Free:     {balance['free']:.6f}")
+            print(f"  Reserved: {balance['reserved']:.6f}")
+            print(f"  Total:    {balance['total']:.6f}")
+
+        # Show free credits if available
+        if "free_credits" in info:
+            print(f"Free credits: {info['free_credits']:.6f}")
+
+        # Show file list if requested and available
+        if include_history and "files" in info and info["files"]:
+            print(f"\nStored Files ({len(info['files'])}):")
+            for i, file in enumerate(info["files"], 1):
+                print(f"  {i}. {file.get('file_name', 'Unnamed')}")
+                print(f"     CID: {file.get('file_hash', 'Unknown')}")
+                print(f"     Size: {file.get('size_formatted', 'Unknown')}")
+
+        return 0
+    except Exception as e:
+        print(f"Error retrieving account info: {e}")
+        return 1
+
+
+async def handle_account_balance(client, account_name=None, watch=False, interval=5):
+    """Handle checking or watching account balance"""
+    try:
+        # Get the account address
+        if account_name:
+            address = get_account_address(account_name)
+            if not address:
+                print(f"Error: Could not find address for account '{account_name}'")
+                return 1
+        else:
+            if client.substrate_client._account_address:
+                address = client.substrate_client._account_address
+            else:
+                print("Error: No account address available")
+                return 1
+
+        if watch:
+            # Watch mode - continuous updates
+            # Note: watch_account_balance may need to be modified to be async-compatible
+            await client.substrate_client.watch_account_balance(address, interval)
+        else:
+            # One-time check
+            balance = await client.substrate_client.get_account_balance(address)
+
+            print(f"Account Balance for: {address}")
+            print(f"Free:     {balance['free']:.6f}")
+            print(f"Reserved: {balance['reserved']:.6f}")
+            print(f"Frozen:   {balance['frozen']:.6f}")
+            print(f"Total:    {balance['total']:.6f}")
+
+            # Show raw values
+            print("\nRaw Values:")
+            print(f"Free:     {balance['raw']['free']:,}")
+            print(f"Reserved: {balance['raw']['reserved']:,}")
+            print(f"Frozen:   {balance['raw']['frozen']:,}")
+
+        return 0
+    except Exception as e:
+        print(f"Error checking account balance: {e}")
+        return 1
+
+
 def handle_account_list():
     """Handle listing all accounts"""
     accounts = list_accounts()
@@ -2156,6 +2350,77 @@ examples:
     # List accounts
     account_subparsers.add_parser("list", help="List all accounts")
 
+    # Create account
+    create_account_parser = account_subparsers.add_parser(
+        "create", help="Create a new account with a generated seed phrase"
+    )
+    create_account_parser.add_argument(
+        "--name", required=True, help="Name for the new account"
+    )
+    create_account_parser.add_argument(
+        "--encrypt", action="store_true", help="Encrypt the seed phrase with a password"
+    )
+
+    # Export account
+    export_account_parser = account_subparsers.add_parser(
+        "export", help="Export an account to a file"
+    )
+    export_account_parser.add_argument(
+        "--name",
+        help="Name of the account to export (uses active account if not specified)",
+    )
+    export_account_parser.add_argument(
+        "--file",
+        help="Path to save the exported account file (auto-generated if not specified)",
+    )
+
+    # Import account
+    import_account_parser = account_subparsers.add_parser(
+        "import", help="Import an account from a file"
+    )
+    import_account_parser.add_argument(
+        "--file", required=True, help="Path to the account file to import"
+    )
+    import_account_parser.add_argument(
+        "--encrypt",
+        action="store_true",
+        help="Encrypt the imported seed phrase with a password",
+    )
+
+    # Account info
+    info_account_parser = account_subparsers.add_parser(
+        "info", help="Display detailed information about an account"
+    )
+    info_account_parser.add_argument(
+        "account_name",
+        nargs="?",
+        help="Name of the account to show (uses active account if not specified)",
+    )
+    info_account_parser.add_argument(
+        "--history", action="store_true", help="Include usage history in the output"
+    )
+
+    # Account balance
+    balance_account_parser = account_subparsers.add_parser(
+        "balance", help="Check account balance"
+    )
+    balance_account_parser.add_argument(
+        "account_name",
+        nargs="?",
+        help="Name of the account to check (uses active account if not specified)",
+    )
+    balance_account_parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="Watch account balance in real-time until Ctrl+C is pressed",
+    )
+    balance_account_parser.add_argument(
+        "--interval",
+        type=int,
+        default=5,
+        help="Update interval in seconds for watch mode (default: 5)",
+    )
+
     # Switch active account
     switch_account_parser = account_subparsers.add_parser(
         "switch", help="Switch to a different account"
@@ -2290,7 +2555,7 @@ examples:
             )
 
         elif args.command == "credits":
-            return handle_credits(client, args.account_address)
+            return run_async_handler(handle_credits, client, args.account_address)
 
         elif args.command == "files":
             return run_async_handler(
@@ -2398,6 +2663,24 @@ examples:
         elif args.command == "account":
             if args.account_action == "list":
                 return handle_account_list()
+            elif args.account_action == "create":
+                return handle_account_create(client, args.name, args.encrypt)
+            elif args.account_action == "export":
+                return handle_account_export(client, args.name, args.file)
+            elif args.account_action == "import":
+                return handle_account_import(client, args.file, args.encrypt)
+            elif args.account_action == "info":
+                return run_async_handler(
+                    handle_account_info, client, args.account_name, args.history
+                )
+            elif args.account_action == "balance":
+                return run_async_handler(
+                    handle_account_balance,
+                    client,
+                    args.account_name,
+                    args.watch,
+                    args.interval,
+                )
             elif args.account_action == "switch":
                 return handle_account_switch(args.account_name)
             elif args.account_action == "delete":

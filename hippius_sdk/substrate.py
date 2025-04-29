@@ -1,23 +1,22 @@
-"""
-Substrate operations for the Hippius SDK.
-
-Note: This functionality is coming soon and not implemented yet.
-"""
-
+import datetime
 import json
 import os
 import tempfile
+import time
 import uuid
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Union
 
 from dotenv import load_dotenv
+from mnemonic import Mnemonic
 from substrateinterface import Keypair, SubstrateInterface
 
 from hippius_sdk.config import (
     get_account_address,
     get_active_account,
+    get_all_config,
     get_config_value,
     get_seed_phrase,
+    set_active_account,
     set_seed_phrase,
 )
 from hippius_sdk.utils import hex_to_ipfs_cid
@@ -180,6 +179,300 @@ class SubstrateClient:
         except Exception as e:
             print(f"Warning: Could not get seed phrase from config: {e}")
             return False
+
+    def generate_mnemonic(self) -> str:
+        """
+        Generate a new random 12-word mnemonic phrase.
+
+        Returns:
+            str: A 12-word mnemonic seed phrase
+        """
+        try:
+            mnemo = Mnemonic("english")
+            return mnemo.generate(strength=128)  # 128 bits = 12 words
+        except Exception as e:
+            raise ValueError(f"Error generating mnemonic: {e}")
+
+    def create_account(
+        self, name: str, encode: bool = False, password: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a new account with a generated seed phrase.
+
+        Args:
+            name: Name for the new account
+            encode: Whether to encrypt the seed phrase with a password
+            password: Optional password for encryption (will prompt if not provided and encode=True)
+
+        Returns:
+            Dict[str, Any]: Dictionary with new account details
+        """
+        # Check if account name already exists
+        config = get_all_config()
+        if name in config["substrate"].get("accounts", {}):
+            raise ValueError(f"Account with name '{name}' already exists")
+
+        # Generate a new mnemonic seed phrase
+        mnemonic = self.generate_mnemonic()
+
+        # Create a keypair from the mnemonic
+        keypair = Keypair.create_from_mnemonic(mnemonic)
+        ss58_address = keypair.ss58_address
+
+        # Save the seed phrase to configuration
+        if encode:
+            result = set_seed_phrase(
+                mnemonic, encode=True, password=password, account_name=name
+            )
+        else:
+            result = set_seed_phrase(mnemonic, encode=False, account_name=name)
+
+        if not result:
+            raise RuntimeError("Failed to save account to configuration")
+
+        # Set this as the active account
+        set_active_account(name)
+
+        # Update the client's state to use this account
+        self._account_name = name
+        self._account_address = ss58_address
+        self._seed_phrase = mnemonic
+        self._keypair = keypair
+        self._read_only = False
+
+        # Return the new account details
+        return {
+            "name": name,
+            "address": ss58_address,
+            "mnemonic": mnemonic,
+            "is_active": True,
+            "creation_date": datetime.datetime.now().isoformat(),
+        }
+
+    def export_account(
+        self, account_name: Optional[str] = None, file_path: Optional[str] = None
+    ) -> str:
+        """
+        Export an account to a JSON file.
+
+        Args:
+            account_name: Name of the account to export (uses active account if None)
+            file_path: Path to save the exported account file (auto-generated if None)
+
+        Returns:
+            str: Path to the exported account file
+        """
+        # Determine which account to export
+        name_to_use = account_name or self._account_name or get_active_account()
+        if not name_to_use:
+            raise ValueError("No account specified and no active account")
+
+        # Get the seed phrase and address
+        seed_phrase = get_seed_phrase(account_name=name_to_use)
+        if not seed_phrase:
+            raise ValueError(
+                f"Could not retrieve seed phrase for account '{name_to_use}'"
+            )
+
+        address = get_account_address(name_to_use)
+        if not address:
+            # Generate the address from the seed phrase
+            keypair = Keypair.create_from_mnemonic(seed_phrase)
+            address = keypair.ss58_address
+
+        # Create the export data structure
+        export_data = {
+            "name": name_to_use,
+            "address": address,
+            "mnemonic": seed_phrase,
+            "meta": {
+                "exported_at": datetime.datetime.now().isoformat(),
+                "description": "Hippius SDK exported account",
+            },
+        }
+
+        # Determine the file path if not provided
+        if not file_path:
+            file_path = f"{name_to_use}_account_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+        # Write the export file
+        try:
+            with open(file_path, "w") as f:
+                json.dump(export_data, f, indent=2)
+            print(f"Account '{name_to_use}' exported to {file_path}")
+            return file_path
+        except Exception as e:
+            raise ValueError(f"Failed to export account: {e}")
+
+    def import_account(
+        self, file_path: str, password: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Import an account from a JSON file.
+
+        Args:
+            file_path: Path to the account export file
+            password: Optional password to use for encrypting the imported seed phrase
+
+        Returns:
+            Dict[str, Any]: Dictionary with imported account details
+        """
+        try:
+            # Read the export file
+            with open(file_path, "r") as f:
+                import_data = json.load(f)
+
+            # Validate the import data structure
+            required_fields = ["name", "address", "mnemonic"]
+            for field in required_fields:
+                if field not in import_data:
+                    raise ValueError(
+                        f"Invalid account file format: missing '{field}' field"
+                    )
+
+            # Extract account details
+            name = import_data["name"]
+            address = import_data["address"]
+            mnemonic = import_data["mnemonic"]
+
+            # Check if the account name already exists
+            config = get_all_config()
+            if name in config["substrate"].get("accounts", {}):
+                # Modify the name to avoid conflicts
+                original_name = name
+                name = f"{name}_imported_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                print(
+                    f"Account name '{original_name}' already exists, using '{name}' instead"
+                )
+
+            # Save the account to configuration
+            if password:
+                # Encrypt the seed phrase with the provided password
+                result = set_seed_phrase(
+                    mnemonic, encode=True, password=password, account_name=name
+                )
+            else:
+                # Store the seed phrase in plain text
+                result = set_seed_phrase(mnemonic, encode=False, account_name=name)
+
+            if not result:
+                raise RuntimeError("Failed to save imported account to configuration")
+
+            # Set this as the active account
+            set_active_account(name)
+
+            # Update the client's state to use this account
+            self._account_name = name
+            self._account_address = address
+            self._seed_phrase = mnemonic
+            self._keypair = Keypair.create_from_mnemonic(mnemonic)
+            self._read_only = False
+
+            # Return the imported account details
+            return {
+                "name": name,
+                "address": address,
+                "is_active": True,
+                "imported_at": datetime.datetime.now().isoformat(),
+                "original_name": import_data.get("name"),
+            }
+        except Exception as e:
+            raise ValueError(f"Failed to import account: {e}")
+
+    async def get_account_info(
+        self, account_name: Optional[str] = None, include_history: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Get detailed information about an account.
+
+        Args:
+            account_name: Name of the account to get info for (uses active account if None)
+            include_history: Whether to include usage history in the results
+
+        Returns:
+            Dict[str, Any]: Detailed account information
+        """
+        # Determine which account to get info for
+        name_to_use = account_name or self._account_name or get_active_account()
+        if not name_to_use:
+            raise ValueError("No account specified and no active account")
+
+        # Get the configuration to extract account data
+        config = get_all_config()
+
+        # Check if the account exists
+        if name_to_use not in config["substrate"].get("accounts", {}):
+            raise ValueError(f"Account '{name_to_use}' not found")
+
+        # Get account data from config
+        account_data = config["substrate"]["accounts"][name_to_use]
+        is_active = name_to_use == config["substrate"].get("active_account")
+        is_encoded = account_data.get("seed_phrase_encoded", False)
+        address = account_data.get("ss58_address")
+
+        # Create the account info object
+        account_info = {
+            "name": name_to_use,
+            "address": address,
+            "is_active": is_active,
+            "seed_phrase_encrypted": is_encoded,
+        }
+
+        # Query storage statistics for this account
+        try:
+            # Get files stored by this account - use await since this is an async method
+            files = await self.get_user_files_from_profile(address)
+
+            # Calculate storage statistics
+            total_files = len(files)
+            total_size_bytes = sum(file.get("file_size", 0) for file in files)
+
+            # Add storage stats to account info
+            account_info["storage_stats"] = {
+                "files": total_files,
+                "bytes_used": total_size_bytes,
+                "size_formatted": self._format_size(total_size_bytes)
+                if total_size_bytes
+                else "0 B",
+            }
+
+            # Include file list if requested
+            if include_history:
+                account_info["files"] = files
+
+                # Try to get account balance
+                try:
+                    account_info["balance"] = await self.get_account_balance(address)
+                except Exception as e:
+                    # Ignore balance errors, it's optional information
+                    print(f"Could not fetch balance: {e}")
+                    pass
+
+                # Try to get free credits
+                try:
+                    account_info["free_credits"] = await self.get_free_credits(address)
+                except Exception as e:
+                    # Ignore credits errors, it's optional information
+                    print(f"Could not fetch free credits: {e}")
+                    pass
+        except Exception as e:
+            # Add a note about the error but don't fail the whole operation
+            account_info["storage_stats"] = {
+                "error": f"Could not fetch storage statistics: {str(e)}"
+            }
+
+        return account_info
+
+    def _format_size(self, size_bytes: int) -> str:
+        """Format file size in human-readable format"""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.2f} KB"
+        elif size_bytes < 1024 * 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.2f} MB"
+        else:
+            return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
 
     def set_seed_phrase(self, seed_phrase: str) -> None:
         """
@@ -454,7 +747,7 @@ class SubstrateClient:
         """
         raise NotImplementedError("Substrate functionality is not implemented yet.")
 
-    def get_account_balance(
+    async def get_account_balance(
         self, account_address: Optional[str] = None
     ) -> Dict[str, float]:
         """
@@ -466,9 +759,174 @@ class SubstrateClient:
         Returns:
             Dict[str, float]: Account balances (free, reserved, total)
         """
-        raise NotImplementedError("Substrate functionality is not implemented yet.")
+        try:
+            # Initialize Substrate connection if not already connected
+            if not hasattr(self, "_substrate") or self._substrate is None:
+                print("Initializing Substrate connection...")
+                self._substrate = SubstrateInterface(
+                    url=self.url,
+                    ss58_format=42,  # Substrate default
+                    type_registry_preset="substrate-node-template",
+                )
+                print(f"Connected to Substrate node at {self.url}")
 
-    def get_free_credits(self, account_address: Optional[str] = None) -> float:
+            # Use provided account address or default to keypair/configured address
+            if not account_address:
+                if self._account_address:
+                    account_address = self._account_address
+                    print(f"Using account address: {account_address}")
+                else:
+                    # Try to get the address from the keypair (requires seed phrase)
+                    if not self._ensure_keypair():
+                        raise ValueError("No account address available")
+                    account_address = self._keypair.ss58_address
+                    print(f"Using keypair address: {account_address}")
+
+            # Query the blockchain for account balance
+            print(f"Querying balance for account: {account_address}")
+            result = self._substrate.query(
+                module="System",
+                storage_function="Account",
+                params=[account_address],
+            )
+
+            # If account exists, extract the balance information
+            if result.value:
+                data = result.value
+                print(data)
+                # Extract balance components
+                free_balance = data.get("data", {}).get("free", 0)
+                reserved_balance = data.get("data", {}).get("reserved", 0)
+                frozen_balance = data.get("data", {}).get("frozen", 0)
+
+                # Convert from blockchain units to float (divide by 10^18)
+                divisor = 1_000_000_000_000_000_000  # 18 zeros for decimals
+
+                free = float(free_balance) / divisor
+                reserved = float(reserved_balance) / divisor
+                frozen = float(frozen_balance) / divisor
+
+                # Calculate total (free + reserved - frozen)
+                total = free + reserved - frozen
+
+                return {
+                    "free": free,
+                    "reserved": reserved,
+                    "frozen": frozen,
+                    "total": total,
+                    "raw": {
+                        "free": free_balance,
+                        "reserved": reserved_balance,
+                        "frozen": frozen_balance,
+                    },
+                }
+            else:
+                print(f"No account data found for: {account_address}")
+                return {
+                    "free": 0.0,
+                    "reserved": 0.0,
+                    "frozen": 0.0,
+                    "total": 0.0,
+                    "raw": {"free": 0, "reserved": 0, "frozen": 0},
+                }
+
+        except Exception as e:
+            error_msg = f"Error querying account balance: {str(e)}"
+            print(error_msg)
+            raise ValueError(error_msg)
+
+    async def watch_account_balance(
+        self, account_address: Optional[str] = None, interval: int = 5
+    ) -> None:
+        """
+        Watch account balance in real-time, updating at specified intervals.
+
+        The function runs until interrupted with Ctrl+C.
+
+        Args:
+            account_address: Substrate account address (uses keypair address if not specified)
+            interval: Polling interval in seconds (default: 5)
+        """
+        try:
+            # Use provided account address or default to keypair/configured address
+            if not account_address:
+                if self._account_address:
+                    account_address = self._account_address
+                else:
+                    # Try to get the address from the keypair (requires seed phrase)
+                    if not self._ensure_keypair():
+                        raise ValueError("No account address available")
+                    account_address = self._keypair.ss58_address
+
+            print(f"Watching balance for account: {account_address}")
+            print(f"Updates every {interval} seconds. Press Ctrl+C to stop.")
+            print("-" * 80)
+
+            # Keep track of previous balance to show changes
+            previous_balance = None
+
+            try:
+                while True:
+                    # Get current time for display
+                    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                    # Get current balance
+                    try:
+                        balance = await self.get_account_balance(account_address)
+
+                        # Clear screen (ANSI escape sequence)
+                        print("\033c", end="")
+
+                        # Display header
+                        print(f"Account Balance Watch for: {account_address}")
+                        print(f"Last update: {current_time}")
+                        print("-" * 80)
+
+                        # Display current balance
+                        print(f"Free:     {balance['free']:.6f}")
+                        print(f"Reserved: {balance['reserved']:.6f}")
+                        print(f"Frozen:   {balance['frozen']:.6f}")
+                        print(f"Total:    {balance['total']:.6f}")
+
+                        # Show changes since last update if available
+                        if previous_balance:
+                            print("\nChanges since last update:")
+                            free_change = balance["free"] - previous_balance["free"]
+                            reserved_change = (
+                                balance["reserved"] - previous_balance["reserved"]
+                            )
+                            total_change = balance["total"] - previous_balance["total"]
+
+                            # Format changes with + or - sign
+                            print(f"Free:     {free_change:+.6f}")
+                            print(f"Reserved: {reserved_change:+.6f}")
+                            print(f"Total:    {total_change:+.6f}")
+
+                        # Store current balance for next comparison
+                        previous_balance = balance
+
+                        # Show instructions at the bottom
+                        print(
+                            "\nUpdating every",
+                            interval,
+                            "seconds. Press Ctrl+C to stop.",
+                        )
+
+                    except Exception as e:
+                        # Show error but continue watching
+                        print(f"Error: {e}")
+                        print(f"Will try again in {interval} seconds...")
+
+                    # Wait for next update
+                    time.sleep(interval)
+
+            except KeyboardInterrupt:
+                print("\nBalance watch stopped.")
+
+        except Exception as e:
+            print(f"Error in watch_account_balance: {e}")
+
+    async def get_free_credits(self, account_address: Optional[str] = None) -> float:
         """
         Get the free credits available for an account in the marketplace.
 
