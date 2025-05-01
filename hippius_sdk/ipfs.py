@@ -39,7 +39,9 @@ except ImportError:
 
 # Configuration constants
 PARALLEL_EC_CHUNKS = 20  # Maximum number of concurrent chunk downloads
-PARALLEL_ORIGINAL_CHUNKS = 15  # Maximum number of original chunks to process in parallel
+PARALLEL_ORIGINAL_CHUNKS = (
+    15  # Maximum number of original chunks to process in parallel
+)
 
 
 class IPFSClient:
@@ -938,7 +940,9 @@ class IPFSClient:
 
         # Step 4: Upload all chunks to IPFS
         if verbose:
-            print(f"Uploading {len(chunks) * m} erasure-coded chunks to IPFS in parallel...")
+            print(
+                f"Uploading {len(chunks) * m} erasure-coded chunks to IPFS in parallel..."
+            )
 
         chunk_uploads = 0
         chunk_data = []
@@ -948,7 +952,7 @@ class IPFSClient:
         with tempfile.TemporaryDirectory() as temp_dir:
             # Prepare all chunks for upload
             all_chunk_info = []
-            
+
             for original_idx, encoded_chunks in enumerate(all_encoded_chunks):
                 for share_idx, share_data in enumerate(encoded_chunks):
                     # Create a name for this chunk that includes needed info
@@ -958,23 +962,25 @@ class IPFSClient:
                     # Write the chunk to a temp file
                     with open(chunk_path, "wb") as f:
                         f.write(share_data)
-                    
+
                     # Store info for async upload
-                    all_chunk_info.append({
-                        "name": chunk_name,
-                        "path": chunk_path,
-                        "original_chunk": original_idx,
-                        "share_idx": share_idx,
-                        "size": len(share_data)
-                    })
-            
+                    all_chunk_info.append(
+                        {
+                            "name": chunk_name,
+                            "path": chunk_path,
+                            "original_chunk": original_idx,
+                            "share_idx": share_idx,
+                            "size": len(share_data),
+                        }
+                    )
+
             # Create a semaphore to limit concurrent uploads
             semaphore = asyncio.Semaphore(batch_size)
-            
+
             # Define upload task for a single chunk
             async def upload_chunk(chunk_info):
                 nonlocal chunk_uploads
-                
+
                 async with semaphore:
                     try:
                         chunk_cid = await self.upload_file(
@@ -990,13 +996,13 @@ class IPFSClient:
                     except Exception as e:
                         print(f"Error uploading chunk {chunk_info['name']}: {str(e)}")
                         return None
-            
+
             # Create tasks for all chunk uploads
             upload_tasks = [upload_chunk(chunk_info) for chunk_info in all_chunk_info]
-            
+
             # Wait for all uploads to complete
             completed_uploads = await asyncio.gather(*upload_tasks)
-            
+
             # Filter out failed uploads
             chunk_data = [upload for upload in completed_uploads if upload is not None]
 
@@ -1106,7 +1112,9 @@ class IPFSClient:
                 )
                 if is_encrypted:
                     print("Encrypted: Yes")
-                print(f"Using parallel download with max {PARALLEL_ORIGINAL_CHUNKS} original chunks and {PARALLEL_EC_CHUNKS} chunk downloads concurrently")
+                print(
+                    f"Using parallel download with max {PARALLEL_ORIGINAL_CHUNKS} original chunks and {PARALLEL_EC_CHUNKS} chunk downloads concurrently"
+                )
 
             # Step 3: Group chunks by their original chunk index
             chunks_by_original = {}
@@ -1127,130 +1135,140 @@ class IPFSClient:
             # Create semaphores to limit concurrency
             encoded_chunks_semaphore = asyncio.Semaphore(PARALLEL_EC_CHUNKS)
             original_chunks_semaphore = asyncio.Semaphore(PARALLEL_ORIGINAL_CHUNKS)
-            
+
             # Process a single original chunk and its required downloads
             async def process_original_chunk(orig_idx, available_chunks):
                 # Limit number of original chunks processing at once
                 async with original_chunks_semaphore:
                     if verbose:
                         print(f"Processing original chunk {orig_idx}...")
-                    
+
                     if len(available_chunks) < k:
                         raise ValueError(
                             f"Not enough chunks available for original chunk {orig_idx}. "
                             f"Need {k}, but only have {len(available_chunks)}."
                         )
-                    
+
                     # Try slightly more than k chunks (k+2) to handle some failures
                     num_to_try = min(k + 2, len(available_chunks))
                     chunks_to_try = random.sample(available_chunks, num_to_try)
-                    
+
                     # Track downloaded chunks
                     download_tasks = []
-                    
+
                     # Start parallel downloads for chunks
                     for chunk in chunks_to_try:
                         chunk_path = os.path.join(temp_dir, f"{chunk['name']}")
-                        
+
                         # Extract CID
                         chunk_cid = (
                             chunk["cid"]["cid"]
                             if isinstance(chunk["cid"], dict) and "cid" in chunk["cid"]
                             else chunk["cid"]
                         )
-                        
+
                         # Create download task
                         async def download_chunk(cid, path, chunk_info):
                             async with encoded_chunks_semaphore:
                                 try:
-                                    await self.download_file(cid, path, max_retries=max_retries)
-                                    
+                                    await self.download_file(
+                                        cid, path, max_retries=max_retries
+                                    )
+
                                     # Read chunk data
                                     with open(path, "rb") as f:
                                         share_data = f.read()
-                                    
+
                                     return {
                                         "success": True,
                                         "data": share_data,
                                         "share_idx": chunk_info["share_idx"],
-                                        "name": chunk_info["name"]
+                                        "name": chunk_info["name"],
                                     }
                                 except Exception as e:
                                     if verbose:
-                                        print(f"Error downloading chunk {chunk_info['name']}: {str(e)}")
+                                        print(
+                                            f"Error downloading chunk {chunk_info['name']}: {str(e)}"
+                                        )
                                     return {
                                         "success": False,
                                         "error": str(e),
-                                        "name": chunk_info["name"]
+                                        "name": chunk_info["name"],
                                     }
-                        
+
                         # Create task
-                        task = asyncio.create_task(download_chunk(chunk_cid, chunk_path, chunk))
+                        task = asyncio.create_task(
+                            download_chunk(chunk_cid, chunk_path, chunk)
+                        )
                         download_tasks.append(task)
-                    
+
                     # Process downloads as they complete
                     downloaded_shares = []
                     share_indexes = []
-                    
+
                     for done_task in asyncio.as_completed(download_tasks):
                         result = await done_task
-                        
+
                         if result["success"]:
                             downloaded_shares.append(result["data"])
                             share_indexes.append(result["share_idx"])
-                            
+
                             # Once we have k chunks, cancel remaining downloads
                             if len(downloaded_shares) >= k:
                                 for task in download_tasks:
                                     if not task.done():
                                         task.cancel()
                                 break
-                    
+
                     # Check if we have enough chunks
                     if len(downloaded_shares) < k:
                         raise ValueError(
                             f"Failed to download enough chunks for original chunk {orig_idx}. "
                             f"Need {k}, but only downloaded {len(downloaded_shares)}."
                         )
-                    
+
                     # Reconstruct this chunk
                     decoder = zfec.Decoder(k, m)
-                    reconstructed_data = decoder.decode(downloaded_shares, share_indexes)
-                    
+                    reconstructed_data = decoder.decode(
+                        downloaded_shares, share_indexes
+                    )
+
                     if not isinstance(reconstructed_data, list):
                         raise TypeError(
                             f"Unexpected type from decoder: {type(reconstructed_data)}. Expected list of bytes."
                         )
-                    
+
                     # Calculate the actual size of this original chunk
                     is_last_chunk = orig_idx == max(chunks_by_original.keys())
                     original_chunk_size = total_original_size - orig_idx * chunk_size
                     if not is_last_chunk:
                         original_chunk_size = min(chunk_size, original_chunk_size)
-                    
+
                     # Recombine the sub-blocks
                     reconstructed_chunk = b""
                     total_bytes = 0
                     for sub_block in reconstructed_data:
-                        bytes_to_take = min(len(sub_block), original_chunk_size - total_bytes)
+                        bytes_to_take = min(
+                            len(sub_block), original_chunk_size - total_bytes
+                        )
                         if bytes_to_take <= 0:
                             break
-                        
+
                         reconstructed_chunk += sub_block[:bytes_to_take]
                         total_bytes += bytes_to_take
-                    
+
                     return reconstructed_chunk
-            
+
             # Create tasks for all original chunks and process them in parallel
             chunk_tasks = []
             for orig_idx in sorted(chunks_by_original.keys()):
                 chunk_tasks.append(
                     process_original_chunk(orig_idx, chunks_by_original[orig_idx])
                 )
-            
+
             # Wait for all chunks to be reconstructed
             reconstructed_chunks = await asyncio.gather(*chunk_tasks)
-            
+
             if verbose:
                 download_time = time.time() - start_time
                 print(f"Chunk reconstruction completed in {download_time:.2f} seconds")
