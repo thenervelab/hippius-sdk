@@ -790,7 +790,7 @@ async def handle_erasure_code(
     chunk_size,
     miner_ids,
     encrypt=None,
-    publish=False,
+    publish=True,
     verbose=True,
 ):
     """Handle the erasure-code command"""
@@ -2086,8 +2086,8 @@ examples:
   # Erasure code a file (Reed-Solomon)
   hippius erasure-code large_file.mp4 --k 3 --m 5
   
-  # Erasure code and publish to global IPFS network
-  hippius erasure-code large_file.avi --publish
+  # Erasure code without publishing to global IPFS network
+  hippius erasure-code large_file.avi --no-publish
   
   # Reconstruct an erasure-coded file
   hippius reconstruct QmMetadataHash reconstructed_file.mp4
@@ -2326,9 +2326,9 @@ examples:
         "--no-encrypt", action="store_true", help="Do not encrypt the file"
     )
     erasure_code_parser.add_argument(
-        "--publish",
+        "--no-publish",
         action="store_true",
-        help="Upload and publish the erasure-coded file to the global IPFS network",
+        help="Do not upload and publish the erasure-coded file to the global IPFS network",
     )
     erasure_code_parser.add_argument(
         "--verbose", action="store_true", help="Enable verbose output", default=True
@@ -2687,7 +2687,7 @@ examples:
                 args.chunk_size,
                 miner_ids,
                 encrypt=args.encrypt,
-                publish=args.publish,
+                publish=not args.no_publish,
                 verbose=args.verbose,
             )
 
