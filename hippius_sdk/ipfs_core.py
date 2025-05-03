@@ -11,7 +11,9 @@ class AsyncIPFSClient:
     """
 
     def __init__(
-        self, api_url: str = "http://localhost:5001", gateway: str = "https://ipfs.io"
+        self,
+        api_url: str = "http://localhost:5001",
+        gateway: str = "https://get.hippius.network",
     ):
         # Handle multiaddr format
         if api_url and api_url.startswith("/"):
@@ -118,6 +120,25 @@ class AsyncIPFSClient:
         response = await self.client.post(f"{self.api_url}/api/v0/pin/add?arg={cid}")
         response.raise_for_status()
         return response.json()
+
+    async def unpin(self, cid: str) -> Dict[str, Any]:
+        """
+        Unpin content by CID.
+
+        Args:
+            cid: Content Identifier to unpin
+
+        Returns:
+            Response from the IPFS node
+        """
+        pin_ls_url = f"{self.api_url}/api/v0/pin/ls?arg={cid}"
+        pin_ls_response = await self.client.post(pin_ls_url)
+        pin_ls_response.raise_for_status()
+        response = await self.client.post(f"{self.api_url}/api/v0/pin/rm?arg={cid}")
+
+        response.raise_for_status()
+        result = response.json()
+        return result
 
     async def ls(self, cid: str) -> Dict[str, Any]:
         """

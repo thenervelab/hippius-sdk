@@ -35,7 +35,7 @@ client = HippiusClient()
 
 # Or specify custom endpoints
 client = HippiusClient(
-    ipfs_gateway="https://ipfs.io",                       # For downloads (default)
+    ipfs_gateway="https://get.hippius.network",                       # For downloads (default)
     ipfs_api_url="https://store.hippius.network",  # For uploads (default)
 )
 
@@ -396,7 +396,7 @@ The Hippius SDK includes a powerful command-line interface (CLI) that provides a
 hippius --help
 
 # Set global options
-hippius --gateway https://ipfs.io --api-url https://store.hippius.network --verbose
+hippius --gateway https://get.hippius.network --api-url https://store.hippius.network --verbose
 ```
 
 ### IPFS Operations
@@ -488,7 +488,7 @@ The `ec-files` command has been optimized for performance and can now handle lar
 The CLI automatically reads from your `.env` file for common settings:
 
 ```
-IPFS_GATEWAY=https://ipfs.io
+IPFS_GATEWAY=https://get.hippius.network
 IPFS_API_URL=https://store.hippius.network
 SUBSTRATE_URL=wss://rpc.hippius.network
 SUBSTRATE_SEED_PHRASE="your twelve word seed phrase..."
@@ -509,7 +509,7 @@ ipfs_client = IPFSClient()
 
 # Or specify custom endpoints
 ipfs_client = IPFSClient(
-    gateway="https://ipfs.io",                       # For downloads
+    gateway="https://get.hippius.network",                       # For downloads
     api_url="http://relay-fr.hippius.network:5001"   # For uploads
 )
 
@@ -579,7 +579,7 @@ hippius config list
 hippius config get ipfs gateway
 
 # Set a configuration value
-hippius config set ipfs gateway https://ipfs.io
+hippius config set ipfs gateway https://get.hippius.network
 
 # Import settings from your .env file
 hippius config import-env
@@ -595,7 +595,7 @@ The configuration is organized in the following sections:
 ```json
 {
   "ipfs": {
-    "gateway": "https://ipfs.io",
+    "gateway": "https://get.hippius.network",
     "api_url": "https://store.hippius.network",
     "local_ipfs": false
   },

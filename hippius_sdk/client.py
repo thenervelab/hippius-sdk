@@ -3,7 +3,7 @@ Main client for the Hippius SDK.
 """
 
 import base64
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import nacl.secret
 import nacl.utils
@@ -46,7 +46,9 @@ class HippiusClient:
         """
         # Load configuration values if not explicitly provided
         if ipfs_gateway is None:
-            ipfs_gateway = get_config_value("ipfs", "gateway", "https://ipfs.io")
+            ipfs_gateway = get_config_value(
+                "ipfs", "gateway", "https://get.hippius.network"
+            )
 
         if ipfs_api_url is None:
             ipfs_api_url = get_config_value(
@@ -201,7 +203,7 @@ class HippiusClient:
             cid, max_display_bytes, format_output, decrypt=decrypt
         )
 
-    def exists(self, cid: str) -> Dict[str, Any]:
+    async def exists(self, cid: str) -> Dict[str, Any]:
         """
         Check if a CID exists on IPFS.
 
@@ -215,9 +217,9 @@ class HippiusClient:
                 - formatted_cid: Formatted version of the CID
                 - gateway_url: URL to access the content if it exists
         """
-        return self.ipfs_client.exists(cid)
+        return await self.ipfs_client.exists(cid)
 
-    def pin(self, cid: str) -> Dict[str, Any]:
+    async def pin(self, cid: str) -> Dict[str, Any]:
         """
         Pin a CID to IPFS to keep it available.
 
@@ -231,7 +233,7 @@ class HippiusClient:
                 - formatted_cid: Formatted version of the CID
                 - message: Status message
         """
-        return self.ipfs_client.pin(cid)
+        return await self.ipfs_client.pin(cid)
 
     def format_cid(self, cid: str) -> str:
         """
@@ -336,7 +338,7 @@ class HippiusClient:
         temp_dir: str = None,
         max_retries: int = 3,
         verbose: bool = True,
-    ) -> str:
+    ) -> Dict:
         """
         Reconstruct a file from erasure-coded chunks using its metadata.
 
@@ -348,7 +350,7 @@ class HippiusClient:
             verbose: Whether to print progress information
 
         Returns:
-            str: Path to the reconstructed file
+            Dict: containing file reconstruction info.
 
         Raises:
             ValueError: If reconstruction fails
@@ -372,6 +374,7 @@ class HippiusClient:
         miner_ids: List[str] = None,
         max_retries: int = 3,
         verbose: bool = True,
+        progress_callback: Optional[Callable[[str, int, int], None]] = None,
     ) -> Dict[str, Any]:
         """
         Erasure code a file, upload the chunks to IPFS, and store in the Hippius marketplace.
@@ -387,6 +390,8 @@ class HippiusClient:
             miner_ids: List of specific miner IDs to use for storage
             max_retries: Maximum number of retry attempts
             verbose: Whether to print progress information
+            progress_callback: Optional callback function for progress updates
+                            Function receives (stage_name, current, total)
 
         Returns:
             dict: Result including metadata CID and transaction hash
@@ -405,4 +410,47 @@ class HippiusClient:
             substrate_client=self.substrate_client,
             max_retries=max_retries,
             verbose=verbose,
+            progress_callback=progress_callback,
+        )
+
+    async def delete_file(
+        self, cid: str, cancel_from_blockchain: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Delete a file from IPFS and optionally cancel its storage on the blockchain.
+
+        Args:
+            cid: Content Identifier (CID) of the file to delete
+            cancel_from_blockchain: Whether to also cancel the storage request from the blockchain
+
+        Returns:
+            Dict containing the result of the operation
+
+        Raises:
+            RuntimeError: If deletion fails completely
+        """
+        return await self.ipfs_client.delete_file(cid, cancel_from_blockchain)
+
+    async def delete_ec_file(
+        self,
+        metadata_cid: str,
+        cancel_from_blockchain: bool = True,
+        parallel_limit: int = 20,
+    ) -> Dict[str, Any]:
+        """
+        Delete an erasure-coded file, including all its chunks in parallel.
+
+        Args:
+            metadata_cid: CID of the metadata file for the erasure-coded file
+            cancel_from_blockchain: Whether to cancel storage from blockchain
+            parallel_limit: Maximum number of concurrent deletion operations
+
+        Returns:
+            Dict containing the result of the operation
+
+        Raises:
+            RuntimeError: If deletion fails completely
+        """
+        return await self.ipfs_client.delete_ec_file(
+            metadata_cid, cancel_from_blockchain, parallel_limit
         )

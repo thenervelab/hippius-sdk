@@ -30,6 +30,7 @@ cryptography = "^44.0.0"
 pyperclip = {version = "^1.8.2", optional = true}
 zfec = "^1.5.3"
 mnemonic = "^0.20"
+rich = "^14.0.0"
 
 [tool.poetry.extras]
 clipboard = ["pyperclip"]

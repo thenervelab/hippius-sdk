@@ -213,7 +213,10 @@ async def test_exists_true(async_ipfs_client, mock_httpx_client):
 
     # Verify the correct endpoint was called
     mock_httpx_client.head.assert_called_once()
-    assert mock_httpx_client.head.call_args[0][0] == f"https://ipfs.io/ipfs/{cid}"
+    assert (
+        mock_httpx_client.head.call_args[0][0]
+        == f"https://get.hippius.network/ipfs/{cid}"
+    )
 
     # Check the result
     assert result is True
@@ -231,7 +234,10 @@ async def test_exists_false(async_ipfs_client, mock_httpx_client):
 
     # Verify the correct endpoint was called
     mock_httpx_client.head.assert_called_once()
-    assert mock_httpx_client.head.call_args[0][0] == f"https://ipfs.io/ipfs/{cid}"
+    assert (
+        mock_httpx_client.head.call_args[0][0]
+        == f"https://get.hippius.network/ipfs/{cid}"
+    )
 
     # Check the result
     assert result is False

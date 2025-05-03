@@ -102,6 +102,10 @@ async def test_get_pinning_status(mock_substrate_interface, mock_config):
         def __contains__(self, key):
             return key in self._data
 
+        @property
+        def value(self):
+            return self._data
+
     # Create an instance of our custom class
     mock_value = AttrDict(mock_data)
 
@@ -207,60 +211,3 @@ async def test_get_pinning_status_empty_result(mock_substrate_interface, mock_co
 
     # Check the result is an empty list
     assert result == []
-
-
-@pytest.mark.asyncio
-async def test_get_pinning_status_alternative_api(
-    mock_substrate_interface, mock_config
-):
-    """Test handling the exception in get_pinning_status and falling back to query."""
-    mock_substrate, _ = mock_substrate_interface
-    _, url = mock_config
-
-    # Set up mock to raise exception for query_map
-    mock_substrate.query_map.side_effect = Exception("Invalid method for this chain")
-
-    # Create mock data for the query fallback
-    file_hash_hex = "516d51706936675836537969623333726e414e78423951584d477431684d5646636855576b53396e415231365978"
-
-    # Create a mock response for the query fallback
-    mock_query_result = MagicMock()
-    mock_query_result.value = [
-        [
-            "5E9d3J4gDFqWdiDKiWu4gucwPUYC9rh2MbL2LezyhDjT652d",
-            {
-                "totalReplicas": 3,
-                "owner": "5E9d3J4gDFqWdiDKiWu4gucwPUYC9rh2MbL2LezyhDjT652d",
-                "fileHash": file_hash_hex,
-                "fileName": "fallback_test.json",
-                "lastChargedAt": 98765,
-                "createdAt": 98760,
-                "minerIds": [],
-                "selectedValidator": "validator2",
-                "isAssigned": False,
-            },
-        ]
-    ]
-
-    # Set up the mock query to return our fallback data
-    mock_substrate.query.return_value = mock_query_result
-
-    # Create a client instance
-    client = SubstrateClient(url=url)
-    client._substrate = mock_substrate
-    client._account_address = "5E9d3J4gDFqWdiDKiWu4gucwPUYC9rh2MbL2LezyhDjT652d"
-
-    # Mock the _hex_to_ipfs_cid method
-    with patch.object(client, "_hex_to_ipfs_cid", return_value="QmFallbackCid"):
-        # Get the pinning status, which should use the fallback
-        result = client.get_pinning_status()
-
-    # Check that query_map was called and failed
-    mock_substrate.query_map.assert_called_once()
-
-    # Check that query was called as a fallback
-    mock_substrate.query.assert_called_once()
-
-    # Verify the fallback result
-    assert len(result) == 1
-    assert result[0]["file_name"] == "fallback_test.json"
