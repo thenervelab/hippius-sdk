@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import pprint
 import tempfile
 import time
 import uuid
@@ -19,7 +20,11 @@ from hippius_sdk.config import (
     set_active_account,
     set_seed_phrase,
 )
-from hippius_sdk.utils import hex_to_ipfs_cid
+from hippius_sdk.utils import (
+    format_size,
+    hex_to_ipfs_cid,
+    initialize_substrate_connection,
+)
 
 # Load environment variables
 load_dotenv()
@@ -128,15 +133,11 @@ class SubstrateClient:
                 print("Connected successfully (read-only mode, no account)")
                 self._read_only = True
 
-            return True
-
         except Exception as e:
             print(f"Failed to connect to Substrate node: {e}")
             raise ConnectionError(
                 f"Could not connect to Substrate node at {self.url}: {e}"
             )
-
-        return False
 
     def _ensure_keypair(self) -> bool:
         """
@@ -201,7 +202,7 @@ class SubstrateClient:
 
         Args:
             name: Name for the new account
-            encode: Whether to encrypt the seed phrase with a password
+            encode: Whether to encrypt the seed phrase with a password.
             password: Optional password for encryption (will prompt if not provided and encode=True)
 
         Returns:
@@ -431,9 +432,9 @@ class SubstrateClient:
             account_info["storage_stats"] = {
                 "files": total_files,
                 "bytes_used": total_size_bytes,
-                "size_formatted": self._format_size(total_size_bytes)
+                "size_formatted": format_size(total_size_bytes)
                 if total_size_bytes
-                else "0 B",
+                else "0 bytes",
             }
 
             # Include file list if requested
@@ -463,17 +464,6 @@ class SubstrateClient:
 
         return account_info
 
-    def _format_size(self, size_bytes: int) -> str:
-        """Format file size in human-readable format"""
-        if size_bytes < 1024:
-            return f"{size_bytes} B"
-        elif size_bytes < 1024 * 1024:
-            return f"{size_bytes / 1024:.2f} KB"
-        elif size_bytes < 1024 * 1024 * 1024:
-            return f"{size_bytes / (1024 * 1024):.2f} MB"
-        else:
-            return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
-
     def set_seed_phrase(self, seed_phrase: str) -> None:
         """
         Set or update the seed phrase used for signing transactions.
@@ -495,7 +485,6 @@ class SubstrateClient:
             print(f"Keypair created for account: {self._keypair.ss58_address}")
         except Exception as e:
             print(f"Warning: Could not create keypair from seed phrase: {e}")
-            print(f"Keypair will be created when needed")
 
     async def storage_request(
         self, files: List[Union[FileInput, Dict[str, str]]], miner_ids: List[str] = None
@@ -539,147 +528,119 @@ class SubstrateClient:
                 file_inputs.append(file)
 
         # Print what is being submitted
-        print(f"Preparing storage request for {len(file_inputs)} files:")
         for file in file_inputs:
             print(f"  - {file.file_name}: {file.file_hash}")
 
-        if miner_ids:
-            print(f"Targeted miners: {', '.join(miner_ids)}")
-        else:
-            print("No specific miners targeted (using default selection)")
+        # Initialize Substrate connection
+        substrate, _ = initialize_substrate_connection(self)
+
+        # Step 1: Create a JSON file with the list of files to pin
+        file_list = []
+        for file_input in file_inputs:
+            file_list.append(
+                {"filename": file_input.file_name, "cid": file_input.file_hash}
+            )
+
+        # Convert to JSON
+        files_json = json.dumps(file_list, indent=2)
+        print(f"Created file list with {len(file_list)} entries")
+
+        # Step 2: Upload the JSON file to IPFS
+        # Defer import to avoid circular imports
+        from hippius_sdk.ipfs import IPFSClient
+
+        ipfs_client = IPFSClient()
+
+        # Create a temporary file with the JSON content
+        with tempfile.NamedTemporaryFile(
+            mode="w+", suffix=".json", delete=False
+        ) as temp_file:
+            temp_file_path = temp_file.name
+            temp_file.write(files_json)
 
         try:
-            # Initialize Substrate connection
-            if not hasattr(self, "_substrate") or self._substrate is None:
-                print("Initializing Substrate connection...")
-                self._substrate = SubstrateInterface(
-                    url=self.url,
-                    ss58_format=42,  # Substrate default
-                    type_registry_preset="substrate-node-template",
-                )
-                print(f"Connected to Substrate node at {self.url}")
+            print("Uploading file list to IPFS...")
+            upload_result = await ipfs_client.upload_file(temp_file_path)
+            files_list_cid = upload_result["cid"]
+            print(f"File list uploaded to IPFS with CID: {files_list_cid}")
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
 
-            # Step 1: Create a JSON file with the list of files to pin
-            file_list = []
-            for file_input in file_inputs:
-                file_list.append(
-                    {"filename": file_input.file_name, "cid": file_input.file_hash}
-                )
-
-            # Convert to JSON
-            files_json = json.dumps(file_list, indent=2)
-            print(f"Created file list with {len(file_list)} entries")
-
-            # Step 2: Upload the JSON file to IPFS
-            # Defer import to avoid circular imports
-            from hippius_sdk.ipfs import IPFSClient
-
-            ipfs_client = IPFSClient()
-
-            # Create a temporary file with the JSON content
-            with tempfile.NamedTemporaryFile(
-                mode="w+", suffix=".json", delete=False
-            ) as temp_file:
-                temp_file_path = temp_file.name
-                temp_file.write(files_json)
-
-            try:
-                print("Uploading file list to IPFS...")
-                upload_result = await ipfs_client.upload_file(temp_file_path)
-                files_list_cid = upload_result["cid"]
-                print(f"File list uploaded to IPFS with CID: {files_list_cid}")
-            finally:
-                # Clean up the temporary file
-                if os.path.exists(temp_file_path):
-                    os.remove(temp_file_path)
-
-            # Step 3: Submit the CID of the JSON file to the chain
-            # Create call parameters with the CID of the JSON file
-            call_params = {
-                "files_input": [
-                    {
-                        "file_hash": files_list_cid,
-                        "file_name": f"files_list_{uuid.uuid4()}",  # Generate a unique ID
-                    }
-                ],
-                "miner_ids": miner_ids if miner_ids else [],
-            }
-
-            # Create the call to the marketplace
-            print(f"Call parameters: {json.dumps(call_params, indent=2)}")
-            try:
-                call = self._substrate.compose_call(
-                    call_module="Marketplace",
-                    call_function="storage_request",
-                    call_params=call_params,
-                )
-            except Exception as e:
-                print(f"Warning: Error composing call: {e}")
-                print("Attempting to use IpfsPallet.storeFile instead...")
-
-                # Try with IpfsPallet.storeFile as an alternative
-                alt_call_params = {
-                    "fileHash": files_list_cid,
-                    "fileName": f"files_list_{uuid.uuid4()}",  # Generate a unique ID
+        # Step 3: Submit the CID of the JSON file to the chain
+        # Create call parameters with the CID of the JSON file
+        call_params = {
+            "files_input": [
+                {
+                    "file_hash": files_list_cid,
+                    "file_name": f"files_list_{uuid.uuid4()}",  # Generate a unique ID
                 }
-                call = self._substrate.compose_call(
-                    call_module="IpfsPallet",
-                    call_function="storeFile",
-                    call_params=alt_call_params,
-                )
+            ],
+            "miner_ids": miner_ids if miner_ids else [],
+        }
 
-            # Get payment info to estimate the fee
-            payment_info = self._substrate.get_payment_info(
-                call=call, keypair=self._keypair
+        # Create the call to the marketplace
+        try:
+            call = self._substrate.compose_call(
+                call_module="Marketplace",
+                call_function="storage_request",
+                call_params=call_params,
             )
-
-            print(f"Payment info: {json.dumps(payment_info, indent=2)}")
-
-            # Convert partialFee from Substrate (10^18 units) to a more readable format
-            estimated_fee = payment_info.get("partialFee", 0)
-            estimated_fee_formatted = (
-                float(estimated_fee) / 1_000_000_000_000_000_000 if estimated_fee else 0
-            )
-            print(
-                f"Estimated transaction fee: {estimated_fee} ({estimated_fee_formatted:.10f} tokens)"
-            )
-
-            # Create a signed extrinsic
-            extrinsic = self._substrate.create_signed_extrinsic(
-                call=call, keypair=self._keypair
-            )
-
-            print(
-                f"Submitting transaction to store {len(file_list)} files via file list CID..."
-            )
-
-            # Submit the transaction
-            response = self._substrate.submit_extrinsic(
-                extrinsic=extrinsic, wait_for_inclusion=True
-            )
-
-            # Get the transaction hash
-            tx_hash = response.extrinsic_hash
-
-            print(f"Transaction submitted successfully!")
-            print(f"Transaction hash: {tx_hash}")
-            print(f"File list CID: {files_list_cid}")
-            print(f"All {len(file_list)} files will be stored through this request")
-
-            return tx_hash
-
-        except ValueError as e:
-            # Handle configuration errors
-            print(f"Error: {e}")
-            raise
         except Exception as e:
-            print(f"Error interacting with Substrate: {e}")
-            raise
+            print(f"Warning: Error composing call: {e}")
+            print("Attempting to use IpfsPallet.storeFile instead...")
 
-        return "simulated-tx-hash"
+            # Try with IpfsPallet.storeFile as an alternative
+            alt_call_params = {
+                "fileHash": files_list_cid,
+                "fileName": f"files_list_{uuid.uuid4()}",  # Generate a unique ID
+            }
+            call = self._substrate.compose_call(
+                call_module="IpfsPallet",
+                call_function="storeFile",
+                call_params=alt_call_params,
+            )
+
+        # Get payment info to estimate the fee
+        payment_info = self._substrate.get_payment_info(
+            call=call, keypair=self._keypair
+        )
+
+        print(f"Payment info: {json.dumps(payment_info, indent=2)}")
+
+        # Convert partialFee from Substrate (10^18 units) to a more readable format
+        estimated_fee = payment_info.get("partialFee", 0)
+        estimated_fee_formatted = (
+            float(estimated_fee) / 1_000_000_000_000_000_000 if estimated_fee else 0
+        )
+        print(
+            f"Estimated transaction fee: {estimated_fee} ({estimated_fee_formatted:.10f} tokens)"
+        )
+
+        # Create a signed extrinsic
+        extrinsic = self._substrate.create_signed_extrinsic(
+            call=call, keypair=self._keypair
+        )
+
+        print(
+            f"Submitting transaction to store {len(file_list)} files via file list CID..."
+        )
+
+        # Submit the transaction
+        response = self._substrate.submit_extrinsic(
+            extrinsic=extrinsic, wait_for_inclusion=True
+        )
+
+        # Get the transaction hash
+        tx_hash = response.extrinsic_hash
+
+        return tx_hash
 
     async def store_cid(
-        self, cid: str, filename: str = None, metadata: Optional[Dict[str, Any]] = None
+        self,
+        cid: str,
+        filename: str = None,
     ) -> str:
         """
         Store a CID on the blockchain.
@@ -687,65 +648,12 @@ class SubstrateClient:
         Args:
             cid: Content Identifier (CID) to store
             filename: Original filename (optional)
-            metadata: Additional metadata to store with the CID
 
         Returns:
             str: Transaction hash
         """
         file_input = FileInput(file_hash=cid, file_name=filename or "unnamed_file")
         return await self.storage_request([file_input])
-
-    def get_cid_metadata(self, cid: str) -> Dict[str, Any]:
-        """
-        Retrieve metadata for a CID from the blockchain.
-
-        Args:
-            cid: Content Identifier (CID) to query
-
-        Returns:
-            Dict[str, Any]: Metadata associated with the CID
-        """
-        raise NotImplementedError("Substrate functionality is not implemented yet.")
-
-    def get_account_cids(self, account_address: str) -> List[str]:
-        """
-        Get all CIDs associated with an account.
-
-        Args:
-            account_address: Substrate account address
-
-        Returns:
-            List[str]: List of CIDs owned by the account
-        """
-        raise NotImplementedError("Substrate functionality is not implemented yet.")
-
-    def delete_cid(self, cid: str) -> str:
-        """
-        Delete a CID from the blockchain (mark as removed).
-
-        Args:
-            cid: Content Identifier (CID) to delete
-
-        Returns:
-            str: Transaction hash
-        """
-        # This requires a keypair for signing
-        if not self._ensure_keypair():
-            raise ValueError("Seed phrase must be set before making transactions")
-
-        raise NotImplementedError("Substrate functionality is not implemented yet.")
-
-    def get_storage_fee(self, file_size_mb: float) -> float:
-        """
-        Get the estimated storage fee for a file of given size.
-
-        Args:
-            file_size_mb: File size in megabytes
-
-        Returns:
-            float: Estimated fee in native tokens
-        """
-        raise NotImplementedError("Substrate functionality is not implemented yet.")
 
     async def get_account_balance(
         self, account_address: Optional[str] = None
@@ -760,30 +668,17 @@ class SubstrateClient:
             Dict[str, float]: Account balances (free, reserved, total)
         """
         try:
-            # Initialize Substrate connection if not already connected
-            if not hasattr(self, "_substrate") or self._substrate is None:
-                print("Initializing Substrate connection...")
-                self._substrate = SubstrateInterface(
-                    url=self.url,
-                    ss58_format=42,  # Substrate default
-                    type_registry_preset="substrate-node-template",
-                )
-                print(f"Connected to Substrate node at {self.url}")
+            # Initialize Substrate connection and get account address
+            substrate, derived_address = initialize_substrate_connection(self)
 
-            # Use provided account address or default to keypair/configured address
+            # Use provided account address or the one derived from initialization
             if not account_address:
-                if self._account_address:
-                    account_address = self._account_address
-                    print(f"Using account address: {account_address}")
+                if derived_address:
+                    account_address = derived_address
                 else:
-                    # Try to get the address from the keypair (requires seed phrase)
-                    if not self._ensure_keypair():
-                        raise ValueError("No account address available")
-                    account_address = self._keypair.ss58_address
-                    print(f"Using keypair address: {account_address}")
+                    raise ValueError("No account address available")
 
             # Query the blockchain for account balance
-            print(f"Querying balance for account: {account_address}")
             result = self._substrate.query(
                 module="System",
                 storage_function="Account",
@@ -793,7 +688,6 @@ class SubstrateClient:
             # If account exists, extract the balance information
             if result.value:
                 data = result.value
-                print(data)
                 # Extract balance components
                 free_balance = data.get("data", {}).get("free", 0)
                 reserved_balance = data.get("data", {}).get("reserved", 0)
@@ -821,7 +715,6 @@ class SubstrateClient:
                     },
                 }
             else:
-                print(f"No account data found for: {account_address}")
                 return {
                     "free": 0.0,
                     "reserved": 0.0,
@@ -831,9 +724,7 @@ class SubstrateClient:
                 }
 
         except Exception as e:
-            error_msg = f"Error querying account balance: {str(e)}"
-            print(error_msg)
-            raise ValueError(error_msg)
+            raise ValueError(f"Error querying account balance: {str(e)}")
 
     async def watch_account_balance(
         self, account_address: Optional[str] = None, interval: int = 5
@@ -857,10 +748,6 @@ class SubstrateClient:
                     if not self._ensure_keypair():
                         raise ValueError("No account address available")
                     account_address = self._keypair.ss58_address
-
-            print(f"Watching balance for account: {account_address}")
-            print(f"Updates every {interval} seconds. Press Ctrl+C to stop.")
-            print("-" * 80)
 
             # Keep track of previous balance to show changes
             previous_balance = None
@@ -942,27 +829,15 @@ class SubstrateClient:
             ValueError: If account has no credits
         """
         try:
-            # Initialize Substrate connection if not already connected
-            if not hasattr(self, "_substrate") or self._substrate is None:
-                print("Initializing Substrate connection...")
-                self._substrate = SubstrateInterface(
-                    url=self.url,
-                    ss58_format=42,  # Substrate default
-                    type_registry_preset="substrate-node-template",
-                )
-                print(f"Connected to Substrate node at {self.url}")
+            # Initialize Substrate connection and get account address
+            substrate, derived_address = initialize_substrate_connection(self)
 
-            # Use provided account address or default to keypair/configured address
+            # Use provided account address or the one derived from initialization
             if not account_address:
-                if self._account_address:
-                    account_address = self._account_address
-                    print(f"Using account address: {account_address}")
+                if derived_address:
+                    account_address = derived_address
                 else:
-                    # Try to get the address from the keypair (requires seed phrase)
-                    if not self._ensure_keypair():
-                        raise ValueError("No account address available")
-                    account_address = self._keypair.ss58_address
-                    print(f"Using keypair address: {account_address}")
+                    raise ValueError("No account address available")
 
             # Query the blockchain for free credits
             print(f"Querying free credits for account: {account_address}")
@@ -1006,30 +881,17 @@ class SubstrateClient:
             ValueError: If query fails or no files found
         """
         try:
-            # Initialize Substrate connection if not already connected
-            if not hasattr(self, "_substrate") or self._substrate is None:
-                print("Initializing Substrate connection...")
-                self._substrate = SubstrateInterface(
-                    url=self.url,
-                    ss58_format=42,  # Substrate default
-                    type_registry_preset="substrate-node-template",
-                )
-                print(f"Connected to Substrate node at {self.url}")
+            # Initialize Substrate connection and get account address
+            substrate, derived_address = initialize_substrate_connection(self)
 
-            # Use provided account address or default to keypair/configured address
+            # Use provided account address or the one derived from initialization
             if not account_address:
-                if self._account_address:
-                    account_address = self._account_address
-                    print(f"Using account address: {account_address}")
+                if derived_address:
+                    account_address = derived_address
                 else:
-                    # Try to get the address from the keypair (requires seed phrase)
-                    if not self._ensure_keypair():
-                        raise ValueError("No account address available")
-                    account_address = self._keypair.ss58_address
-                    print(f"Using keypair address: {account_address}")
+                    raise ValueError("No account address available")
 
             # Query the blockchain for user file hashes
-            print(f"Querying file hashes for account: {account_address}")
             result = self._substrate.query(
                 module="Marketplace",
                 storage_function="UserFileHashes",
@@ -1040,16 +902,12 @@ class SubstrateClient:
             if result.value:
                 # The result is already a list of bytes, convert each to string
                 file_hashes = [cid.hex() for cid in result.value]
-                print(f"Found {len(file_hashes)} files stored by this account")
                 return file_hashes
             else:
-                print(f"No files found for account: {account_address}")
                 return []
 
         except Exception as e:
-            error_msg = f"Error querying user file hashes: {str(e)}"
-            print(error_msg)
-            raise ValueError(error_msg)
+            raise ValueError(f"Error querying user file hashes: {str(e)}")
 
     async def get_user_files(
         self,
@@ -1074,7 +932,6 @@ class SubstrateClient:
                     "file_hash": str,         # The IPFS CID of the file
                     "file_name": str,         # The name of the file
                     "miner_ids": List[str],   # List of miner IDs that have pinned the file
-                    "miner_ids_full": List[str], # Complete list of miner IDs (if truncated)
                     "miner_count": int,       # Total number of miners
                     "file_size": int,         # Size of the file in bytes
                     "size_formatted": str     # Human-readable file size
@@ -1108,90 +965,37 @@ class SubstrateClient:
             ValueError: If query fails or profile cannot be retrieved
         """
         try:
-            # Initialize Substrate connection if not already connected
-            if not hasattr(self, "_substrate") or self._substrate is None:
-                print("Initializing Substrate connection...")
-                self._substrate = SubstrateInterface(
-                    url=self.url,
-                    ss58_format=42,  # Substrate default
-                    type_registry_preset="substrate-node-template",
-                )
-                print(f"Connected to Substrate node at {self.url}")
+            # Initialize Substrate connection and get account address
+            substrate, derived_address = initialize_substrate_connection(self)
 
-            # Use provided account address or default to keypair/configured address
+            # Use provided account address or the one derived from initialization
             if not account_address:
-                if self._account_address:
-                    account_address = self._account_address
-                    print(f"Using account address: {account_address}")
+                if derived_address:
+                    account_address = derived_address
                 else:
-                    # Try to get the address from the keypair (requires seed phrase)
-                    if not self._ensure_keypair():
-                        raise ValueError("No account address available")
-                    account_address = self._keypair.ss58_address
-                    print(f"Using keypair address: {account_address}")
+                    raise ValueError("No account address available")
 
             # Query the blockchain for the user profile CID
-            print(f"Querying user profile for account: {account_address}")
-            result = self._substrate.query(
+            profile_hex_cid = self._substrate.query(
                 module="IpfsPallet",
                 storage_function="UserProfile",
                 params=[account_address],
-            )
+            ).value
 
-            # Check if a profile was found
-            if not result.value:
-                print(f"No profile found for account: {account_address}")
+            if not profile_hex_cid:
                 return []
 
-            # The result is a hex-encoded IPFS CID
-            # Handle both cases: bytes (needs .hex()) and string (already hex)
-            if isinstance(result.value, bytes):
-                hex_cid = result.value.hex()
-            else:
-                # If it's already a string, use it directly
-                hex_cid = result.value
-
-                # Remove '0x' prefix if present
-                if hex_cid.startswith("0x"):
-                    hex_cid = hex_cid[2:]
-
-            print(f"Found user profile CID (hex): {hex_cid}")
-
-            # Convert the hex CID to a readable IPFS CID
-            profile_cid = self._hex_to_ipfs_cid(hex_cid)
-            print(f"Decoded IPFS CID: {profile_cid}")
+            profile_cid = self._hex_to_ipfs_cid(profile_hex_cid)
 
             # Fetch the profile JSON from IPFS
             # Defer import to avoid circular imports
             from hippius_sdk.ipfs import IPFSClient
 
             ipfs_client = IPFSClient()
-
-            print(f"Fetching user profile from IPFS: {profile_cid}")
-            profile_data = await ipfs_client.cat(profile_cid)
-
-            # Parse the JSON content
-            if not profile_data.get("is_text", False):
-                raise ValueError("User profile is not in text format")
-
-            profile_json = json.loads(profile_data.get("content", "{}"))
-            print(f"Successfully retrieved user profile")
-
-            # Extract the file list from the profile
-            # The profile might be either a dictionary with a 'files' key or a direct list of files
-            files = []
-            if isinstance(profile_json, dict):
-                files = profile_json.get("files", [])
-            elif isinstance(profile_json, list):
-                # The profile itself might be a list of files
-                files = profile_json
-            else:
-                print(f"Warning: Unexpected profile structure: {type(profile_json)}")
-
-            print(f"Found {len(files)} files in user profile")
-
-            # Process the files to match the expected format
+            profile_content = (await ipfs_client.cat(profile_cid))["content"]
+            files = json.loads(profile_content)
             processed_files = []
+
             for file in files:
                 # Make sure file is a dictionary
                 if not isinstance(file, dict):
@@ -1208,37 +1012,10 @@ class SubstrateClient:
                     try:
                         # Convert array of numbers to bytes, then to a string
                         file_hash = bytes(raw_file_hash).decode("utf-8")
-                    except Exception:
-                        pass
-                else:
-                    # Try different field names for the CID that might be in the profile
-                    file_hash = (
-                        file.get("cid")
-                        or file.get("hash")
-                        or file.get("fileHash")
-                        or raw_file_hash
-                    )
+                    except Exception as e:
+                        print(e)
 
                 # Handle file_name: could be an array of ASCII/UTF-8 code points
-                file_name = None
-                raw_file_name = file.get("file_name")
-                if isinstance(raw_file_name, list) and all(
-                    isinstance(n, int) for n in raw_file_name
-                ):
-                    try:
-                        # Convert array of numbers to bytes, then to a string
-                        file_name = bytes(raw_file_name).decode("utf-8")
-                    except Exception:
-                        pass
-                else:
-                    # Try different field names for the filename
-                    file_name = (
-                        file.get("filename")
-                        or file.get("name")
-                        or file.get("fileName")
-                        or raw_file_name
-                    )
-
                 # Try different field names for the size
                 file_size = (
                     file.get("size")
@@ -1249,25 +1026,18 @@ class SubstrateClient:
                 )
 
                 processed_file = {
+                    "cid": self._hex_to_ipfs_cid(file_hash),
                     "file_hash": file_hash,
-                    "file_name": file_name,
-                    # Add any other fields available in the profile
-                    "miner_ids": file.get(
-                        "miner_ids", []
-                    ),  # Try to get miners if available
+                    "file_name": file.get("file_name"),
+                    "miner_ids": file.get("miner_ids", []),
                     "miner_count": len(file.get("miner_ids", [])),  # Count the miners
                     "file_size": file_size or 0,
+                    "selected_validator": file["selected_validator"],
                 }
 
                 # Add formatted file size if available
                 if file_size:
-                    size_bytes = file_size
-                    if size_bytes >= 1024 * 1024:
-                        processed_file[
-                            "size_formatted"
-                        ] = f"{size_bytes / (1024 * 1024):.2f} MB"
-                    else:
-                        processed_file["size_formatted"] = f"{size_bytes / 1024:.2f} KB"
+                    processed_file["size_formatted"] = format_size(file_size)
                 else:
                     processed_file["size_formatted"] = "Unknown"
 
@@ -1276,9 +1046,7 @@ class SubstrateClient:
             return processed_files
 
         except Exception as e:
-            error_msg = f"Error retrieving user files from profile: {str(e)}"
-            print(error_msg)
-            raise ValueError(error_msg)
+            raise ValueError(f"Error retrieving user files from profile: {str(e)}")
 
     def get_pinning_status(
         self, account_address: Optional[str] = None
@@ -1311,165 +1079,48 @@ class SubstrateClient:
             ConnectionError: If connection to Substrate fails
             ValueError: If query fails or no requests found
         """
-        try:
-            # Initialize Substrate connection if not already connected
-            if not hasattr(self, "_substrate") or self._substrate is None:
-                print("Initializing Substrate connection...")
-                self._substrate = SubstrateInterface(
-                    url=self.url,
-                    ss58_format=42,  # Substrate default
-                    type_registry_preset="substrate-node-template",
-                )
-                print(f"Connected to Substrate node at {self.url}")
+        # Initialize Substrate connection and get account address
+        substrate, derived_address = initialize_substrate_connection(self)
 
-            # Use provided account address or default to keypair/configured address
-            if not account_address:
-                if self._account_address:
-                    account_address = self._account_address
-                    print(f"Using account address: {account_address}")
+        # Use provided account address or the one derived from initialization
+        if not account_address:
+            if derived_address:
+                account_address = derived_address
+            else:
+                raise ValueError("No account address available")
+
+        # Query the blockchain for storage requests
+        print(f"Querying storage requests for account: {account_address}")
+        storage_requests = []
+
+        # First, try with query_map which is more suitable for iterating over collections
+        result = self._substrate.query_map(
+            module="IpfsPallet",
+            storage_function="UserStorageRequests",
+            params=[account_address],
+        )
+
+        results_list = list(result)
+        for key, substrate_result in results_list:
+            # Extract file hash from key if possible
+            file_hash_hex = None
+            if key is not None:
+                if hasattr(key, "hex"):
+                    file_hash_hex = key.hex()
+                elif isinstance(key, bytes):
+                    file_hash_hex = key.hex()
+                elif isinstance(key, str) and key.startswith("0x"):
+                    file_hash_hex = key[2:]
                 else:
-                    # Try to get the address from the keypair (requires seed phrase)
-                    if not self._ensure_keypair():
-                        raise ValueError("No account address available")
-                    account_address = self._keypair.ss58_address
-                    print(f"Using keypair address: {account_address}")
+                    file_hash_hex = str(key)
 
-            # Query the blockchain for storage requests
-            print(f"Querying storage requests for account: {account_address}")
-            try:
-                # First, try with query_map which is more suitable for iterating over collections
-                result = self._substrate.query_map(
-                    module="IpfsPallet",
-                    storage_function="UserStorageRequests",
-                    params=[account_address],
-                )
-                results_list = list(result)
-            except Exception as e:
-                print(f"Error with query_map: {e}")
-                try:
-                    # Try again with query to double check storage function requirements
-                    result = self._substrate.query(
-                        module="IpfsPallet",
-                        storage_function="UserStorageRequests",
-                        params=[
-                            account_address,
-                            None,
-                        ],  # Try with a None second parameter
-                    )
+            if file_hash_hex:
+                file_cid = self._hex_to_ipfs_cid(file_hash_hex)
+                substrate_result.value["cid"] = file_cid
 
-                    # If the query returns a nested structure, extract it
-                    if result.value and isinstance(result.value, list):
-                        # Convert to a list format similar to query_map for processing
-                        results_list = []
-                        for item in result.value:
-                            if isinstance(item, list) and len(item) >= 2:
-                                key = item[0]
-                                value = item[1]
-                                results_list.append((key, value))
-                    else:
-                        # If it's not a nested structure, use a simpler format
-                        results_list = [(None, result.value)] if result.value else []
-                except Exception as e_inner:
-                    print(f"Error with fallback query: {e_inner}")
-                    # If both methods fail, return an empty list
-                    results_list = []
+            storage_requests.append(substrate_result.value)
 
-            # Process the storage requests
-            storage_requests = []
-
-            if not results_list:
-                print(f"No storage requests found for account: {account_address}")
-                return []
-
-            print(f"Found {len(results_list)} storage request entries")
-
-            for i, (key, value) in enumerate(results_list):
-                try:
-                    # For debugging, print raw data
-                    print(f"Entry {i+1}:")
-                    print(f"  Raw key: {key}, type: {type(key)}")
-                    print(f"  Raw value: {value}, type: {type(value)}")
-
-                    # Extract file hash from key if possible
-                    file_hash_hex = None
-                    if key is not None:
-                        if hasattr(key, "hex"):
-                            file_hash_hex = key.hex()
-                        elif isinstance(key, bytes):
-                            file_hash_hex = key.hex()
-                        elif isinstance(key, str) and key.startswith("0x"):
-                            file_hash_hex = key[2:]
-                        else:
-                            file_hash_hex = str(key)
-
-                    # Try to extract value data
-                    request_data = None
-                    if isinstance(value, dict):
-                        request_data = value
-                    elif hasattr(value, "get"):
-                        request_data = value
-                    elif hasattr(value, "__dict__"):
-                        # Convert object to dict
-                        request_data = {
-                            k: getattr(value, k)
-                            for k in dir(value)
-                            if not k.startswith("_") and not callable(getattr(value, k))
-                        }
-
-                    # If we can't extract data, just use value as string for debugging
-                    if request_data is None:
-                        request_data = {"raw_value": str(value)}
-
-                    # Create formatted request with available data
-                    formatted_request = {"raw_key": str(key), "raw_value": str(value)}
-
-                    # Directly extract file_name from the value if it's a dict-like object
-                    if hasattr(value, "get"):
-                        if value.get("file_name"):
-                            formatted_request["file_name"] = value.get("file_name")
-                        elif value.get("fileName"):
-                            formatted_request["file_name"] = value.get("fileName")
-
-                    # Add CID if we have it
-                    if file_hash_hex:
-                        file_cid = self._hex_to_ipfs_cid(file_hash_hex)
-                        formatted_request["cid"] = file_cid
-
-                    # Add other fields from request_data if available
-                    for source_field, target_field in [
-                        ("fileName", "file_name"),
-                        ("totalReplicas", "total_replicas"),
-                        ("owner", "owner"),
-                        ("createdAt", "created_at"),
-                        ("lastChargedAt", "last_charged_at"),
-                        ("minerIds", "miner_ids"),
-                        ("selectedValidator", "selected_validator"),
-                        ("isAssigned", "is_assigned"),
-                        # Add variants that might appear differently in the chain storage
-                        ("file_name", "file_name"),
-                        ("file_hash", "file_hash"),
-                        ("total_replicas", "total_replicas"),
-                    ]:
-                        if source_field in request_data:
-                            formatted_request[target_field] = request_data[source_field]
-                        # Fallback to attribute access for different types of objects
-                        elif hasattr(value, source_field):
-                            formatted_request[target_field] = getattr(
-                                value, source_field
-                            )
-
-                    storage_requests.append(formatted_request)
-
-                except Exception as e:
-                    print(f"Error processing request entry {i+1}: {e}")
-
-            print(f"Successfully processed {len(storage_requests)} storage requests")
-            return storage_requests
-
-        except Exception as e:
-            error_msg = f"Error querying storage requests: {str(e)}"
-            print(error_msg)
-            raise ValueError(error_msg)
+        return storage_requests
 
     def _hex_to_ipfs_cid(self, hex_string: str) -> str:
         """
@@ -1482,3 +1133,42 @@ class SubstrateClient:
             str: Regular IPFS CID
         """
         return hex_to_ipfs_cid(hex_string)
+
+    async def cancel_storage_request(self, cid: str) -> str:
+        """
+        Cancel a storage request by CID from the Hippius blockchain.
+
+        Args:
+            cid: Content Identifier (CID) of the file to cancel
+
+        Returns:
+            str: Transaction hash
+        """
+        if not self._ensure_keypair():
+            raise ValueError("Seed phrase must be set before making transactions")
+
+        substrate, _ = initialize_substrate_connection(self)
+
+        call = self._substrate.compose_call(
+            call_module="Marketplace",
+            call_function="storage_unpin_request",
+            call_params={
+                "file_hash": cid,
+            },
+        )
+
+        # Get payment info and show estimated transaction fee
+        payment_info = self._substrate.get_payment_info(
+            call=call, keypair=self._keypair
+        )
+        print(f"Payment info: {json.dumps(payment_info, indent=2)}")
+        fee = payment_info.get("partialFee", 0)
+        fee_tokens = fee / 10**12 if fee > 0 else 0
+        print(f"Estimated transaction fee: {fee} ({fee_tokens:.10f} tokens)")
+
+        extrinsic = self._substrate.create_signed_extrinsic(
+            call=call, keypair=self._keypair
+        )
+        response = self._substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
+        print(f"Transaction hash: {response.extrinsic_hash}")
+        return response.extrinsic_hash

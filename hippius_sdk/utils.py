@@ -4,8 +4,21 @@ Utility functions for the Hippius SDK.
 This module provides common utility functions used across the SDK.
 """
 
-import binascii
-from typing import Optional
+import base64
+import sys
+from typing import Any, Optional, Tuple
+
+# Import here to avoid circular imports when these functions are used from utils
+from substrateinterface import SubstrateInterface
+
+# Try importing PyNaCl for encryption functionality
+try:
+    import nacl.secret
+    import nacl.utils
+
+    ENCRYPTION_AVAILABLE = True
+except ImportError:
+    ENCRYPTION_AVAILABLE = False
 
 
 def format_size(size_bytes: int) -> str:
@@ -150,3 +163,72 @@ def format_cid(cid: str) -> str:
         str: Formatted CID string
     """
     return hex_to_ipfs_cid(cid)
+
+
+def generate_key() -> str:
+    """
+    Generate a random encryption key for NaCl secretbox.
+
+    Returns:
+        str: A base64-encoded encryption key that can be used with the SDK's
+             encryption functions or stored in configuration.
+
+    Raises:
+        SystemExit: If PyNaCl is not installed
+    """
+    if not ENCRYPTION_AVAILABLE:
+        print(
+            "Error: PyNaCl is required for encryption. Install it with: pip install pynacl"
+        )
+        sys.exit(1)
+
+    # Generate a random key
+    key = nacl.utils.random(nacl.secret.SecretBox.KEY_SIZE)
+
+    # Encode to base64 for storage and configuration
+    encoded_key = base64.b64encode(key).decode()
+
+    return encoded_key
+
+
+def initialize_substrate_connection(
+    self_obj: Any,
+) -> Tuple[SubstrateInterface, Optional[str]]:
+    """
+    Initialize a Substrate connection if not already connected and set up the account.
+    This function handles initializing the substrate connection and determining the account address
+    to use in blockchain operations.
+
+    Args:
+        self_obj: The object (usually SubstrateClient instance) with required attributes
+
+    Returns:
+        Tuple[SubstrateInterface, Optional[str]]: A tuple containing the Substrate interface
+        object and the account address (or None if no address is available)
+    """
+    # Initialize Substrate connection if not already connected
+    if not hasattr(self_obj, "_substrate") or self_obj._substrate is None:
+        print("Initializing Substrate connection...")
+        self_obj._substrate = SubstrateInterface(
+            url=self_obj.url,
+            ss58_format=42,  # Substrate default
+            type_registry_preset="substrate-node-template",
+        )
+        print(f"Connected to Substrate node at {self_obj.url}")
+
+    # Use provided account address or default to keypair/configured address
+    account_address = None
+    if hasattr(self_obj, "_account_address") and self_obj._account_address:
+        account_address = self_obj._account_address
+
+    elif hasattr(self_obj, "_ensure_keypair") and callable(self_obj._ensure_keypair):
+        # Try to get the address from the keypair (requires seed phrase)
+        if not self_obj._ensure_keypair():
+            # No keypair available, so we'll return None for account_address
+            return self_obj._substrate, None
+
+        if hasattr(self_obj, "_keypair") and self_obj._keypair:
+            account_address = self_obj._keypair.ss58_address
+            print(f"Using keypair address: {account_address}")
+
+    return self_obj._substrate, account_address

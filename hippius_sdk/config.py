@@ -23,7 +23,7 @@ CONFIG_DIR = os.path.expanduser("~/.hippius")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 DEFAULT_CONFIG = {
     "ipfs": {
-        "gateway": "https://ipfs.io",
+        "gateway": "https://get.hippius.network",
         "api_url": "https://store.hippius.network",
         "local_ipfs": False,
     },

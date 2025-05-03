@@ -10,7 +10,7 @@ import shutil
 import tempfile
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 import requests
@@ -66,7 +66,7 @@ class IPFSClient:
         """
         # Load configuration values if not explicitly provided
         if gateway is None:
-            gateway = get_config_value("ipfs", "gateway", "https://ipfs.io")
+            gateway = get_config_value("ipfs", "gateway", "https://get.hippius.network")
 
         if api_url is None:
             api_url = get_config_value(
@@ -84,11 +84,12 @@ class IPFSClient:
         self.base_url = api_url
 
         try:
-            self.client = AsyncIPFSClient(api_url)
+            self.client = AsyncIPFSClient(api_url=api_url, gateway=self.gateway)
         except httpx.ConnectError as e:
-            print(f"Warning: Could not connect to IPFS node at {api_url}: {e}")
-            # Try to connect to local IPFS daemon as fallback
-            self.client = AsyncIPFSClient()
+            print(
+                f"Warning: Falling back to local IPFS daemon, but still using gateway={self.gateway}"
+            )
+            self.client = AsyncIPFSClient(gateway=self.gateway)
 
         self._initialize_encryption(encrypt_by_default, encryption_key)
 
@@ -483,8 +484,6 @@ class IPFSClient:
 
             # Download the file with retry logic
             retries = 0
-            last_error = None
-
             while retries < max_retries:
                 try:
                     # Download the file
@@ -505,7 +504,6 @@ class IPFSClient:
 
                 except (requests.exceptions.RequestException, IOError) as e:
                     # Save the error and retry
-                    last_error = e
                     retries += 1
 
                     if retries < max_retries:
@@ -742,6 +740,7 @@ class IPFSClient:
         encrypt: Optional[bool] = None,
         max_retries: int = 3,
         verbose: bool = True,
+        progress_callback: Optional[Callable[[str, int, int], None]] = None,
     ) -> Dict[str, Any]:
         """
         Split a file using erasure coding, then upload the chunks to IPFS.
@@ -759,6 +758,8 @@ class IPFSClient:
             encrypt: Whether to encrypt the file before encoding (defaults to self.encrypt_by_default)
             max_retries: Maximum number of retry attempts for IPFS uploads
             verbose: Whether to print progress information
+            progress_callback: Optional callback function for progress updates
+                            Function receives (stage_name, current, total)
 
         Returns:
             dict: Metadata including the original file info and chunk information
@@ -977,6 +978,16 @@ class IPFSClient:
             # Create a semaphore to limit concurrent uploads
             semaphore = asyncio.Semaphore(batch_size)
 
+            # Track total uploads for progress reporting
+            total_chunks = len(all_chunk_info)
+
+            # Initialize progress tracking if callback provided
+            if progress_callback:
+                progress_callback("upload", 0, total_chunks)
+
+            if verbose:
+                print(f"Uploading {total_chunks} erasure-coded chunks to IPFS...")
+
             # Define upload task for a single chunk
             async def upload_chunk(chunk_info):
                 nonlocal chunk_uploads
@@ -988,13 +999,19 @@ class IPFSClient:
                         )
                         chunk_info["cid"] = chunk_cid
                         chunk_uploads += 1
+
+                        # Update progress through callback
+                        if progress_callback:
+                            progress_callback("upload", chunk_uploads, total_chunks)
+
                         if verbose and chunk_uploads % 10 == 0:
-                            print(
-                                f"  Uploaded {chunk_uploads}/{len(chunks) * m} chunks"
-                            )
+                            print(f"  Uploaded {chunk_uploads}/{total_chunks} chunks")
                         return chunk_info
                     except Exception as e:
-                        print(f"Error uploading chunk {chunk_info['name']}: {str(e)}")
+                        if verbose:
+                            print(
+                                f"Error uploading chunk {chunk_info['name']}: {str(e)}"
+                            )
                         return None
 
             # Create tasks for all chunk uploads
@@ -1042,7 +1059,7 @@ class IPFSClient:
         temp_dir: str = None,
         max_retries: int = 3,
         verbose: bool = True,
-    ) -> str:
+    ) -> Dict:
         """
         Reconstruct a file from erasure-coded chunks using its metadata.
 
@@ -1054,7 +1071,7 @@ class IPFSClient:
             verbose: Whether to print progress information
 
         Returns:
-            str: Path to the reconstructed file
+            Dict: containing file reconstruction info.
 
         Raises:
             ValueError: If reconstruction fails
@@ -1347,7 +1364,10 @@ class IPFSClient:
                 print(f"Reconstruction complete in {total_time:.2f} seconds!")
                 print(f"File saved to: {output_file}")
 
-            return output_file
+            return {
+                "output_path": output_file,
+                "size_bytes": size_processed,
+            }
 
         finally:
             # Clean up temporary directory if we created it
@@ -1365,6 +1385,7 @@ class IPFSClient:
         substrate_client=None,
         max_retries: int = 3,
         verbose: bool = True,
+        progress_callback: Optional[Callable[[str, int, int], None]] = None,
     ) -> Dict[str, Any]:
         """
         Erasure code a file, upload the chunks to IPFS, and store in the Hippius marketplace.
@@ -1381,6 +1402,8 @@ class IPFSClient:
             substrate_client: SubstrateClient to use (or None to create one)
             max_retries: Maximum number of retry attempts
             verbose: Whether to print progress information
+            progress_callback: Optional callback function for progress updates
+                            Function receives (stage_name, current, total)
 
         Returns:
             dict: Result including metadata CID and transaction hash
@@ -1398,6 +1421,7 @@ class IPFSClient:
             encrypt=encrypt,
             max_retries=max_retries,
             verbose=verbose,
+            progress_callback=progress_callback,
         )
 
         # Step 2: Create substrate client if we need it
@@ -1472,3 +1496,335 @@ class IPFSClient:
             print(f"Error storing files in marketplace: {str(e)}")
             # Return the metadata even if storage fails
             return {"metadata": metadata, "metadata_cid": metadata_cid, "error": str(e)}
+
+    async def delete_file(
+        self, cid: str, cancel_from_blockchain: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Delete a file from IPFS and optionally cancel its storage on the blockchain.
+
+        Args:
+            cid: Content Identifier (CID) of the file to delete
+            cancel_from_blockchain: Whether to also cancel the storage request from the blockchain
+
+        Returns:
+            Dict containing the result of the operation
+        """
+        result = {
+            "cid": cid,
+            "unpin_result": None,
+            "blockchain_result": None,
+            "timing": {
+                "start_time": time.time(),
+                "end_time": None,
+                "duration_seconds": None,
+            },
+        }
+
+        # First, unpin from IPFS
+        try:
+            print(f"Unpinning file from IPFS: {cid}")
+            try:
+                # Try to check if file exists in IPFS before unpinning
+                await self.exists(cid)
+            except Exception as exists_e:
+                print(f"ERROR: Error checking file existence: {exists_e}")
+
+            unpin_result = await self.client.unpin(cid)
+            result["unpin_result"] = unpin_result
+            print("Successfully unpinned from IPFS")
+        except Exception as e:
+            print(f"Warning: Failed to unpin file from IPFS: {e}")
+            raise
+
+        # Then, if requested, cancel from blockchain
+        if cancel_from_blockchain:
+            try:
+                # Create a substrate client
+                print(f"DEBUG: Creating SubstrateClient for blockchain cancellation...")
+                substrate_client = SubstrateClient()
+                print(
+                    f"DEBUG: Substrate client created with URL: {substrate_client.url}"
+                )
+                print(f"DEBUG: Calling cancel_storage_request with CID: {cid}")
+
+                tx_hash = await substrate_client.cancel_storage_request(cid)
+                print(f"DEBUG: Received transaction hash: {tx_hash}")
+
+                # Check the return value - special cases for when blockchain cancellation isn't available
+                if tx_hash == "no-blockchain-cancellation-available":
+                    print(
+                        "Blockchain cancellation not available, but IPFS unpinning was successful"
+                    )
+                    result["blockchain_result"] = {
+                        "status": "not_available",
+                        "message": "Blockchain cancellation not available, but IPFS unpinning was successful",
+                    }
+                elif tx_hash.startswith("ipfs-unpinned-only"):
+                    error_msg = tx_hash.replace("ipfs-unpinned-only-", "")
+                    print(
+                        f"IPFS unpinning successful, but blockchain cancellation failed: {error_msg}"
+                    )
+                    result["blockchain_result"] = {
+                        "status": "failed",
+                        "error": error_msg,
+                        "message": "IPFS unpinning successful, but blockchain cancellation failed",
+                    }
+                else:
+                    # Standard successful transaction
+                    result["blockchain_result"] = {
+                        "transaction_hash": tx_hash,
+                        "status": "success",
+                    }
+                    print(f"Successfully canceled storage request from blockchain")
+                    print(
+                        f"DEBUG: Blockchain cancellation succeeded with transaction hash: {tx_hash}"
+                    )
+            except Exception as e:
+                print(f"Warning: Failed to cancel storage from blockchain: {e}")
+                print(
+                    f"DEBUG: Blockchain cancellation exception: {type(e).__name__}: {str(e)}"
+                )
+                if hasattr(e, "__dict__"):
+                    print(f"DEBUG: Exception attributes: {e.__dict__}")
+                result["blockchain_error"] = str(e)
+
+        # Calculate timing
+        result["timing"]["end_time"] = time.time()
+        result["timing"]["duration_seconds"] = (
+            result["timing"]["end_time"] - result["timing"]["start_time"]
+        )
+
+        return result
+
+    async def delete_ec_file(
+        self,
+        metadata_cid: str,
+        cancel_from_blockchain: bool = True,
+        parallel_limit: int = 20,
+    ) -> Dict[str, Any]:
+        """
+        Delete an erasure-coded file, including all its chunks in parallel.
+
+        Args:
+            metadata_cid: CID of the metadata file for the erasure-coded file
+            cancel_from_blockchain: Whether to cancel storage from blockchain
+            parallel_limit: Maximum number of concurrent deletion operations
+
+        Returns:
+            Dict containing the result of the operation
+        """
+        result = {
+            "metadata_cid": metadata_cid,
+            "deleted_chunks": [],
+            "failed_chunks": [],
+            "blockchain_result": None,
+            "timing": {
+                "start_time": time.time(),
+                "end_time": None,
+                "duration_seconds": None,
+            },
+        }
+
+        # Track deletions for reporting
+        deleted_chunks_lock = asyncio.Lock()
+        failed_chunks_lock = asyncio.Lock()
+
+        # First, get the metadata to find all chunks
+        try:
+            print(f"Downloading metadata file (CID: {metadata_cid})...")
+            start_time = time.time()
+            metadata_content = await self.client.cat(metadata_cid)
+            metadata = json.loads(metadata_content.decode("utf-8"))
+            metadata_download_time = time.time() - start_time
+
+            print(f"Metadata downloaded in {metadata_download_time:.2f} seconds")
+
+            # Extract chunk CIDs
+            chunks = []
+            total_chunks = 0
+
+            for chunk_data in metadata.get("chunks", []):
+                for ec_chunk in chunk_data.get("ec_chunks", []):
+                    chunk_cid = ec_chunk.get("cid")
+                    if chunk_cid:
+                        chunks.append(chunk_cid)
+                        total_chunks += 1
+
+            print(f"Found {total_chunks} chunks to delete")
+
+            # Create a semaphore to limit concurrent operations
+            sem = asyncio.Semaphore(parallel_limit)
+
+            # Define the chunk deletion function
+            async def delete_chunk(chunk_cid):
+                async with sem:
+                    try:
+                        print(f"Unpinning chunk: {chunk_cid}")
+                        await self.client.unpin(chunk_cid)
+
+                        # Record success
+                        async with deleted_chunks_lock:
+                            result["deleted_chunks"].append(chunk_cid)
+
+                        # Cancel from blockchain if requested
+                        if cancel_from_blockchain:
+                            try:
+                                substrate_client = SubstrateClient()
+                                tx_hash = await substrate_client.cancel_storage_request(
+                                    chunk_cid
+                                )
+
+                                # Add blockchain result
+                                if "chunk_results" not in result["blockchain_result"]:
+                                    result["blockchain_result"] = {}
+                                    result["blockchain_result"]["chunk_results"] = []
+
+                                # Handle special return values from cancel_storage_request
+                                if tx_hash == "no-blockchain-cancellation-available":
+                                    result["blockchain_result"]["chunk_results"].append(
+                                        {
+                                            "cid": chunk_cid,
+                                            "status": "not_available",
+                                            "message": "Blockchain cancellation not available",
+                                        }
+                                    )
+                                elif tx_hash.startswith("ipfs-unpinned-only"):
+                                    error_msg = tx_hash.replace(
+                                        "ipfs-unpinned-only-", ""
+                                    )
+                                    result["blockchain_result"]["chunk_results"].append(
+                                        {
+                                            "cid": chunk_cid,
+                                            "status": "failed",
+                                            "error": error_msg,
+                                        }
+                                    )
+                                else:
+                                    # Standard successful transaction
+                                    result["blockchain_result"]["chunk_results"].append(
+                                        {
+                                            "cid": chunk_cid,
+                                            "transaction_hash": tx_hash,
+                                            "status": "success",
+                                        }
+                                    )
+                            except Exception as e:
+                                print(
+                                    f"Warning: Failed to cancel blockchain storage for chunk {chunk_cid}: {e}"
+                                )
+
+                                if "chunk_results" not in result["blockchain_result"]:
+                                    result["blockchain_result"] = {}
+                                    result["blockchain_result"]["chunk_results"] = []
+
+                                result["blockchain_result"]["chunk_results"].append(
+                                    {
+                                        "cid": chunk_cid,
+                                        "error": str(e),
+                                        "status": "failed",
+                                    }
+                                )
+
+                        return True
+                    except Exception as e:
+                        error_msg = f"Failed to delete chunk {chunk_cid}: {e}"
+                        print(f"Warning: {error_msg}")
+
+                        # Record failure
+                        async with failed_chunks_lock:
+                            result["failed_chunks"].append(
+                                {"cid": chunk_cid, "error": str(e)}
+                            )
+
+                        return False
+
+            # Start deleting chunks in parallel
+            print(
+                f"Starting parallel deletion of {total_chunks} chunks with max {parallel_limit} concurrent operations"
+            )
+            delete_tasks = [delete_chunk(cid) for cid in chunks]
+            await asyncio.gather(*delete_tasks)
+
+            # Delete the metadata file itself
+            print(f"Unpinning metadata file: {metadata_cid}")
+            response = await self.client.unpin(metadata_cid)
+
+            print(">>>", response)
+            raise SystemExit
+
+            # Cancel metadata from blockchain if requested
+            if cancel_from_blockchain:
+                try:
+                    print(f"Canceling blockchain storage request for metadata file...")
+                    substrate_client = SubstrateClient()
+                    tx_hash = await substrate_client.cancel_storage_request(
+                        metadata_cid
+                    )
+
+                    # Handle special return values from cancel_storage_request
+                    if tx_hash == "no-blockchain-cancellation-available":
+                        print(
+                            "Blockchain cancellation not available for metadata, but IPFS unpinning was successful"
+                        )
+                        result["blockchain_result"] = {
+                            "status": "not_available",
+                            "message": "Blockchain cancellation not available, but IPFS unpinning was successful",
+                        }
+                    elif tx_hash.startswith("ipfs-unpinned-only"):
+                        error_msg = tx_hash.replace("ipfs-unpinned-only-", "")
+                        print(
+                            f"IPFS unpinning successful, but blockchain cancellation failed for metadata: {error_msg}"
+                        )
+                        result["blockchain_result"] = {
+                            "status": "failed",
+                            "error": error_msg,
+                            "message": "IPFS unpinning successful, but blockchain cancellation failed",
+                        }
+                    else:
+                        # Standard successful transaction
+                        result["blockchain_result"] = {
+                            "metadata_transaction_hash": tx_hash,
+                            "status": "success",
+                        }
+                        print(
+                            f"Successfully canceled blockchain storage for metadata file"
+                        )
+                except Exception as e:
+                    print(
+                        f"Warning: Failed to cancel blockchain storage for metadata file: {e}"
+                    )
+
+                    if not result["blockchain_result"]:
+                        result["blockchain_result"] = {}
+
+                    result["blockchain_result"]["metadata_error"] = str(e)
+                    result["blockchain_result"]["status"] = "failed"
+
+            # Calculate and record timing information
+            end_time = time.time()
+            duration = end_time - result["timing"]["start_time"]
+
+            result["timing"]["end_time"] = end_time
+            result["timing"]["duration_seconds"] = duration
+
+            deleted_count = len(result["deleted_chunks"])
+            failed_count = len(result["failed_chunks"])
+
+            print(f"Deletion complete in {duration:.2f} seconds!")
+            print(f"Successfully deleted: {deleted_count}/{total_chunks} chunks")
+
+            if failed_count > 0:
+                print(f"Failed to delete: {failed_count}/{total_chunks} chunks")
+
+            return result
+        except Exception as e:
+            # Record end time even if there was an error
+            result["timing"]["end_time"] = time.time()
+            result["timing"]["duration_seconds"] = (
+                result["timing"]["end_time"] - result["timing"]["start_time"]
+            )
+
+            error_msg = f"Error deleting erasure-coded file: {e}"
+            print(f"Error: {error_msg}")
+            raise RuntimeError(error_msg)
