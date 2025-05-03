@@ -90,7 +90,6 @@ def test_init_with_seed_phrase(mock_substrate_interface, mock_keypair, mock_conf
     mock_keypair_class.create_from_mnemonic.assert_called_with(seed_phrase)
 
 
-
 def test_connect_with_exception(mock_substrate_interface, mock_keypair, mock_config):
     """Verify connection exceptions are handled properly.
 
@@ -282,4 +281,3 @@ async def test_store_cid(mock_substrate_interface, mock_keypair, mock_config):
         assert file_input.file_hash == "QmTestCID"
         assert file_input.file_name == "test.txt"
         assert tx_hash == "0xabcdef1234567890"
-
