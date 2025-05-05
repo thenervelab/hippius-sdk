@@ -11,6 +11,7 @@ A Python SDK and CLI for interacting with Hippius blockchain storage, designed s
 - Substrate blockchain integration for decentralized storage references
 - End-to-end encryption for secure file storage and retrieval
 - Built-in CLI tools for encryption key generation
+- Asynchronous API for efficient I/O operations
 
 ## Installation
 
@@ -28,6 +29,7 @@ poetry add hippius -E clipboard
 ## Quick Start
 
 ```python
+import asyncio
 from hippius_sdk import HippiusClient
 
 # Initialize the client with default connections to Hippius network
@@ -39,41 +41,46 @@ client = HippiusClient(
     ipfs_api_url="https://store.hippius.network",  # For uploads (default)
 )
 
-# Upload a file to IPFS
-result = client.upload_file("path/to/your/model.pt")
-print(f"File uploaded with CID: {result['cid']}")
-print(f"File size: {result['size_formatted']}")
+async def main():
+    # Upload a file to IPFS
+    result = await client.upload_file("path/to/your/model.pt")
+    print(f"File uploaded with CID: {result['cid']}")
+    print(f"File size: {result['size_formatted']}")
+    
+    # Download a file from IPFS
+    dl_result = await client.download_file(result['cid'], "path/to/save/model.pt")
+    print(f"Download successful in {dl_result['elapsed_seconds']} seconds")
+    print(f"File size: {dl_result['size_formatted']}")
+    
+    # Check if a file exists
+    exists_result = await client.exists(result['cid'])
+    print(f"File exists: {exists_result['exists']}")
+    print(f"Gateway URL: {exists_result['gateway_url']}")
+    
+    # Get file content directly
+    content_result = await client.cat(result['cid'])
+    if content_result['is_text']:
+        print(f"Content preview: {content_result['text_preview']}")
+    else:
+        print(f"Binary content (hex): {content_result['hex_preview']}")
+    print(f"Content size: {content_result['size_formatted']}")
+    
+    # Pin a file to ensure it stays on the network
+    pin_result = await client.pin(result['cid'])
+    print(f"Pinning successful: {pin_result['success']}")
+    print(f"Message: {pin_result['message']}")
+    
+    # Format a CID for display (non-async utility function)
+    formatted_cid = client.format_cid(result['cid'])
+    print(f"Formatted CID: {formatted_cid}")
+    
+    # Format file size for display (non-async utility function)
+    formatted_size = client.format_size(1024 * 1024)
+    print(f"Formatted size: {formatted_size}")  # Output: 1.00 MB
 
-# Download a file from IPFS
-dl_result = client.download_file(result['cid'], "path/to/save/model.pt")
-print(f"Download successful in {dl_result['elapsed_seconds']} seconds")
-print(f"File size: {dl_result['size_formatted']}")
-
-# Check if a file exists
-exists_result = client.exists(result['cid'])
-print(f"File exists: {exists_result['exists']}")
-print(f"Gateway URL: {exists_result['gateway_url']}")
-
-# Get file content directly
-content_result = client.cat(result['cid'])
-if content_result['is_text']:
-    print(f"Content preview: {content_result['text_preview']}")
-else:
-    print(f"Binary content (hex): {content_result['hex_preview']}")
-print(f"Content size: {content_result['size_formatted']}")
-
-# Pin a file to ensure it stays on the network
-pin_result = client.pin(result['cid'])
-print(f"Pinning successful: {pin_result['success']}")
-print(f"Message: {pin_result['message']}")
-
-# Format a CID for display
-formatted_cid = client.format_cid(result['cid'])
-print(f"Formatted CID: {formatted_cid}")
-
-# Format file size for display
-formatted_size = client.format_size(1024 * 1024)
-print(f"Formatted size: {formatted_size}")  # Output: 1.00 MB
+# Run the async function
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ## Encryption Support
@@ -104,6 +111,7 @@ The SDK can be configured to use encryption in several ways:
 2. Directly in code:
    ```python
    import base64
+   import asyncio
    from hippius_sdk import HippiusClient
    
    # Decode the base64 key
@@ -115,9 +123,13 @@ The SDK can be configured to use encryption in several ways:
        encryption_key=encryption_key
    )
    
-   # Or generate a new key programmatically
-   encoded_key = client.generate_encryption_key()
-   print(f"Generated key: {encoded_key}")
+   async def main():
+       # Generate a new key programmatically (non-async utility method)
+       encoded_key = client.generate_encryption_key()
+       print(f"Generated key: {encoded_key}")
+   
+   # Run the async function
+   asyncio.run(main())
    ```
 
 ### Using Encryption
@@ -125,22 +137,31 @@ The SDK can be configured to use encryption in several ways:
 Once configured, encryption works transparently:
 
 ```python
-# Upload with encryption (uses default setting)
-result = client.upload_file("sensitive_data.txt")
+import asyncio
+from hippius_sdk import HippiusClient
 
-# Explicitly enable/disable encryption for a specific operation
-encrypted_result = client.upload_file("sensitive_data.txt", encrypt=True)
-unencrypted_result = client.upload_file("public_data.txt", encrypt=False)
+client = HippiusClient()
 
-# Download and decrypt automatically
-dl_result = client.download_file(encrypted_result['cid'], "decrypted_file.txt")
+async def main():
+    # Upload with encryption (uses default setting)
+    result = await client.upload_file("sensitive_data.txt")
+    
+    # Explicitly enable/disable encryption for a specific operation
+    encrypted_result = await client.upload_file("sensitive_data.txt", encrypt=True)
+    unencrypted_result = await client.upload_file("public_data.txt", encrypt=False)
+    
+    # Download and decrypt automatically
+    dl_result = await client.download_file(encrypted_result['cid'], "decrypted_file.txt")
+    
+    # Explicitly control decryption
+    decrypted_result = await client.download_file(encrypted_result['cid'], "output.txt", decrypt=True)
+    raw_result = await client.download_file(encrypted_result['cid'], "still_encrypted.txt", decrypt=False)
+    
+    # View encrypted content
+    content = await client.cat(encrypted_result['cid'], decrypt=True)
 
-# Explicitly control decryption
-decrypted_result = client.download_file(encrypted_result['cid'], "output.txt", decrypt=True)
-raw_result = client.download_file(encrypted_result['cid'], "still_encrypted.txt", decrypt=False)
-
-# View encrypted content
-content = client.cat(encrypted_result['cid'], decrypt=True)
+# Run the async function
+asyncio.run(main())
 ```
 
 ## Erasure Coding
@@ -157,37 +178,42 @@ Hippius SDK supports Reed-Solomon erasure coding for reliable and resilient file
 ### Using Erasure Coding
 
 ```python
+import asyncio
 from hippius_sdk import HippiusClient
 
 client = HippiusClient()
 
-# Erasure code a file with default parameters (k=3, m=5)
-result = client.erasure_code_file("large_file.mp4")
-metadata_cid = result["metadata_cid"]
+async def main():
+    # Erasure code a file with default parameters (k=3, m=5)
+    result = await client.erasure_code_file("large_file.mp4")
+    metadata_cid = result["metadata_cid"]
+    
+    # Use custom parameters for more redundancy
+    result = await client.erasure_code_file(
+        file_path="important_data.zip",
+        k=4,               # Need 4 chunks to reconstruct
+        m=10,              # Create 10 chunks total (6 redundant)
+        chunk_size=2097152,  # 2MB chunks
+        encrypt=True       # Encrypt before splitting
+    )
+    
+    # Store erasure-coded file in Hippius marketplace
+    result = await client.store_erasure_coded_file(
+        file_path="critical_backup.tar",
+        k=3,
+        m=5,
+        encrypt=True,
+        miner_ids=["miner1", "miner2", "miner3"]
+    )
+    
+    # Reconstruct a file from its metadata
+    reconstructed_path = await client.reconstruct_from_erasure_code(
+        metadata_cid=metadata_cid,
+        output_file="reconstructed_file.mp4"
+    )
 
-# Use custom parameters for more redundancy
-result = client.erasure_code_file(
-    file_path="important_data.zip",
-    k=4,               # Need 4 chunks to reconstruct
-    m=10,              # Create 10 chunks total (6 redundant)
-    chunk_size=2097152,  # 2MB chunks
-    encrypt=True       # Encrypt before splitting
-)
-
-# Store erasure-coded file in Hippius marketplace
-result = client.store_erasure_coded_file(
-    file_path="critical_backup.tar",
-    k=3,
-    m=5,
-    encrypt=True,
-    miner_ids=["miner1", "miner2", "miner3"]
-)
-
-# Reconstruct a file from its metadata
-reconstructed_path = client.reconstruct_from_erasure_code(
-    metadata_cid=metadata_cid,
-    output_file="reconstructed_file.mp4"
-)
+# Run the async function
+asyncio.run(main())
 ```
 
 ### When to Use Erasure Coding
@@ -502,55 +528,60 @@ HIPPIUS_ENCRYPT_BY_DEFAULT=true|false
 ### IPFS Operations
 
 ```python
+import asyncio
 from hippius_sdk import IPFSClient
 
-# Initialize the IPFS client (uses Hippius relay node by default)
-ipfs_client = IPFSClient()
+async def main():
+    # Initialize the IPFS client (uses Hippius relay node by default)
+    ipfs_client = IPFSClient()
+    
+    # Or specify custom endpoints
+    ipfs_client = IPFSClient(
+        gateway="https://get.hippius.network",                       # For downloads
+        api_url="http://relay-fr.hippius.network:5001"   # For uploads
+    )
+    
+    # Upload a file
+    result = await ipfs_client.upload_file("path/to/your/file.txt")
+    cid = result["cid"]
+    size = result["size_formatted"]
+    
+    # Upload a directory
+    dir_result = await ipfs_client.upload_directory("path/to/your/directory")
+    dir_cid = dir_result["cid"]
+    file_count = dir_result["file_count"]
+    total_size = dir_result["size_formatted"]
+    
+    # Download a file
+    dl_result = await ipfs_client.download_file(cid, "path/to/save/file.txt")
+    success = dl_result["success"]
+    elapsed_time = dl_result["elapsed_seconds"]
+    
+    # Check if a CID exists
+    exists_result = await ipfs_client.exists(cid)
+    exists = exists_result["exists"]
+    gateway_url = exists_result["gateway_url"]
+    
+    # Get file content directly
+    content_result = await ipfs_client.cat(cid)
+    content = content_result["content"]
+    is_text = content_result["is_text"]
+    preview = content_result["text_preview"] if is_text else content_result["hex_preview"]
+    
+    # Pin a file
+    pin_result = await ipfs_client.pin(cid)
+    success = pin_result["success"]
+    message = pin_result["message"]
+    
+    # Format a CID (non-async utility function)
+    formatted_cid = ipfs_client.format_cid("6261666b7265696134...")  # Hex-encoded CID
+    # Will return a proper formatted CID like "bafkrei..."
+    
+    # Format a file size (non-async utility function)
+    human_readable = ipfs_client.format_size(1048576)  # 1 MB
 
-# Or specify custom endpoints
-ipfs_client = IPFSClient(
-    gateway="https://get.hippius.network",                       # For downloads
-    api_url="http://relay-fr.hippius.network:5001"   # For uploads
-)
-
-# Upload a file
-result = ipfs_client.upload_file("path/to/your/file.txt")
-cid = result["cid"]
-size = result["size_formatted"]
-
-# Upload a directory
-dir_result = ipfs_client.upload_directory("path/to/your/directory")
-dir_cid = dir_result["cid"]
-file_count = dir_result["file_count"]
-total_size = dir_result["size_formatted"]
-
-# Download a file
-dl_result = ipfs_client.download_file(cid, "path/to/save/file.txt")
-success = dl_result["success"]
-elapsed_time = dl_result["elapsed_seconds"]
-
-# Check if a CID exists
-exists_result = ipfs_client.exists(cid)
-exists = exists_result["exists"]
-gateway_url = exists_result["gateway_url"]
-
-# Get file content directly
-content_result = ipfs_client.cat(cid)
-content = content_result["content"]
-is_text = content_result["is_text"]
-preview = content_result["text_preview"] if is_text else content_result["hex_preview"]
-
-# Pin a file
-pin_result = ipfs_client.pin(cid)
-success = pin_result["success"]
-message = pin_result["message"]
-
-# Format a CID
-formatted_cid = ipfs_client.format_cid("6261666b7265696134...")  # Hex-encoded CID
-# Will return a proper formatted CID like "bafkrei..."
-
-# Format a file size
-human_readable = ipfs_client.format_size(1048576)  # 1 MB
+# Run the async function
+asyncio.run(main())
 ```
 
 ### IPFS Connection Methods
@@ -632,6 +663,7 @@ hippius config import-env
 ### Using Configuration in Code
 
 ```python
+import asyncio
 from hippius_sdk import get_config_value, set_config_value, HippiusClient
 
 # Get a configuration value
@@ -643,6 +675,13 @@ set_config_value("ipfs", "gateway", "https://dweb.link")
 
 # Client will automatically use configuration values
 client = HippiusClient()
+
+async def main():
+    # Your async code here
+    pass
+
+# Run the async function
+asyncio.run(main())
 ```
 
 ## Development
@@ -711,6 +750,7 @@ To test the SDK components, you can create a small test script:
 
 ```python
 # test_script.py
+import asyncio
 from hippius_sdk import HippiusClient
 from dotenv import load_dotenv
 import os
@@ -721,13 +761,17 @@ load_dotenv()
 # Create a client
 client = HippiusClient()
 
-# Test a simple operation
-print("Testing IPFS client...")
-try:
-    result = client.exists("QmZ4tDuvesekSs4qM5ZBKpXiZGun7S2CYtEZRB3DYXkjGx")
-    print(f"Result: {result}")
-except Exception as e:
-    print(f"Error: {e}")
+async def test_ipfs_client():
+    # Test a simple operation
+    print("Testing IPFS client...")
+    try:
+        result = await client.exists("QmZ4tDuvesekSs4qM5ZBKpXiZGun7S2CYtEZRB3DYXkjGx")
+        print(f"Result: {result}")
+    except Exception as e:
+        print(f"Error: {e}")
+
+# Run the async function
+asyncio.run(test_ipfs_client())
 ```
 
 Then run it:
@@ -846,6 +890,7 @@ This provides enhanced security by:
 When interacting with the Hippius SDK programmatically, you can provide the password when initializing clients:
 
 ```python
+import asyncio
 from hippius_sdk import HippiusClient
 
 # The client will prompt for password when needed to decrypt the seed phrase
@@ -853,6 +898,13 @@ client = HippiusClient()
 
 # Or you can provide a password when initializing
 client = HippiusClient(seed_phrase_password="your-password")
+
+async def main():
+    # Your async code here
+    pass
+
+# Run the async function
+asyncio.run(main())
 ```
 
 ### Multi-Account Management
@@ -890,24 +942,29 @@ Key features of the multi-account system:
 To use multiple accounts in your code:
 
 ```python
+import asyncio
 from hippius_sdk import HippiusClient, set_active_account, list_accounts
 
-# List all accounts
-accounts = list_accounts()
-for name, data in accounts.items():
-    print(f"{name}: {data.get('ss58_address')}")
+async def main():
+    # List all accounts
+    accounts = list_accounts()
+    for name, data in accounts.items():
+        print(f"{name}: {data.get('ss58_address')}")
+    
+    # Switch the active account
+    set_active_account("my-validator")
+    
+    # Create a client with the active account
+    client = HippiusClient(seed_phrase_password="your-password")
+    
+    # Or specify a different account to use
+    client = HippiusClient(
+        account_name="my-developer-account",
+        seed_phrase_password="your-password"
+    )
 
-# Switch the active account
-set_active_account("my-validator")
-
-# Create a client with the active account
-client = HippiusClient(seed_phrase_password="your-password")
-
-# Or specify a different account to use
-client = HippiusClient(
-    account_name="my-developer-account",
-    seed_phrase_password="your-password"
-)
+# Run the async function
+asyncio.run(main())
 ```
 
 The multi-account system makes it easier to manage multiple identities while maintaining security and convenience.
