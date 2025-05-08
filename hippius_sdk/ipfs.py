@@ -816,6 +816,9 @@ class IPFSClient:
             file_data = self.encrypt_data(file_data)
 
         # Step 2: Split the file into chunks for erasure coding
+        chunk_size = int(chunk_size)
+        chunk_size = max(1, chunk_size)  # Ensure it's at least 1 byte
+        
         chunks = []
         chunk_positions = []
         for i in range(0, len(file_data), chunk_size):
@@ -825,7 +828,7 @@ class IPFSClient:
 
         # Pad the last chunk if necessary
         if chunks and len(chunks[-1]) < chunk_size:
-            pad_size = chunk_size - len(chunks[-1])
+            pad_size = int(chunk_size - len(chunks[-1]))
             chunks[-1] = chunks[-1] + b"\0" * pad_size
 
         # If we don't have enough chunks for the requested parameters, adjust
