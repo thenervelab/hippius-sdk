@@ -15,7 +15,7 @@ from hippius_sdk.config import (decrypt_seed_phrase, delete_account,
 from hippius_sdk.ipfs import IPFSClient
 from hippius_sdk.utils import format_cid, format_size, hex_to_ipfs_cid
 
-__version__ = "0.1.13"
+__version__ = "0.2.4"
 __all__ = [
     "HippiusClient",
     "IPFSClient",
