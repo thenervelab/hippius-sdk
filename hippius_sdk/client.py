@@ -64,8 +64,8 @@ class HippiusClient:
                 "substrate", "url", "wss://rpc.hippius.network"
             )
 
-        if substrate_seed_phrase is None:
-            substrate_seed_phrase = get_config_value("substrate", "seed_phrase")
+        # Don't try to get a seed phrase from the legacy location
+        # The substrate_client will handle getting it from the active account
 
         if encrypt_by_default is None:
             encrypt_by_default = get_config_value(
@@ -82,18 +82,13 @@ class HippiusClient:
             encrypt_by_default=encrypt_by_default,
             encryption_key=encryption_key,
         )
-
         # Initialize Substrate client
-        try:
-            self.substrate_client = SubstrateClient(
-                url=substrate_url,
-                seed_phrase=substrate_seed_phrase,
-                password=seed_phrase_password,
-                account_name=account_name,
-            )
-        except Exception as e:
-            print(f"Warning: Could not initialize Substrate client: {e}")
-            self.substrate_client = None
+        self.substrate_client = SubstrateClient(
+            url=substrate_url,
+            seed_phrase=substrate_seed_phrase,
+            password=seed_phrase_password,
+            account_name=account_name,
+        )
 
     async def upload_file(
         self, file_path: str, encrypt: Optional[bool] = None
@@ -375,6 +370,7 @@ class HippiusClient:
         max_retries: int = 3,
         verbose: bool = True,
         progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        publish: bool = True,
     ) -> Dict[str, Any]:
         """
         Erasure code a file, upload the chunks to IPFS, and store in the Hippius marketplace.
@@ -392,9 +388,12 @@ class HippiusClient:
             verbose: Whether to print progress information
             progress_callback: Optional callback function for progress updates
                             Function receives (stage_name, current, total)
+            publish: Whether to publish to the blockchain (True) or just perform local
+                    erasure coding without publishing (False). When False, no password
+                    is needed for seed phrase access.
 
         Returns:
-            dict: Result including metadata CID and transaction hash
+            dict: Result including metadata CID and transaction hash (if published)
 
         Raises:
             ValueError: If parameters are invalid
@@ -411,6 +410,7 @@ class HippiusClient:
             max_retries=max_retries,
             verbose=verbose,
             progress_callback=progress_callback,
+            publish=publish,
         )
 
     async def delete_file(

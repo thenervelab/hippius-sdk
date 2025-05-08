@@ -818,7 +818,7 @@ class IPFSClient:
         # Step 2: Split the file into chunks for erasure coding
         chunk_size = int(chunk_size)
         chunk_size = max(1, chunk_size)  # Ensure it's at least 1 byte
-        
+
         chunks = []
         chunk_positions = []
         for i in range(0, len(file_data), chunk_size):
@@ -1389,6 +1389,7 @@ class IPFSClient:
         max_retries: int = 3,
         verbose: bool = True,
         progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        publish: bool = True,
     ) -> Dict[str, Any]:
         """
         Erasure code a file, upload the chunks to IPFS, and store in the Hippius marketplace.
@@ -1407,15 +1408,21 @@ class IPFSClient:
             verbose: Whether to print progress information
             progress_callback: Optional callback function for progress updates
                             Function receives (stage_name, current, total)
+            publish: Whether to publish to the blockchain (True) or just perform local
+                    erasure coding without publishing (False). When False, no password
+                    is needed for seed phrase access.
 
         Returns:
-            dict: Result including metadata CID and transaction hash
+            dict: Result including metadata CID and transaction hash (if published)
 
         Raises:
             ValueError: If parameters are invalid
             RuntimeError: If processing fails
         """
-        # Step 1: Erasure code the file and upload chunks
+        # Step 1: Create substrate client if we need it and are publishing
+        if substrate_client is None and publish:
+            substrate_client = SubstrateClient()
+        # Step 2: Erasure code the file and upload chunks
         metadata = await self.erasure_code_file(
             file_path=file_path,
             k=k,
@@ -1427,50 +1434,52 @@ class IPFSClient:
             progress_callback=progress_callback,
         )
 
-        # Step 2: Create substrate client if we need it
-        if substrate_client is None:
-            substrate_client = SubstrateClient()
-
         original_file = metadata["original_file"]
         metadata_cid = metadata["metadata_cid"]
 
-        # Create a list to hold all the file inputs (metadata + all chunks)
-        all_file_inputs = []
+        # Initialize transaction hash variable
+        tx_hash = None
 
-        # Step 3: Prepare metadata file for storage
-        if verbose:
-            print(
-                f"Preparing to store metadata and {len(metadata['chunks'])} chunks in the Hippius marketplace..."
-            )
+        # Only proceed with blockchain storage if publish is True
+        if publish:
+            # Create a list to hold all the file inputs (metadata + all chunks)
+            all_file_inputs = []
 
-        # Create a file input for the metadata file
-        metadata_file_input = FileInput(
-            file_hash=metadata_cid, file_name=f"{original_file['name']}.ec_metadata"
-        )
-        all_file_inputs.append(metadata_file_input)
-
-        # Step 4: Add all chunks to the storage request
-        if verbose:
-            print("Adding all chunks to storage request...")
-
-        for i, chunk in enumerate(metadata["chunks"]):
-            # Extract the CID string from the chunk's cid dictionary
-            chunk_cid = (
-                chunk["cid"]["cid"]
-                if isinstance(chunk["cid"], dict) and "cid" in chunk["cid"]
-                else chunk["cid"]
-            )
-            chunk_file_input = FileInput(file_hash=chunk_cid, file_name=chunk["name"])
-            all_file_inputs.append(chunk_file_input)
-
-            # Print progress for large numbers of chunks
-            if verbose and (i + 1) % 50 == 0:
+            # Step 3: Prepare metadata file for storage
+            if verbose:
                 print(
-                    f"  Prepared {i + 1}/{len(metadata['chunks'])} chunks for storage"
+                    f"Preparing to store metadata and {len(metadata['chunks'])} chunks in the Hippius marketplace..."
                 )
 
-        # Step 5: Submit the storage request for all files
-        try:
+            # Create a file input for the metadata file
+            metadata_file_input = FileInput(
+                file_hash=metadata_cid, file_name=f"{original_file['name']}.ec_metadata"
+            )
+            all_file_inputs.append(metadata_file_input)
+
+            # Step 4: Add all chunks to the storage request
+            if verbose:
+                print("Adding all chunks to storage request...")
+
+            for i, chunk in enumerate(metadata["chunks"]):
+                # Extract the CID string from the chunk's cid dictionary
+                chunk_cid = (
+                    chunk["cid"]["cid"]
+                    if isinstance(chunk["cid"], dict) and "cid" in chunk["cid"]
+                    else chunk["cid"]
+                )
+                chunk_file_input = FileInput(
+                    file_hash=chunk_cid, file_name=chunk["name"]
+                )
+                all_file_inputs.append(chunk_file_input)
+
+                # Print progress for large numbers of chunks
+                if verbose and (i + 1) % 50 == 0:
+                    print(
+                        f"  Prepared {i + 1}/{len(metadata['chunks'])} chunks for storage"
+                    )
+
+            # Step 5: Submit the storage request for all files
             if verbose:
                 print(
                     f"Submitting storage request for 1 metadata file and {len(metadata['chunks'])} chunks..."
@@ -1479,7 +1488,6 @@ class IPFSClient:
             tx_hash = await substrate_client.storage_request(
                 files=all_file_inputs, miner_ids=miner_ids
             )
-
             if verbose:
                 print("Successfully stored all files in marketplace!")
                 print(f"Transaction hash: {tx_hash}")
@@ -1488,17 +1496,27 @@ class IPFSClient:
                     f"Total files stored: {len(all_file_inputs)} (1 metadata + {len(metadata['chunks'])} chunks)"
                 )
 
-            return {
+            result = {
                 "metadata": metadata,
                 "metadata_cid": metadata_cid,
                 "transaction_hash": tx_hash,
                 "total_files_stored": len(all_file_inputs),
             }
+        else:
+            # Not publishing to blockchain (--no-publish flag used)
+            if verbose:
+                print("Not publishing to blockchain (--no-publish flag used)")
+                print(f"Metadata CID: {metadata_cid}")
+                print(f"Total chunks: {len(metadata['chunks'])}")
 
-        except Exception as e:
-            print(f"Error storing files in marketplace: {str(e)}")
-            # Return the metadata even if storage fails
-            return {"metadata": metadata, "metadata_cid": metadata_cid, "error": str(e)}
+            result = {
+                "metadata": metadata,
+                "metadata_cid": metadata_cid,
+                "total_files_stored": len(metadata["chunks"])
+                + 1,  # +1 for metadata file
+            }
+
+        return result
 
     async def delete_file(
         self, cid: str, cancel_from_blockchain: bool = True

@@ -5,12 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from hippius_sdk.cli_handlers import (
-    handle_account_create,
-    handle_account_export,
-    handle_account_import,
-    handle_account_list,
-)
+from hippius_sdk.cli_handlers import (handle_account_create,
+                                      handle_account_export,
+                                      handle_account_import,
+                                      handle_account_list)
 
 
 class TestCLIAccountCommands:

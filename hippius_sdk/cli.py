@@ -335,6 +335,12 @@ def main():
                 return cli_handlers.handle_account_switch(args.account_name)
             elif args.account_action == "delete" and hasattr(args, "account_name"):
                 return cli_handlers.handle_account_delete(args.account_name)
+            elif args.account_action == "login":
+                return cli_handlers.handle_account_login()
+            elif args.account_action == "info":
+                return cli_handlers.handle_account_info(
+                    args.name if hasattr(args, "name") else None
+                )
             elif args.account_action == "balance":
                 # Get account address - prioritize direct address over account name
                 account_address = None
@@ -400,7 +406,7 @@ def main():
         return 1
 
 
-def key_generation_cli():
+def standalone_key_generation_cli():
     """Standalone CLI tool for generating encryption keys."""
     # Check if help flag is present
     if "--help" in sys.argv or "-h" in sys.argv:

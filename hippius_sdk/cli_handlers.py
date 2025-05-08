@@ -10,11 +10,9 @@ import base64
 import getpass
 import json
 import os
-import pprint
-import sys
 import tempfile
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, List, Optional
 
 from hippius_sdk import (
     HippiusClient,
@@ -26,8 +24,6 @@ from hippius_sdk import (
     get_active_account,
     get_all_config,
     get_config_value,
-    get_seed_phrase,
-    initialize_from_env,
     list_accounts,
     load_config,
     reset_config,
@@ -98,6 +94,21 @@ def create_client(args: Any) -> HippiusClient:
     # Get substrate URL
     substrate_url = args.substrate_url if hasattr(args, "substrate_url") else None
 
+    # Skip password if we're doing erasure-code with --no-publish
+    # This avoids prompting for password when we don't need to interact with the blockchain
+    password = None
+    if (
+        hasattr(args, "command")
+        and args.command == "erasure-code"
+        and hasattr(args, "no_publish")
+        and args.no_publish
+    ):
+        # Don't need a password in this case
+        password = None
+    else:
+        # Use password from args if provided
+        password = args.password if hasattr(args, "password") else None
+
     # Initialize client with provided parameters
     client = HippiusClient(
         ipfs_gateway=gateway,
@@ -106,7 +117,7 @@ def create_client(args: Any) -> HippiusClient:
         substrate_seed_phrase=(
             args.seed_phrase if hasattr(args, "seed_phrase") else None
         ),
-        seed_phrase_password=args.password if hasattr(args, "password") else None,
+        seed_phrase_password=password,
         account_name=args.account if hasattr(args, "account") else None,
         encrypt_by_default=encrypt,
         encryption_key=encryption_key,
@@ -160,7 +171,7 @@ async def handle_exists(client: HippiusClient, cid: str) -> int:
             log(f"Gateway URL: [link]{result['gateway_url']}[/link]")
 
             # Display download command in a panel
-            command = f"hippius download {formatted_cid} <output_path>"
+            command = f"[bold green underline]hippius download {formatted_cid} <output_path>[/bold green underline]"
             print_panel(command, title="Download Command")
     else:
         error(f"CID [bold cyan]{formatted_cid}[/bold cyan] does not exist on IPFS")
@@ -331,7 +342,7 @@ async def handle_store(
                 )
 
             # Display download command in a panel
-            command = f"hippius download {result['cid']} <output_path>"
+            command = f"[bold green underline]hippius download {result['cid']} <output_path>[/bold green underline]"
             print_panel(command, title="Download Command")
 
             return 0
@@ -498,8 +509,7 @@ async def handle_credits(
                             "Please provide an account address with '--account_address' or set a default with:"
                         )
                         log(
-                            "  hippius address set-default <your_account_address>",
-                            style="bold blue",
+                            "  [bold green underline]hippius address set-default <your_account_address>[/bold green underline]"
                         )
 
                     return 1
@@ -555,7 +565,9 @@ async def handle_files(
                     info(
                         "Please provide an account address with '--account_address' or set a default with:"
                     )
-                    log("  hippius address set-default <your_account_address>")
+                    log(
+                        "  [bold green underline]hippius address set-default <your_account_address>[/bold green underline]"
+                    )
                 return 1
 
     # Get files from the marketplace
@@ -707,7 +719,9 @@ async def handle_ec_files(
                     info(
                         "Please provide an account address with '--account_address' or set a default with:"
                     )
-                    log("  hippius address set-default <your_account_address>")
+                    log(
+                        "  [bold green underline]hippius address set-default <your_account_address>[/bold green underline]"
+                    )
                 return 1
 
     info(f"Getting erasure-coded files for account: [bold]{account_address}[/bold]")
@@ -937,7 +951,7 @@ async def handle_ec_files(
         # Include a real example with the first metadata CID
         example_cid = metadata_cids[0] if metadata_cids else "<METADATA_CID>"
         print_panel(
-            f"hippius reconstruct <METADATA_CID> <OUTPUT_FILENAME>\n\nExample:\nhippius reconstruct {example_cid} reconstructed_file.bin",
+            f"[bold green underline]hippius reconstruct <METADATA_CID> <OUTPUT_FILENAME>[/bold green underline]\n\nExample:\n[bold green underline]hippius reconstruct {example_cid} reconstructed_file.bin[/bold green underline]",
             title="Reconstruction Command",
         )
 
@@ -969,8 +983,12 @@ async def handle_erasure_code(
         import zfec
     except ImportError:
         error("zfec is required for erasure coding")
-        log("Install it with: [bold]pip install zfec[/bold]")
-        log("Then update your environment: [bold]poetry add zfec[/bold]")
+        log(
+            "Install it with: [bold green underline]pip install zfec[/bold green underline]"
+        )
+        log(
+            "Then update your environment: [bold green underline]poetry add zfec[/bold green underline]"
+        )
         return 1
 
     # Get file size
@@ -988,15 +1006,15 @@ async def handle_erasure_code(
 
         # Calculate new chunk size to get exactly k chunks
         new_chunk_size = file_size / k
-        
+
         new_chunk_size = int(new_chunk_size)
         new_chunk_size = max(1, new_chunk_size)
 
         # Create a panel with parameter adjustment information
         adjustment_info = [
-            f"Original parameters: k=[bold]{k}[/bold], m=[bold]{m}[/bold], chunk size=[bold]{chunk_size/1024/1024:.2f} MB[/bold]",
+            f"Original parameters: k=[bold]{k}[/bold], m=[bold]{m}[/bold], chunk size=[bold]{chunk_size / 1024 / 1024:.2f} MB[/bold]",
             f"Would create only [bold red]{potential_chunks:.2f}[/bold red] chunks, which is less than k=[bold]{k}[/bold]",
-            f"Automatically adjusting chunk size to [bold green]{new_chunk_size/1024/1024:.6f} MB[/bold green] to create at least {k} chunks",
+            f"Automatically adjusting chunk size to [bold green]{new_chunk_size / 1024 / 1024:.6f} MB[/bold green] to create at least {k} chunks",
         ]
         print_panel("\n".join(adjustment_info), title="Parameter Adjustment")
 
@@ -1004,9 +1022,9 @@ async def handle_erasure_code(
 
     # Create parameter information panel
     param_info = [
-        f"File: [bold]{file_name}[/bold] ([bold cyan]{file_size/1024/1024:.2f} MB[/bold cyan])",
+        f"File: [bold]{file_name}[/bold] ([bold cyan]{file_size / 1024 / 1024:.2f} MB[/bold cyan])",
         f"Parameters: k=[bold]{k}[/bold], m=[bold]{m}[/bold] (need {k} of {m} chunks to reconstruct)",
-        f"Chunk size: [bold cyan]{chunk_size/1024/1024:.6f} MB[/bold cyan]",
+        f"Chunk size: [bold cyan]{chunk_size / 1024 / 1024:.6f} MB[/bold cyan]",
     ]
 
     # Add encryption status
@@ -1014,6 +1032,16 @@ async def handle_erasure_code(
         param_info.append("[bold green]Encryption: Enabled[/bold green]")
     else:
         param_info.append("[bold yellow]Encryption: Disabled[/bold yellow]")
+
+    # Add publish status
+    if publish:
+        param_info.append(
+            "[bold blue]Publishing: Enabled[/bold blue] (will store on blockchain)"
+        )
+    else:
+        param_info.append(
+            "[bold cyan]Publishing: Disabled[/bold cyan] (local only, no password needed)"
+        )
 
     # Parse miner IDs if provided
     miner_id_list = None
@@ -1031,7 +1059,9 @@ async def handle_erasure_code(
     # Create progress for the erasure coding operation
     with create_progress() as progress:
         # Add tasks for the different stages
-        processing_task = progress.add_task("[cyan]Processing file...", total=100)
+        processing_task = progress.add_task(
+            "[cyan]Processing file...", total=100, visible=False
+        )
         encoding_task = progress.add_task(
             "[green]Encoding chunks...", total=100, visible=False
         )
@@ -1090,6 +1120,7 @@ async def handle_erasure_code(
                 max_retries=3,
                 verbose=verbose,
                 progress_callback=update_progress_bar,
+                publish=publish,
             )
 
             # Complete all progress tasks
@@ -1148,7 +1179,7 @@ async def handle_erasure_code(
                 # Use direct values from input parameters when metadata is not available
                 summary_lines.extend(
                     [
-                        f"Original file: [bold]{file_name}[/bold] ([bold cyan]{file_size/1024/1024:.2f} MB[/bold cyan])",
+                        f"Original file: [bold]{file_name}[/bold] ([bold cyan]{file_size / 1024 / 1024:.2f} MB[/bold cyan])",
                         f"Parameters: k=[bold]{k}[/bold], m=[bold]{m}[/bold]",
                         f"Total files stored in marketplace: [bold]{total_files_stored}[/bold]",
                         f"Metadata CID: [bold cyan]{metadata_cid}[/bold cyan]",
@@ -1159,14 +1190,14 @@ async def handle_erasure_code(
                 if publish:
                     summary_lines.extend(
                         [
-                            f"Published to global IPFS: [bold green]Yes[/bold green]",
+                            "Published to global IPFS: [bold green]Yes[/bold green]",
                             f"Global access URL: [link]{client.ipfs_client.gateway}/ipfs/{metadata_cid}[/link]",
                         ]
                     )
             else:
                 summary_lines.extend(
                     [
-                        f"Original file: [bold]{original_file.get('name')}[/bold] ([bold cyan]{original_file.get('size', 0)/1024/1024:.2f} MB[/bold cyan])",
+                        f"Original file: [bold]{original_file.get('name')}[/bold] ([bold cyan]{original_file.get('size', 0) / 1024 / 1024:.2f} MB[/bold cyan])",
                         f"File ID: [bold]{erasure_coding.get('file_id')}[/bold]",
                         f"Parameters: k=[bold]{erasure_coding.get('k')}[/bold], m=[bold]{erasure_coding.get('m')}[/bold]",
                         f"Total chunks: [bold]{len(metadata.get('chunks', []))}[/bold]",
@@ -1179,7 +1210,7 @@ async def handle_erasure_code(
                 if publish:
                     summary_lines.extend(
                         [
-                            f"Published to global IPFS: [bold green]Yes[/bold green]",
+                            "Published to global IPFS: [bold green]Yes[/bold green]",
                             f"Global access URL: [link]{client.ipfs_client.gateway}/ipfs/{metadata_cid}[/link]",
                         ]
                     )
@@ -1205,7 +1236,7 @@ async def handle_erasure_code(
                 f"  2. Access to at least [bold]{k}[/bold] chunks for each original chunk",
                 "",
                 "Reconstruction command:",
-                f"[bold]hippius reconstruct {metadata_cid} reconstructed_{output_filename}[/bold]",
+                f"[bold green underline]hippius reconstruct {metadata_cid} reconstructed_{output_filename}[/bold green underline]",
             ]
 
             print_panel(
@@ -1596,67 +1627,116 @@ def handle_seed_phrase_set(
 def handle_seed_phrase_encode(account_name: Optional[str] = None) -> int:
     """Handle the seed encode command"""
     try:
-        # Check if seed phrase exists
-        seed_phrase = get_seed_phrase(account_name)
-
-        if not seed_phrase:
-            print("Error: No seed phrase found to encrypt")
-            if account_name:
-                print(
-                    f"Account '{account_name}' may not exist or doesn't have a seed phrase"
-                )
-            else:
-                print("Set a seed phrase first with: hippius seed set <seed_phrase>")
-            return 1
-
-        # Check if already encrypted
+        # Check if account exists and get its encryption status
         config = load_config()
         accounts = config.get("substrate", {}).get("accounts", {})
 
-        if account_name:
-            account = accounts.get(account_name, {})
-            is_encrypted = account.get("encrypted", False)
-        else:
-            is_encrypted = config.get("substrate", {}).get("encrypted", False)
+        # If account name not specified, use active account
+        if not account_name:
+            account_name = config.get("substrate", {}).get("active_account")
+            if not account_name:
+                error("No account specified and no active account")
+                return 1
 
+        # Check if the account exists
+        if account_name not in accounts:
+            error(f"Account '{account_name}' not found")
+            return 1
+
+        # Get account details
+        account = accounts.get(account_name, {})
+        is_encrypted = account.get("seed_phrase_encoded", False)
+        seed_phrase = account.get("seed_phrase")
+
+        # Check if we have a seed phrase
+        if not seed_phrase:
+            error(f"Account '{account_name}' doesn't have a seed phrase")
+            info(
+                f"Set a seed phrase first with: [bold green underline]hippius seed set <seed_phrase> --account {account_name}[/bold green underline]"
+            )
+            return 1
+
+        # Check if the seed phrase is already encrypted
         if is_encrypted:
-            print("Seed phrase is already encrypted")
+            info("Seed phrase is already encrypted")
             confirm = (
                 input("Do you want to re-encrypt it with a new password? (y/n): ")
                 .strip()
                 .lower()
             )
             if confirm != "y":
-                print("Encryption cancelled")
+                info("Encryption cancelled")
                 return 0
 
-        # Get password for encryption
-        print("\nYou are about to encrypt your seed phrase.")
+            # Need to decrypt with old password first
+            old_password = getpass.getpass("Enter your current password to decrypt: ")
+            decrypted_seed_phrase = decrypt_seed_phrase(old_password, account_name)
+
+            if not decrypted_seed_phrase:
+                error("Unable to decrypt the seed phrase. Incorrect password?")
+                return 1
+
+            # Now we have the decrypted seed phrase
+            seed_phrase = decrypted_seed_phrase
+
+        # Get new password for encryption
+        info("\nYou are about to encrypt your seed phrase.")
         password = getpass.getpass("Enter a password for encryption: ")
         confirm = getpass.getpass("Confirm password: ")
 
         if password != confirm:
-            print("Error: Passwords do not match")
+            error("Passwords do not match")
             return 1
 
         if not password:
-            print("Error: Password cannot be empty for encryption")
+            error("Password cannot be empty for encryption")
             return 1
 
-        # Encrypt the seed phrase
-        encrypt_seed_phrase(password, account_name)
+        # Now encrypt the seed phrase - key fix here passing correct parameters
+        success = encrypt_seed_phrase(seed_phrase, password, account_name)
 
-        print("Seed phrase encrypted successfully")
-        print("You will need to provide this password when using the account")
+        # Security: Clear the plaintext seed phrase from memory
+        # This is a best-effort approach, as Python's garbage collection may still keep copies
+        seed_phrase = None
 
-        return 0
+        if success:
+            # Create success panel with encryption information
+            encryption_info = [
+                f"Account: [bold]{account_name}[/bold]",
+                "[bold green]Seed phrase encrypted successfully[/bold green]",
+                "",
+                "You will need to provide this password when using the account for:",
+                "  - Pinning files to IPFS",
+                "  - Erasure coding with publishing",
+                "  - Any other blockchain operations",
+                "",
+                "[bold yellow underline]Security note:[/bold yellow underline] The original unencrypted seed phrase is NOT stored in the config.",
+            ]
+
+            # Try to get the address for display
+            try:
+                address = get_account_address(account_name)
+                if address:
+                    encryption_info.append("")
+                    encryption_info.append(
+                        f"Account address: [bold cyan]{address}[/bold cyan]"
+                    )
+            except Exception:
+                pass
+
+            print_panel("\n".join(encryption_info), title="Encryption Successful")
+            return 0
+        else:
+            error("Failed to encrypt seed phrase")
+            return 1
+
     except Exception as e:
-        print(f"Error encrypting seed phrase: {e}")
+        error(f"Error encrypting seed phrase: {e}")
         return 1
 
 
 def handle_seed_phrase_decode(account_name: Optional[str] = None) -> int:
-    """Handle the seed decode command"""
+    """Handle the seed decode command - temporarily decrypts and displays the seed phrase"""
     try:
         # Check if seed phrase exists and is encrypted
         config = load_config()
@@ -1664,19 +1744,29 @@ def handle_seed_phrase_decode(account_name: Optional[str] = None) -> int:
 
         if account_name:
             account = accounts.get(account_name, {})
-            is_encrypted = account.get("encrypted", False)
+            is_encrypted = account.get("seed_phrase_encoded", False)
         else:
-            is_encrypted = config.get("substrate", {}).get("encrypted", False)
+            # Get active account
+            active_account = config.get("substrate", {}).get("active_account")
+            if active_account and active_account in accounts:
+                is_encrypted = accounts[active_account].get(
+                    "seed_phrase_encoded", False
+                )
+            else:
+                # Legacy mode
+                is_encrypted = config.get("substrate", {}).get(
+                    "seed_phrase_encoded", False
+                )
 
         if not is_encrypted:
-            print("Seed phrase is not encrypted")
+            info("Seed phrase is not encrypted")
             return 0
 
         # Get password for decryption
         password = getpass.getpass("Enter your password to decrypt the seed phrase: ")
 
         if not password:
-            print("Error: Password cannot be empty")
+            error("Password cannot be empty")
             return 1
 
         # Try to decrypt the seed phrase
@@ -1684,30 +1774,40 @@ def handle_seed_phrase_decode(account_name: Optional[str] = None) -> int:
             seed_phrase = decrypt_seed_phrase(password, account_name)
 
             if seed_phrase:
-                print("\nDecrypted seed phrase:")
-                print(seed_phrase)
+                # Create info panel for the decrypted seed phrase
+                seed_info = [
+                    f"Decrypted seed phrase: [bold yellow]{seed_phrase}[/bold yellow]",
+                    "",
+                    "[bold green underline]NOTE: This is a temporary decryption only. Your seed phrase remains encrypted in the config.[/bold green underline]",
+                    "",
+                    "[bold red underline]SECURITY WARNING:[/bold red underline]",
+                    "- Your seed phrase gives full access to your account funds",
+                    "- Never share it with anyone or store it in an insecure location",
+                    "- Be aware that displaying it on screen could expose it to screen capture",
+                    "- Consider clearing your terminal history after this operation",
+                ]
 
-                # Security warning
-                print(
-                    "\nWARNING: Your seed phrase gives full access to your account funds."
-                )
-                print("Never share it with anyone or store it in an insecure location.")
+                print_panel("\n".join(seed_info), title="Seed Phrase Decoded")
+
+                # Security: Clear the plaintext seed phrase from memory
+                # This is a best-effort approach, as Python's garbage collection may still keep copies
+                seed_phrase = None
 
                 return 0
             else:
-                print("Error: Failed to decrypt seed phrase")
+                error("Failed to decrypt seed phrase")
                 return 1
 
         except Exception as e:
-            print(f"Error decrypting seed phrase: {e}")
+            error(f"Error decrypting seed phrase: {e}")
 
             if "decryption failed" in str(e).lower():
-                print("Incorrect password")
+                warning("Incorrect password")
 
             return 1
 
     except Exception as e:
-        print(f"Error: {e}")
+        error(f"{e}")
         return 1
 
 
@@ -1728,7 +1828,7 @@ def handle_seed_phrase_status(account_name: Optional[str] = None) -> int:
 
             account = accounts[account_name]
             has_seed = "seed_phrase" in account
-            is_encrypted = account.get("encrypted", False)
+            is_encrypted = account.get("seed_phrase_encoded", False)
             is_active = account_name == get_active_account()
 
             print("\nAccount Status:")
@@ -1749,31 +1849,39 @@ def handle_seed_phrase_status(account_name: Optional[str] = None) -> int:
                         print(f"  Address: Unable to derive (Error: {e})")
 
         else:
-            print("Checking default seed phrase status")
+            print("Checking active account seed phrase status")
 
-            # Check default seed phrase
-            has_seed = "seed_phrase" in config.get("substrate", {})
-            is_encrypted = config.get("substrate", {}).get("encrypted", False)
-
-            print("\nDefault Seed Phrase Status:")
-            print(f"  Has Seed Phrase: {'Yes' if has_seed else 'No'}")
-            print(f"  Encrypted: {'Yes' if is_encrypted else 'No'}")
-
-            if has_seed:
-                try:
-                    # Try to get the address (will use cached if available)
-                    address = get_account_address()
-                    print(f"  Address: {address}")
-                except Exception as e:
-                    if is_encrypted:
-                        print("  Address: Encrypted (password required to view)")
-                    else:
-                        print(f"  Address: Unable to derive (Error: {e})")
-
-            # Show active account
+            # Get the active account
             active_account = get_active_account()
             if active_account:
-                print(f"\nActive Account: {active_account}")
+                accounts = config.get("substrate", {}).get("accounts", {})
+                if active_account in accounts:
+                    account = accounts[active_account]
+                    has_seed = "seed_phrase" in account
+                    is_encrypted = account.get("seed_phrase_encoded", False)
+
+                    print(f"\nActive Account: {active_account}")
+                    print(f"  Has Seed Phrase: {'Yes' if has_seed else 'No'}")
+                    print(f"  Encrypted: {'Yes' if is_encrypted else 'No'}")
+
+                    if has_seed:
+                        try:
+                            # Try to get the address (will use cached if available)
+                            address = get_account_address(active_account)
+                            print(f"  Address: {address}")
+                        except Exception as e:
+                            if is_encrypted:
+                                print(
+                                    "  Address: Encrypted (password required to view)"
+                                )
+                            else:
+                                print(f"  Address: Unable to derive (Error: {e})")
+                else:
+                    print(
+                        f"\nActive account '{active_account}' not found in configuration"
+                    )
+            else:
+                print("\nNo active account set")
 
         return 0
 
@@ -1785,6 +1893,88 @@ def handle_seed_phrase_status(account_name: Optional[str] = None) -> int:
 #
 # Account Management Handlers
 #
+
+
+def handle_account_info(account_name: Optional[str] = None) -> int:
+    """Handle the account info command - displays detailed information about an account"""
+    try:
+        # Load configuration
+        config = load_config()
+
+        # If account name not specified, use active account
+        if not account_name:
+            account_name = config.get("substrate", {}).get("active_account")
+            if not account_name:
+                error("No account specified and no active account")
+                return 1
+
+        # Check if account exists
+        accounts = config.get("substrate", {}).get("accounts", {})
+        if account_name not in accounts:
+            error(f"Account '{account_name}' not found")
+            return 1
+
+        # Get account details
+        account = accounts[account_name]
+        has_seed = "seed_phrase" in account
+        is_encrypted = account.get("seed_phrase_encoded", False)
+        is_active = account_name == get_active_account()
+        ss58_address = account.get("ss58_address", "")
+
+        # Account information panel with rich formatting
+        account_info = [
+            f"Account Name: [bold]{account_name}[/bold]",
+            f"Active: [bold cyan]{'Yes' if is_active else 'No'}[/bold cyan]",
+            f"Has Seed Phrase: [bold]{'Yes' if has_seed else 'No'}[/bold]",
+            f"Encryption: [bold {'green' if is_encrypted else 'yellow'}]{'Encrypted' if is_encrypted else 'Unencrypted'}[/bold {'green' if is_encrypted else 'yellow'}]",
+        ]
+
+        if ss58_address:
+            account_info.append(f"SS58 Address: [bold cyan]{ss58_address}[/bold cyan]")
+        elif has_seed:
+            if is_encrypted:
+                account_info.append(
+                    "[dim]Address: Encrypted (password required to view)[/dim]"
+                )
+            else:
+                try:
+                    # Try to get the address
+                    address = get_account_address(account_name)
+                    account_info.append(
+                        f"SS58 Address: [bold cyan]{address}[/bold cyan]"
+                    )
+                except Exception as e:
+                    account_info.append(
+                        f"[yellow]Unable to derive address: {e}[/yellow]"
+                    )
+
+        # Add suggestions based on account status
+        account_info.append("")
+        if is_active:
+            account_info.append("[bold green]This is your active account[/bold green]")
+        else:
+            account_info.append(
+                f"[dim]To use this account: [bold green underline]hippius account switch {account_name}[/bold green underline][/dim]"
+            )
+
+        if has_seed and not is_encrypted:
+            account_info.append(
+                f"[bold yellow underline]WARNING:[/bold yellow underline] Seed phrase is not encrypted"
+            )
+            account_info.append(
+                f"[dim]To encrypt: [bold green underline]hippius account encode --name {account_name}[/bold green underline][/dim]"
+            )
+
+        # Print the panel with rich formatting
+        print_panel(
+            "\n".join(account_info), title=f"Account Information: {account_name}"
+        )
+
+        return 0
+
+    except Exception as e:
+        error(f"Error getting account info: {e}")
+        return 1
 
 
 def handle_account_create(
@@ -1799,6 +1989,9 @@ def handle_account_create(
             return 1
 
         print(f"Creating new account: {name}")
+
+        # Import Keypair at the beginning to ensure it's available
+        from substrateinterface import Keypair
 
         # Generate a new keypair (seed phrase)
         seed_phrase = client.substrate_client.generate_seed_phrase()
@@ -1823,56 +2016,70 @@ def handle_account_create(
                 return 1
 
         # Set the seed phrase for the new account
-        set_seed_phrase(seed_phrase, password, name)
+        # First load the config to directly edit it
+        config = load_config()
+
+        # Ensure accounts structure exists
+        if "accounts" not in config["substrate"]:
+            config["substrate"]["accounts"] = {}
+
+        # Create keypair directly from seed phrase
+        keypair = Keypair.create_from_mnemonic(seed_phrase)
+        address = keypair.ss58_address
+
+        # Add the new account
+        config["substrate"]["accounts"][name] = {
+            "seed_phrase": seed_phrase,
+            "seed_phrase_encoded": False,
+            "seed_phrase_salt": None,
+            "ss58_address": address,
+        }
 
         # Set as active account
-        set_active_account(name)
+        config["substrate"]["active_account"] = name
 
-        # Get account address
-        try:
-            if password:
-                # Create a temporary client with the password to get the address
-                temp_client = HippiusClient(
-                    substrate_seed_phrase=seed_phrase,
-                    seed_phrase_password=password,
-                    account_name=name,
-                )
-                address = temp_client.substrate_client.get_account_address()
-            else:
-                address = get_account_address(name)
+        # Save the config
+        save_config(config)
 
-            print(f"\nCreated new account: {name}")
-            print(f"Address: {address}")
-            print(f"Seed phrase: {seed_phrase}")
-            print(
-                "\nIMPORTANT: Keep your seed phrase safe. It's the only way to recover your account!"
+        # Print account information using rich formatting
+        account_info = [
+            f"Account: [bold]{name}[/bold]",
+            f"Address: [bold cyan]{address}[/bold cyan]",
+            f"Seed phrase: [bold yellow]{seed_phrase}[/bold yellow]",
+            "",
+            "[bold red underline]IMPORTANT:[/bold red underline] Keep your seed phrase safe. It's the only way to recover your account!",
+        ]
+
+        # Add encryption status
+        if encrypt:
+            account_info.append("")
+            account_info.append(
+                "[bold green]Your seed phrase is encrypted.[/bold green]"
+            )
+            account_info.append(
+                "You'll need to provide the password whenever using this account."
+            )
+        else:
+            account_info.append("")
+            account_info.append(
+                "[bold yellow underline]WARNING:[/bold yellow underline] Your seed phrase is stored unencrypted."
+            )
+            account_info.append(
+                f"[bold green underline]Consider encrypting it with: hippius account encode --name {name}[/bold green underline]"
             )
 
-            # Encryption status
-            if encrypt:
-                print("\nYour seed phrase is encrypted.")
-                print(
-                    "You'll need to provide the password whenever using this account."
-                )
-            else:
-                print("\nWARNING: Your seed phrase is stored unencrypted.")
-                print(
-                    "Consider encrypting it with: hippius account encode --name", name
-                )
+        account_info.append("")
+        account_info.append(
+            "This account is now active. Use it with: [bold]hippius <command>[/bold]"
+        )
 
-            print("\nThis account is now active. Use it with: hippius <command>")
+        # Print the panel with rich formatting
+        print_panel("\n".join(account_info), title="Account Created Successfully")
 
-            return 0
-
-        except Exception as e:
-            print(f"Account created but failed to get address: {e}")
-            print(
-                f"The seed phrase has been saved but you may need to fix the configuration."
-            )
-            return 1
+        return 0
 
     except Exception as e:
-        print(f"Error creating account: {e}")
+        error(f"Error creating account: {e}")
         return 1
 
 
@@ -2108,7 +2315,7 @@ def handle_account_list() -> int:
 
             is_active = account_name == active_account
             has_seed = "seed_phrase" in account_data
-            is_encrypted = account_data.get("encrypted", False)
+            is_encrypted = account_data.get("seed_phrase_encoded", False)
 
             # Get address
             address = account_data.get("ss58_address", "")
@@ -2139,8 +2346,8 @@ def handle_account_list() -> int:
 
         # Instructions
         help_text = [
-            "To switch accounts: [bold]hippius account switch <account_name>[/bold]",
-            "To create a new account: [bold]hippius account create --name <account_name>[/bold]",
+            "To switch accounts: [bold green underline]hippius account switch <account_name>[/bold green underline]",
+            "To create a new account: [bold green underline]hippius account create --name <account_name>[/bold green underline]",
         ]
         print_panel("\n".join(help_text), title="Account Management")
 
@@ -2188,6 +2395,199 @@ def handle_account_switch(account_name: str) -> int:
 
     except Exception as e:
         print(f"Error switching account: {e}")
+        return 1
+
+
+def handle_account_login() -> int:
+    """Handle the account login command - prompts for account details and creates an account"""
+    try:
+        # Display the login banner
+        from hippius_sdk.cli_assets import LOGIN_ASSET
+
+        console.print(LOGIN_ASSET, style="bold cyan")
+        console.print(
+            "\n[bold blue]Welcome to Hippius![/bold blue] Let's set up your account.\n"
+        )
+
+        # Create a style for prompts
+        prompt_style = "bold green"
+        input_style = "bold cyan"
+
+        # Prompt for account name with nice formatting
+        console.print(
+            "[bold]Step 1:[/bold] Choose a name for your account", style=prompt_style
+        )
+        console.print(
+            "This name will be used to identify your account in the Hippius system.",
+            style="dim",
+        )
+        console.print("Account name:", style=input_style, end=" ")
+        name = input().strip()
+
+        if not name:
+            error("[bold red]Account name cannot be empty[/bold red]")
+            return 1
+
+        # Check if account already exists
+        accounts = list_accounts()
+        if name in accounts:
+            warning(f"Account '[bold]{name}[/bold]' already exists")
+            console.print(
+                "Do you want to overwrite it? (y/n):", style=input_style, end=" "
+            )
+            confirm = input().strip().lower()
+            if confirm != "y":
+                info("Login cancelled")
+                return 0
+
+        # Prompt for seed phrase with detailed explanation
+        console.print(
+            "\n[bold]Step 2:[/bold] Enter your seed phrase", style=prompt_style
+        )
+        console.print(
+            "Your seed phrase gives access to your blockchain account and funds.",
+            style="dim",
+        )
+        console.print(
+            "[yellow]Important:[/yellow] Must be 12 or 24 words separated by spaces.",
+            style="dim",
+        )
+        console.print("Seed phrase:", style=input_style, end=" ")
+        seed_phrase = input().strip()
+
+        # Validate the seed phrase
+        if not seed_phrase or len(seed_phrase.split()) not in [12, 24]:
+            error(
+                "[bold red]Invalid seed phrase[/bold red] - must be 12 or 24 words separated by spaces"
+            )
+            return 1
+
+        # Prompt for encryption with security explanation
+        console.print("\n[bold]Step 3:[/bold] Secure your account", style=prompt_style)
+        console.print(
+            "Encrypting your seed phrase adds an extra layer of security.", style="dim"
+        )
+        console.print(
+            "[bold yellow]Strongly recommended[/bold yellow] to protect your account.",
+            style="dim",
+        )
+        console.print(
+            "Encrypt seed phrase? [bold green](Y/n)[/bold green]:",
+            style=input_style,
+            end=" ",
+        )
+        encrypt_input = input().strip().lower()
+        encrypt = encrypt_input == "y" or encrypt_input == "" or encrypt_input == "yes"
+
+        # Set up encryption if requested
+        password = None
+        if encrypt:
+            console.print(
+                "\n[bold]Step 4:[/bold] Set encryption password", style=prompt_style
+            )
+            console.print(
+                "This password will be required whenever you use your account for blockchain operations.",
+                style="dim",
+            )
+
+            password = getpass.getpass("Enter a password: ")
+            confirm = getpass.getpass("Confirm password: ")
+
+            if password != confirm:
+                error("[bold red]Passwords do not match[/bold red]")
+                return 1
+
+            if not password:
+                error("[bold red]Password cannot be empty for encryption[/bold red]")
+                return 1
+
+        # Initialize address variable
+        address = None
+
+        # Create and store the account
+        with console.status("[cyan]Setting up your account...[/cyan]", spinner="dots"):
+            # First, directly modify the config to ensure account is created
+            config = load_config()
+
+            # Ensure accounts structure exists
+            if "substrate" not in config:
+                config["substrate"] = {}
+            if "accounts" not in config["substrate"]:
+                config["substrate"]["accounts"] = {}
+
+            # Create keypair and get address from seed phrase
+            from substrateinterface import Keypair
+
+            keypair = Keypair.create_from_mnemonic(seed_phrase)
+            address = keypair.ss58_address
+
+            # Add the new account
+            config["substrate"]["accounts"][name] = {
+                "seed_phrase": seed_phrase,
+                "seed_phrase_encoded": False,
+                "seed_phrase_salt": None,
+                "ss58_address": address,
+            }
+
+            # Set as active account
+            config["substrate"]["active_account"] = name
+
+            # Save the config first
+            save_config(config)
+
+            # Now encrypt if requested
+            if encrypt:
+                encrypt_seed_phrase(seed_phrase, password, name)
+
+            time.sleep(0.5)  # Small delay for visual feedback
+
+        # Success panel with account information
+        account_info = [
+            f"[bold]Account Name:[/bold] [bold magenta]{name}[/bold magenta]",
+            f"[bold]Blockchain Address:[/bold] [bold cyan]{address}[/bold cyan]",
+            "",
+            "[bold green]✓ Login successful![/bold green]",
+            "[bold green]✓ Account set as active[/bold green]",
+        ]
+
+        if encrypt:
+            account_info.append("[bold green]✓ Seed phrase encrypted[/bold green]")
+            account_info.append("")
+            account_info.append(
+                "[dim]You'll need your password when using this account for blockchain operations.[/dim]"
+            )
+        else:
+            account_info.append(
+                "[bold yellow]⚠ Seed phrase not encrypted[/bold yellow]"
+            )
+            account_info.append("")
+            account_info.append(
+                "[dim]For better security, consider encrypting your seed phrase:[/dim]"
+            )
+            account_info.append(
+                f"[dim]  [bold green underline]hippius account encode --name {name}[/bold green underline][/dim]"
+            )
+
+        # Add next steps
+        account_info.append("")
+        account_info.append("[bold blue]Next steps:[/bold blue]")
+        account_info.append(
+            "• [bold green underline]hippius credits[/bold green underline] - Check your account balance"
+        )
+        account_info.append(
+            "• [bold green underline]hippius files[/bold green underline] - View your stored files"
+        )
+        account_info.append(
+            "• [bold green underline]hippius store <file>[/bold green underline] - Upload a file to IPFS"
+        )
+
+        print_panel(
+            "\n".join(account_info), title="[bold green]Account Ready[/bold green]"
+        )
+        return 0
+
+    except Exception as e:
+        error(f"[bold red]Error logging in:[/bold red] {e}")
         return 1
 
 

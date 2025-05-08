@@ -278,34 +278,30 @@ def decrypt_with_password(encrypted_data: str, salt: str, password: str) -> str:
     Returns:
         str: Decrypted data
     """
+    # Decode the encrypted data and salt
+    encrypted_bytes = base64.b64decode(encrypted_data)
+    salt_bytes = base64.b64decode(salt)
+
+    # Derive the key from the password and salt
+    key, _ = _derive_key_from_password(password, salt_bytes)
+
+    # Verify NaCl is available (imported at the top)
     try:
-        # Decode the encrypted data and salt
-        encrypted_bytes = base64.b64decode(encrypted_data)
-        salt_bytes = base64.b64decode(salt)
+        if not hasattr(nacl, "secret") or not hasattr(nacl, "utils"):
+            raise ImportError("NaCl modules not available")
+    except ImportError:
+        raise ValueError(
+            "PyNaCl is required for decryption. Install it with: pip install pynacl"
+        )
 
-        # Derive the key from the password and salt
-        key, _ = _derive_key_from_password(password, salt_bytes)
+    # Create a SecretBox with our derived key
+    box = nacl.secret.SecretBox(key)
 
-        # Verify NaCl is available (imported at the top)
-        try:
-            if not hasattr(nacl, "secret") or not hasattr(nacl, "utils"):
-                raise ImportError("NaCl modules not available")
-        except ImportError:
-            raise ValueError(
-                "PyNaCl is required for decryption. Install it with: pip install pynacl"
-            )
+    # Decrypt the data
+    decrypted_data = box.decrypt(encrypted_bytes)
 
-        # Create a SecretBox with our derived key
-        box = nacl.secret.SecretBox(key)
-
-        # Decrypt the data
-        decrypted_data = box.decrypt(encrypted_bytes)
-
-        # Return the decrypted string
-        return decrypted_data.decode("utf-8")
-
-    except Exception as e:
-        raise ValueError(f"Error decrypting data with password: {e}")
+    # Return the decrypted string
+    return decrypted_data.decode("utf-8")
 
 
 def encrypt_seed_phrase(
@@ -317,7 +313,7 @@ def encrypt_seed_phrase(
     Args:
         seed_phrase: The plain text seed phrase to encrypt
         password: Optional password (if None, will prompt)
-        account_name: Optional name for the account (if None, uses legacy mode or active account)
+        account_name: Optional name for the account (if None, uses active account)
 
     Returns:
         bool: True if encryption and saving was successful, False otherwise
@@ -344,30 +340,31 @@ def encrypt_seed_phrase(
 
         config = load_config()
 
-        # Check if we're using the new multi-account system
-        if account_name is not None:
-            # Multi-account mode
-            if "accounts" not in config["substrate"]:
-                config["substrate"]["accounts"] = {}
+        # Only use multi-account mode
+        # Use active account if no account specified
+        name_to_use = account_name
+        if name_to_use is None:
+            name_to_use = config["substrate"].get("active_account")
+            if not name_to_use:
+                # If no active account, we need a name
+                print("Error: No account name specified and no active account")
+                return False
 
-            # Store the account data
-            config["substrate"]["accounts"][account_name] = {
-                "seed_phrase": encrypted_data,
-                "seed_phrase_encoded": True,
-                "seed_phrase_salt": salt,
-                "ss58_address": ss58_address,
-            }
+        # Ensure accounts structure exists
+        if "accounts" not in config["substrate"]:
+            config["substrate"]["accounts"] = {}
 
-            # Set as active account if no active account exists
-            if not config["substrate"].get("active_account"):
-                config["substrate"]["active_account"] = account_name
+        # Store the account data
+        config["substrate"]["accounts"][name_to_use] = {
+            "seed_phrase": encrypted_data,
+            "seed_phrase_encoded": True,
+            "seed_phrase_salt": salt,
+            "ss58_address": ss58_address,
+        }
 
-        else:
-            # Legacy mode - single account
-            config["substrate"]["seed_phrase"] = encrypted_data
-            config["substrate"]["seed_phrase_encoded"] = True
-            config["substrate"]["seed_phrase_salt"] = salt
-            config["substrate"]["ss58_address"] = ss58_address
+        # Set as active account if no active account exists
+        if not config["substrate"].get("active_account"):
+            config["substrate"]["active_account"] = name_to_use
 
         return save_config(config)
 
@@ -384,60 +381,43 @@ def decrypt_seed_phrase(
 
     Args:
         password: Optional password (if None, will prompt)
-        account_name: Optional account name (if None, uses active account or legacy mode)
+        account_name: Optional account name (if None, uses active account)
 
     Returns:
         Optional[str]: The decrypted seed phrase, or None if decryption failed
     """
-    try:
-        config = load_config()
+    config = load_config()
 
-        # Determine if we're using multi-account mode
-        if account_name is not None or config["substrate"].get("active_account"):
-            # Multi-account mode
-            name_to_use = account_name or config["substrate"].get("active_account")
+    # Only use the multi-account system
+    name_to_use = account_name or config["substrate"].get("active_account")
 
-            if not name_to_use:
-                print("Error: No account specified and no active account")
-                return None
-
-            if name_to_use not in config["substrate"].get("accounts", {}):
-                print(f"Error: Account '{name_to_use}' not found")
-                return None
-
-            account_data = config["substrate"]["accounts"][name_to_use]
-            is_encoded = account_data.get("seed_phrase_encoded", False)
-
-            if not is_encoded:
-                return account_data.get("seed_phrase")
-
-            encrypted_data = account_data.get("seed_phrase")
-            salt = account_data.get("seed_phrase_salt")
-
-        else:
-            # Legacy mode - single account
-            is_encoded = config["substrate"].get("seed_phrase_encoded", False)
-
-            if not is_encoded:
-                return config["substrate"].get("seed_phrase")
-
-            encrypted_data = config["substrate"].get("seed_phrase")
-            salt = config["substrate"].get("seed_phrase_salt")
-
-        if not encrypted_data or not salt:
-            print("Error: No encrypted seed phrase found or missing salt")
-            return None
-
-        # Get password from user if not provided
-        if password is None:
-            password = getpass.getpass("Enter password to decrypt seed phrase: ")
-
-        # Decrypt the seed phrase
-        return decrypt_with_password(encrypted_data, salt, password)
-
-    except Exception as e:
-        print(f"Error decrypting seed phrase: {e}")
+    if not name_to_use:
+        print("Error: No account specified and no active account")
         return None
+
+    if name_to_use not in config["substrate"].get("accounts", {}):
+        print(f"Error: Account '{name_to_use}' not found")
+        return None
+
+    account_data = config["substrate"]["accounts"][name_to_use]
+    is_encoded = account_data.get("seed_phrase_encoded", False)
+
+    if not is_encoded:
+        return account_data.get("seed_phrase")
+
+    encrypted_data = account_data.get("seed_phrase")
+    salt = account_data.get("seed_phrase_salt")
+
+    if not encrypted_data or not salt:
+        print("Error: No encrypted seed phrase found or missing salt")
+        return None
+
+    # Get password from user if not provided
+    if password is None:
+        password = getpass.getpass("Enter password to decrypt seed phrase: \n\n")
+
+    # Decrypt the seed phrase
+    return decrypt_with_password(encrypted_data, salt, password)
 
 
 def get_seed_phrase(
@@ -448,45 +428,31 @@ def get_seed_phrase(
 
     Args:
         password: Optional password for decryption (if None and needed, will prompt)
-        account_name: Optional account name (if None, uses active account or legacy mode)
+        account_name: Optional account name (if None, uses active account)
 
     Returns:
         Optional[str]: The seed phrase, or None if not available
     """
     config = load_config()
 
-    # Determine if we're using multi-account mode
-    if account_name is not None or config["substrate"].get("active_account"):
-        # Multi-account mode
-        name_to_use = account_name or config["substrate"].get("active_account")
+    # Only use the multi-account system
+    name_to_use = account_name or config["substrate"].get("active_account")
 
-        if not name_to_use:
-            print("Error: No account specified and no active account")
-            return None
+    if not name_to_use:
+        print("Error: No account specified and no active account")
+        return None
 
-        if name_to_use not in config["substrate"].get("accounts", {}):
-            print(f"Error: Account '{name_to_use}' not found")
-            return None
+    if name_to_use not in config["substrate"].get("accounts", {}):
+        print(f"Error: Account '{name_to_use}' not found")
+        return None
 
-        account_data = config["substrate"]["accounts"][name_to_use]
-        is_encoded = account_data.get("seed_phrase_encoded", False)
-
-    else:
-        # Legacy mode - single account
-        is_encoded = config["substrate"].get("seed_phrase_encoded", False)
+    account_data = config["substrate"]["accounts"][name_to_use]
+    is_encoded = account_data.get("seed_phrase_encoded", False)
 
     if is_encoded:
-        # If encoded, decrypt it
-        return decrypt_seed_phrase(password, account_name)
+        return decrypt_seed_phrase(password, name_to_use)
     else:
-        # If not encoded, just return the plain text seed phrase
-        if account_name is not None or config["substrate"].get("active_account"):
-            # Multi-account mode
-            name_to_use = account_name or config["substrate"].get("active_account")
-            return config["substrate"]["accounts"][name_to_use].get("seed_phrase")
-        else:
-            # Legacy mode
-            return config["substrate"].get("seed_phrase")
+        return account_data.get("seed_phrase")
 
 
 def set_seed_phrase(
@@ -502,7 +468,7 @@ def set_seed_phrase(
         seed_phrase: The seed phrase to store
         encode: Whether to encrypt the seed phrase (requires password)
         password: Optional password for encryption (if None and encode=True, will prompt)
-        account_name: Optional name for the account (if None, uses legacy mode or active account)
+        account_name: Optional name for the account (if None, uses active account)
 
     Returns:
         bool: True if saving was successful, False otherwise
@@ -520,30 +486,31 @@ def set_seed_phrase(
         except Exception as e:
             print(f"Warning: Could not derive SS58 address: {e}")
 
-        # Determine if we're using multi-account mode
-        if account_name is not None:
-            # Multi-account mode
-            if "accounts" not in config["substrate"]:
-                config["substrate"]["accounts"] = {}
+        # Only use multi-account mode
+        # Use active account if no account specified
+        name_to_use = account_name
+        if name_to_use is None:
+            name_to_use = config["substrate"].get("active_account")
+            if not name_to_use:
+                # If no active account, we need a name
+                print("Error: No account name specified and no active account")
+                return False
 
-            # Store the account data
-            config["substrate"]["accounts"][account_name] = {
-                "seed_phrase": seed_phrase,
-                "seed_phrase_encoded": False,
-                "seed_phrase_salt": None,
-                "ss58_address": ss58_address,
-            }
+        # Ensure accounts structure exists
+        if "accounts" not in config["substrate"]:
+            config["substrate"]["accounts"] = {}
 
-            # Set as active account if no active account exists
-            if not config["substrate"].get("active_account"):
-                config["substrate"]["active_account"] = account_name
+        # Store the account data
+        config["substrate"]["accounts"][name_to_use] = {
+            "seed_phrase": seed_phrase,
+            "seed_phrase_encoded": False,
+            "seed_phrase_salt": None,
+            "ss58_address": ss58_address,
+        }
 
-        else:
-            # Legacy mode - single account
-            config["substrate"]["seed_phrase"] = seed_phrase
-            config["substrate"]["seed_phrase_encoded"] = False
-            config["substrate"]["seed_phrase_salt"] = None
-            config["substrate"]["ss58_address"] = ss58_address
+        # Set as active account if no active account exists
+        if not config["substrate"].get("active_account"):
+            config["substrate"]["active_account"] = name_to_use
 
         return save_config(config)
 

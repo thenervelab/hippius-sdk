@@ -11,20 +11,12 @@ from dotenv import load_dotenv
 from mnemonic import Mnemonic
 from substrateinterface import Keypair, SubstrateInterface
 
-from hippius_sdk.config import (
-    get_account_address,
-    get_active_account,
-    get_all_config,
-    get_config_value,
-    get_seed_phrase,
-    set_active_account,
-    set_seed_phrase,
-)
-from hippius_sdk.utils import (
-    format_size,
-    hex_to_ipfs_cid,
-    initialize_substrate_connection,
-)
+from hippius_sdk.config import (get_account_address, get_active_account,
+                                get_all_config, get_config_value,
+                                get_seed_phrase, set_active_account,
+                                set_seed_phrase)
+from hippius_sdk.utils import (format_size, hex_to_ipfs_cid,
+                               initialize_substrate_connection)
 
 # Load environment variables
 load_dotenv()
@@ -155,7 +147,6 @@ class SubstrateClient:
             try:
                 self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
                 self._account_address = self._keypair.ss58_address
-                print(f"Keypair created for account: {self._keypair.ss58_address}")
                 self._read_only = False
                 return True
             except Exception as e:
@@ -163,22 +154,14 @@ class SubstrateClient:
                 return False
 
         # Otherwise, try to get the seed phrase from config
-        try:
-            config_seed = get_seed_phrase(
-                self._seed_phrase_password, self._account_name
-            )
-            if config_seed:
-                self._seed_phrase = config_seed
-                self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
-                self._account_address = self._keypair.ss58_address
-                print(f"Keypair created for account: {self._keypair.ss58_address}")
-                self._read_only = False
-                return True
-            else:
-                print("No seed phrase available. Cannot sign transactions.")
-                return False
-        except Exception as e:
-            print(f"Warning: Could not get seed phrase from config: {e}")
+        config_seed = get_seed_phrase(self._seed_phrase_password, self._account_name)
+        if config_seed:
+            self._seed_phrase = config_seed
+            self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
+            self._account_address = self._keypair.ss58_address
+            self._read_only = False
+            return True
+        else:
             return False
 
     def generate_mnemonic(self) -> str:
@@ -193,6 +176,15 @@ class SubstrateClient:
             return mnemo.generate(strength=128)  # 128 bits = 12 words
         except Exception as e:
             raise ValueError(f"Error generating mnemonic: {e}")
+
+    def generate_seed_phrase(self) -> str:
+        """
+        Generate a new random seed phrase (alias for generate_mnemonic).
+
+        Returns:
+            str: A 12-word mnemonic seed phrase
+        """
+        return self.generate_mnemonic()
 
     def create_account(
         self, name: str, encode: bool = False, password: Optional[str] = None
@@ -482,9 +474,8 @@ class SubstrateClient:
         try:
             self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
             self._account_address = self._keypair.ss58_address
-            print(f"Keypair created for account: {self._keypair.ss58_address}")
         except Exception as e:
-            print(f"Warning: Could not create keypair from seed phrase: {e}")
+            raise ValueError(f"Could not create keypair from seed phrase: {e}")
 
     async def storage_request(
         self, files: List[Union[FileInput, Dict[str, str]]], miner_ids: List[str] = None

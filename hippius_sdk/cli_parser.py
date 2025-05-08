@@ -520,6 +520,11 @@ def add_account_commands(subparsers):
         help="Account name to show info for (uses active account if not specified)",
     )
 
+    # Account login
+    login_account_parser = account_subparsers.add_parser(
+        "login", help="Login with an account address and seed phrase"
+    )
+
     # Account balance
     balance_account_parser = account_subparsers.add_parser(
         "balance", help="Check account balance"
