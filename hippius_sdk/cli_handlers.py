@@ -988,7 +988,7 @@ async def handle_erasure_code(
 
         # Calculate new chunk size to get exactly k chunks
         new_chunk_size = file_size / k
-        
+
         new_chunk_size = int(new_chunk_size)
         new_chunk_size = max(1, new_chunk_size)
 

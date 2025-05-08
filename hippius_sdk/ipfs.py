@@ -818,7 +818,7 @@ class IPFSClient:
         # Step 2: Split the file into chunks for erasure coding
         chunk_size = int(chunk_size)
         chunk_size = max(1, chunk_size)  # Ensure it's at least 1 byte
-        
+
         chunks = []
         chunk_positions = []
         for i in range(0, len(file_data), chunk_size):
