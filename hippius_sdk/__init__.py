@@ -3,15 +3,26 @@ Hippius SDK - Python interface for Hippius blockchain storage
 """
 
 from hippius_sdk.client import HippiusClient
-from hippius_sdk.config import (decrypt_seed_phrase, delete_account,
-                                encrypt_seed_phrase, get_account_address,
-                                get_active_account, get_all_config,
-                                get_config_value, get_encryption_key,
-                                get_seed_phrase, initialize_from_env,
-                                list_accounts, load_config, reset_config,
-                                save_config, set_active_account,
-                                set_config_value, set_encryption_key,
-                                set_seed_phrase)
+from hippius_sdk.config import (
+    decrypt_seed_phrase,
+    delete_account,
+    encrypt_seed_phrase,
+    get_account_address,
+    get_active_account,
+    get_all_config,
+    get_config_value,
+    get_encryption_key,
+    get_seed_phrase,
+    initialize_from_env,
+    list_accounts,
+    load_config,
+    reset_config,
+    save_config,
+    set_active_account,
+    set_config_value,
+    set_encryption_key,
+    set_seed_phrase,
+)
 from hippius_sdk.ipfs import IPFSClient
 from hippius_sdk.utils import format_cid, format_size, hex_to_ipfs_cid
 

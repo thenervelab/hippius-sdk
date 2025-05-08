@@ -11,12 +11,20 @@ from dotenv import load_dotenv
 from mnemonic import Mnemonic
 from substrateinterface import Keypair, SubstrateInterface
 
-from hippius_sdk.config import (get_account_address, get_active_account,
-                                get_all_config, get_config_value,
-                                get_seed_phrase, set_active_account,
-                                set_seed_phrase)
-from hippius_sdk.utils import (format_size, hex_to_ipfs_cid,
-                               initialize_substrate_connection)
+from hippius_sdk.config import (
+    get_account_address,
+    get_active_account,
+    get_all_config,
+    get_config_value,
+    get_seed_phrase,
+    set_active_account,
+    set_seed_phrase,
+)
+from hippius_sdk.utils import (
+    format_size,
+    hex_to_ipfs_cid,
+    initialize_substrate_connection,
+)
 
 # Load environment variables
 load_dotenv()

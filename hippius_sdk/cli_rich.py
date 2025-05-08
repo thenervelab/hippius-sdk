@@ -6,8 +6,14 @@ from typing import Any, Dict, List, Optional, Union
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import (BarColumn, Progress, SpinnerColumn, TextColumn,
-                           TimeElapsedColumn, TimeRemainingColumn)
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 from rich.table import Table
 from rich.text import Text
 
