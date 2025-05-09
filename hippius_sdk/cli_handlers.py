@@ -373,9 +373,7 @@ async def handle_store(
 
                     # Store on blockchain - miners are optional
                     # Create a file input for blockchain storage
-                    file_input = FileInput(
-                        file_hash=result["cid"], file_name=file_name
-                    )
+                    file_input = FileInput(file_hash=result["cid"], file_name=file_name)
 
                     # Submit storage request
                     tx_hash = await client.substrate_client.storage_request(
@@ -386,7 +384,9 @@ async def handle_store(
                     result["transaction_hash"] = tx_hash
 
                     # Add a note about the pinning status command
-                    log("\n[bold yellow]Note:[/bold yellow] The pinning-status command will show a different CID (metadata) rather than the direct file CID.")
+                    log(
+                        "\n[bold yellow]Note:[/bold yellow] The pinning-status command will show a different CID (metadata) rather than the direct file CID."
+                    )
                 except Exception as e:
                     warning(f"Failed to publish file globally: {str(e)}")
 
@@ -594,7 +594,9 @@ async def handle_store_dir(
                         result["transaction_hash"] = tx_hash
 
                         # Add a note about the pinning status command
-                        log("\n[bold yellow]Note:[/bold yellow] The pinning-status command will show a different CID (metadata) rather than the direct directory CID.")
+                        log(
+                            "\n[bold yellow]Note:[/bold yellow] The pinning-status command will show a different CID (metadata) rather than the direct directory CID."
+                        )
 
                 except Exception as e:
                     warning(f"Failed to publish directory globally: {str(e)}")
@@ -886,23 +888,34 @@ async def handle_pinning_status(
                         # Try to parse as JSON
                         try:
                             # Decode JSON from content
-                            metadata_json = json.loads(cat_result["content"].decode("utf-8"))
+                            metadata_json = json.loads(
+                                cat_result["content"].decode("utf-8")
+                            )
 
                             # This should be an array with one or more file entries
-                            if isinstance(metadata_json, list) and len(metadata_json) > 0:
+                            if (
+                                isinstance(metadata_json, list)
+                                and len(metadata_json) > 0
+                            ):
                                 log(f"\n   [bold cyan]Contained files:[/bold cyan]")
                                 for idx, file_entry in enumerate(metadata_json, 1):
                                     if isinstance(file_entry, dict):
                                         original_cid = file_entry.get("cid")
                                         original_name = file_entry.get("filename")
                                         if original_cid:
-                                            log(f"   {idx}. Original CID: [bold green]{original_cid}[/bold green]")
+                                            log(
+                                                f"   {idx}. Original CID: [bold green]{original_cid}[/bold green]"
+                                            )
                                             if original_name:
                                                 log(f"      Name: {original_name}")
-                                            log(f"      Gateway URL: {client.ipfs_client.gateway}/ipfs/{original_cid}")
+                                            log(
+                                                f"      Gateway URL: {client.ipfs_client.gateway}/ipfs/{original_cid}"
+                                            )
                         except json.JSONDecodeError:
                             if verbose:
-                                log("   [yellow]Could not parse metadata as JSON[/yellow]")
+                                log(
+                                    "   [yellow]Could not parse metadata as JSON[/yellow]"
+                                )
                     except Exception as e:
                         if verbose:
                             warning(f"   Error getting original file CIDs: {e}")
