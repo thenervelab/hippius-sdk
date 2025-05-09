@@ -113,6 +113,16 @@ def main():
         encrypt = True if args.encrypt else (False if args.no_encrypt else None)
         decrypt = True if args.decrypt else (False if args.no_decrypt else None)
 
+        # For erasure-code specifically, the password may have been requested and cached already
+        # We need to preserve it if it was set by handle_erasure_code
+        if (
+            args.command == "erasure-code"
+            and hasattr(client.substrate_client, "_seed_phrase")
+            and client.substrate_client._seed_phrase
+        ):
+            # Password has already been handled by the command handler
+            pass
+
         # Handle commands with the helper function
         if args.command == "download":
             return run_async_handler(
@@ -151,6 +161,7 @@ def main():
                 args.dir_path,
                 miner_ids,
                 encrypt=encrypt,
+                publish=not args.no_publish if hasattr(args, "no_publish") else True,
             )
 
         elif args.command == "credits":

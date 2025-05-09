@@ -148,10 +148,11 @@ class HippiusClient:
     ) -> Dict[str, Any]:
         """
         Download a file from IPFS with optional decryption.
+        Supports downloading directories - in that case, a directory structure will be created.
 
         Args:
             cid: Content Identifier (CID) of the file to download
-            output_path: Path where the downloaded file will be saved
+            output_path: Path where the downloaded file/directory will be saved
             decrypt: Whether to decrypt the file (overrides default)
 
         Returns:
@@ -162,6 +163,7 @@ class HippiusClient:
                 - size_formatted: Human-readable file size
                 - elapsed_seconds: Time taken for the download
                 - decrypted: Whether the file was decrypted
+                - is_directory: Whether the download was a directory
 
         Raises:
             requests.RequestException: If the download fails
@@ -436,7 +438,7 @@ class HippiusClient:
         metadata_cid: str,
         cancel_from_blockchain: bool = True,
         parallel_limit: int = 20,
-    ) -> Dict[str, Any]:
+    ) -> bool:
         """
         Delete an erasure-coded file, including all its chunks in parallel.
 
@@ -446,7 +448,7 @@ class HippiusClient:
             parallel_limit: Maximum number of concurrent deletion operations
 
         Returns:
-            Dict containing the result of the operation
+            True or false if failed.
 
         Raises:
             RuntimeError: If deletion fails completely

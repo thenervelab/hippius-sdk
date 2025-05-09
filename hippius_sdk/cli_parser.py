@@ -197,12 +197,32 @@ def add_storage_commands(subparsers):
         "store", help="Upload a file to IPFS and store it on Substrate"
     )
     store_parser.add_argument("file_path", help="Path to file to upload")
+    store_parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="Publish file to IPFS and store on the blockchain (default)",
+    )
+    store_parser.add_argument(
+        "--no-publish",
+        action="store_true",
+        help="Don't publish file to IPFS or store on the blockchain (local only)",
+    )
 
     # Store directory command
     store_dir_parser = subparsers.add_parser(
         "store-dir", help="Upload a directory to IPFS and store all files on Substrate"
     )
     store_dir_parser.add_argument("dir_path", help="Path to directory to upload")
+    store_dir_parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="Publish all files to IPFS and store on the blockchain (default)",
+    )
+    store_dir_parser.add_argument(
+        "--no-publish",
+        action="store_true",
+        help="Don't publish files to IPFS or store on the blockchain (local only)",
+    )
 
     # Pinning status command
     pinning_status_parser = subparsers.add_parser(

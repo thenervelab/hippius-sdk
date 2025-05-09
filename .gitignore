@@ -87,3 +87,4 @@ docs/_build/
 # Celery stuff
 celerybeat-schedule
 celerybeat.pid 
+**/.claude/settings.local.json

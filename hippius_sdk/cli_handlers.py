@@ -9,6 +9,7 @@ import asyncio
 import base64
 import getpass
 import json
+import math
 import os
 import tempfile
 import time
@@ -43,6 +44,12 @@ from hippius_sdk.cli_rich import (
     print_table,
     success,
     warning,
+)
+from hippius_sdk.errors import (
+    HippiusAlreadyDeletedError,
+    HippiusFailedIPFSUnpin,
+    HippiusFailedSubstrateDelete,
+    HippiusMetadataError,
 )
 
 try:
@@ -146,6 +153,12 @@ async def handle_download(
         f"Saved to: [bold]{result['output_path']}[/bold]",
         f"Size: [bold cyan]{result['size_bytes']:,}[/bold cyan] bytes ([bold cyan]{result['size_formatted']}[/bold cyan])",
     ]
+
+    # Add details about content type
+    if result.get("is_directory", False):
+        details.append("[bold green]Content type: Directory[/bold green]")
+    else:
+        details.append("[bold blue]Content type: File[/bold blue]")
 
     if result.get("decrypted"):
         details.append("[bold yellow]File was decrypted during download[/bold yellow]")
@@ -358,6 +371,7 @@ async def handle_store_dir(
     dir_path: str,
     miner_ids: Optional[List[str]] = None,
     encrypt: Optional[bool] = None,
+    publish: bool = True,
 ) -> int:
     """Handle the store directory command"""
     if not os.path.exists(dir_path):
@@ -417,11 +431,43 @@ async def handle_store_dir(
         updater = asyncio.create_task(update_progress())
 
         try:
+            # Upload info message based on publish flag
+            if not publish:
+                upload_info.append(
+                    "[bold yellow]Publishing: Disabled (local upload only)[/bold yellow]"
+                )
+                log(
+                    "\nUpload will be local only - not publishing to blockchain or pinning to IPFS"
+                )
+            else:
+                upload_info.append(
+                    "[bold green]Publishing: Enabled (publishing to blockchain)[/bold green]"
+                )
+
+            # Display updated upload information panel
+            print_panel("\n".join(upload_info), title="Directory Upload Operation")
+
             # Use the store_directory method
             result = await client.ipfs_client.upload_directory(
                 dir_path=dir_path,
                 encrypt=encrypt,
             )
+
+            # Skip publishing to blockchain if publish is False
+            if not publish:
+                # Remove any blockchain-related data from result to ensure we don't try to use it
+                if "transaction_hash" in result:
+                    del result["transaction_hash"]
+            else:
+                # If we want to publish, make sure files are pinned globally
+                for file_info in result.get("files", []):
+                    if "cid" in file_info:
+                        try:
+                            await client.ipfs_client.publish_global(file_info["cid"])
+                        except Exception as e:
+                            warning(
+                                f"Failed to publish file {file_info['name']} globally: {str(e)}"
+                            )
 
             # Complete the progress
             progress.update(task, completed=100)
@@ -461,10 +507,14 @@ async def handle_store_dir(
                     ["Index", "Filename", "CID"],
                 )
 
-            # If we stored in the marketplace
-            if "transaction_hash" in result:
+            # If publishing is enabled and we stored in the marketplace
+            if publish and "transaction_hash" in result:
                 log(
                     f"\nStored in marketplace. Transaction hash: [bold]{result['transaction_hash']}[/bold]"
+                )
+            elif not publish:
+                log(
+                    "\n[yellow]Files were uploaded locally only. No blockchain publication or IPFS pinning.[/yellow]"
                 )
 
             return 0
@@ -991,6 +1041,36 @@ async def handle_erasure_code(
         )
         return 1
 
+    # Request password early if we're going to publish to the blockchain
+    if publish and client.substrate_client._seed_phrase is None:
+        # First check if we have an encrypted seed phrase that will require a password
+        config = load_config()
+        account_name = client.substrate_client._account_name or get_active_account()
+
+        if account_name and account_name in config["substrate"].get("accounts", {}):
+            account_data = config["substrate"]["accounts"][account_name]
+            is_encoded = account_data.get("seed_phrase_encoded", False)
+
+            if is_encoded:
+                warning("Wallet password will be required for publishing to blockchain")
+                password = getpass.getpass(
+                    "Enter password to decrypt seed phrase: \n\n"
+                )
+
+                # Store the password in client for later use
+                client.substrate_client._seed_phrase_password = password
+
+                # Pre-authenticate to ensure the password is correct
+                try:
+                    seed_phrase = decrypt_seed_phrase(password, account_name)
+                    if not seed_phrase:
+                        error("Failed to decrypt seed phrase. Incorrect password?")
+                        return 1
+                    client.substrate_client._seed_phrase = seed_phrase
+                except Exception as e:
+                    error(f"Error decrypting seed phrase: {e}")
+                    return 1
+
     # Get file size
     file_size = os.path.getsize(file_path)
     file_name = os.path.basename(file_path)
@@ -1020,11 +1100,18 @@ async def handle_erasure_code(
 
         chunk_size = new_chunk_size
 
+    # Calculate total number of chunks that will be created
+    total_original_chunks = max(1, int(math.ceil(file_size / chunk_size)))
+    total_encoded_chunks = total_original_chunks * m
+    estimated_size_per_chunk = min(chunk_size, file_size / total_original_chunks)
+
     # Create parameter information panel
     param_info = [
         f"File: [bold]{file_name}[/bold] ([bold cyan]{file_size / 1024 / 1024:.2f} MB[/bold cyan])",
         f"Parameters: k=[bold]{k}[/bold], m=[bold]{m}[/bold] (need {k} of {m} chunks to reconstruct)",
         f"Chunk size: [bold cyan]{chunk_size / 1024 / 1024:.6f} MB[/bold cyan]",
+        f"Total chunks to be created: [bold yellow]{total_encoded_chunks}[/bold yellow] ({total_original_chunks} original chunks × {m} encoded chunks each)",
+        f"Estimated storage required: [bold magenta]{(total_encoded_chunks * estimated_size_per_chunk) / (1024 * 1024):.2f} MB[/bold magenta]",
     ]
 
     # Add encryption status
@@ -1394,89 +1481,210 @@ async def handle_reconstruct(
 
 
 async def handle_delete(client: HippiusClient, cid: str, force: bool = False) -> int:
-    """Handle the delete command"""
-    info(f"Preparing to delete file with CID: [bold cyan]{cid}[/bold cyan]")
+    """Handle the delete command for files or directories"""
+    info(f"Preparing to delete content with CID: [bold cyan]{cid}[/bold cyan]")
+
+    # First check if this is a directory
+    try:
+        exists_result = await client.exists(cid)
+        if not exists_result["exists"]:
+            error(f"CID [bold cyan]{cid}[/bold cyan] not found on IPFS")
+            return 1
+    except Exception as e:
+        warning(f"Error checking if CID exists: {e}")
 
     if not force:
-        warning("This will cancel storage and remove the file from the marketplace.")
+        warning("This will cancel storage and remove the content from the marketplace.")
         confirm = input("Continue? (y/n): ").strip().lower()
         if confirm != "y":
             log("Deletion cancelled", style="yellow")
             return 0
 
-    info("Deleting file from marketplace...")
-    result = await client.delete_file(cid)
+    # Show spinner during deletion
+    with console.status("[cyan]Deleting content...[/cyan]", spinner="dots") as status:
+        result = await client.delete_file(cid)
 
-    if result.get("success"):
-        success("File successfully deleted")
+    # Display results
+    is_directory = result.get("is_directory", False)
+    child_files = result.get("child_files", [])
 
-        details = []
-        if "transaction_hash" in result:
-            details.append(
-                f"Transaction hash: [bold]{result['transaction_hash']}[/bold]"
-            )
-
-        # Create an informative panel with notes
-        notes = [
-            "1. The file is now unpinned from the marketplace",
-            "2. The CID may still resolve temporarily until garbage collection occurs",
-            "3. If the file was published to the global IPFS network, it may still be",
-            "   available through other nodes that pinned it",
+    if is_directory:
+        # Directory deletion
+        details = [
+            f"Successfully deleted directory: [bold cyan]{cid}[/bold cyan]",
+            f"Child files unpinned: [bold]{len(child_files)}[/bold]",
         ]
 
-        if details:
-            print_panel("\n".join(details), title="Transaction Details")
+        # If there are child files, show them in a table
+        if child_files:
+            table_data = []
+            for i, file in enumerate(
+                child_files[:10], 1
+            ):  # Limit to first 10 files if many
+                table_data.append(
+                    {
+                        "Index": str(i),
+                        "Filename": file.get("name", "unknown"),
+                        "CID": file.get("cid", "unknown"),
+                    }
+                )
 
-        print_panel("\n".join(notes), title="Important Notes")
+            if len(child_files) > 10:
+                table_data.append(
+                    {
+                        "Index": "...",
+                        "Filename": f"({len(child_files) - 10} more files)",
+                        "CID": "...",
+                    }
+                )
 
-        return 0
+            print_table(
+                "Unpinned Child Files", table_data, ["Index", "Filename", "CID"]
+            )
     else:
-        error(f"Failed to delete file: {result}")
+        # Regular file deletion
+        details = [f"Successfully deleted file: [bold cyan]{cid}[/bold cyan]"]
+
+    if "duration_seconds" in result.get("timing", {}):
+        details.append(
+            f"Deletion completed in [bold green]{result['timing']['duration_seconds']:.2f}[/bold green] seconds"
+        )
+
+    print_panel("\n".join(details), title="Deletion Complete")
+
+    # Create an informative panel with notes
+    notes = [
+        "1. The content is now unpinned from the marketplace",
+        "2. The CID may still resolve temporarily until garbage collection occurs",
+        "3. If the content was published to the global IPFS network, it may still be",
+        "   available through other nodes that pinned it",
+    ]
+
+    print_panel("\n".join(notes), title="Important Notes")
+
+    return 0
 
 
 async def handle_ec_delete(
     client: HippiusClient, metadata_cid: str, force: bool = False
 ) -> int:
-    """Handle the ec-delete command"""
-    info(
-        f"Preparing to delete erasure-coded file with metadata CID: [bold cyan]{metadata_cid}[/bold cyan]"
-    )
+    """Handle the erasure-code delete command"""
 
+    # Create a stylish header with the CID
+    info(f"Preparing to delete erasure-coded file with metadata CID:")
+    print_panel(f"[bold cyan]{metadata_cid}[/bold cyan]", title="Metadata CID")
+
+    # Confirm the deletion if not forced
     if not force:
-        warning("This will delete the metadata and all chunks from the marketplace.")
-        confirm = input("Continue? (y/n): ").strip().lower()
+        warning_text = [
+            "This will cancel the storage of this file on the Hippius blockchain.",
+            "The file metadata will be removed from blockchain storage tracking.",
+            "[dim]Note: Only the metadata CID will be canceled; contents may remain on IPFS.[/dim]",
+        ]
+        print_panel("\n".join(warning_text), title="Warning")
+
+        confirm = input("Continue with deletion? (y/n): ").strip().lower()
         if confirm != "y":
             log("Deletion cancelled", style="yellow")
             return 0
 
     try:
+        # First, pre-authenticate the client to get any password prompts out of the way
+        # This accesses the substrate client to trigger authentication
+        if not client.substrate_client._keypair:
+            client.substrate_client._ensure_keypair()
+
+        # Now we can show the spinner after any password prompts
         info("Deleting erasure-coded file from marketplace...")
-        result = await client.delete_ec_file(metadata_cid)
 
-        if result.get("success"):
-            success("Erasure-coded file successfully deleted")
+        # Create a more detailed spinner with phases
+        with console.status(
+            "[cyan]Processing file metadata and chunks...[/cyan]", spinner="dots"
+        ) as status:
+            try:
+                # Use the specialized delete method that now throws specific exceptions
+                await client.delete_ec_file(metadata_cid)
 
-            # Show detailed results
-            details = []
-            chunks_deleted = result.get("chunks_deleted", 0)
-            details.append(f"Deleted [bold]{chunks_deleted}[/bold] chunks")
+                # If we get here, deletion was successful
+                deletion_success = True
+                already_deleted = False
 
-            if "transaction_hash" in result:
-                details.append(
-                    f"Transaction hash: [bold]{result['transaction_hash']}[/bold]"
+            except HippiusAlreadyDeletedError:
+                # Special case - already deleted
+                deletion_success = False
+                already_deleted = True
+
+            except HippiusFailedSubstrateDelete as e:
+                # Blockchain deletion failed
+                error(f"Blockchain storage cancellation failed: {e}")
+                return 1
+
+            except HippiusFailedIPFSUnpin as e:
+                # IPFS unpinning failed, but blockchain deletion succeeded
+                warning(
+                    f"Note: Some IPFS operations failed, but blockchain storage was successfully canceled"
                 )
+                # Consider this a success for the user since the more important blockchain part worked
+                deletion_success = True
+                already_deleted = False
 
-            print_panel("\n".join(details), title="Deletion Results")
+            except HippiusMetadataError as e:
+                # Metadata parsing failed, but we can still continue
+                warning(
+                    f"Note: Metadata file was corrupted, but blockchain storage was successfully canceled"
+                )
+                # Consider this a success for the user since the blockchain part worked
+                deletion_success = True
+                already_deleted = False
 
+            except Exception as e:
+                # Handle any unexpected errors
+                error(f"Unexpected error: {e}")
+                return 1
+
+        # Show the result
+        if deletion_success:
+            # Create a success panel
+            success_panel = [
+                "[bold green]✓[/bold green] Metadata CID canceled from blockchain storage",
+                f"[dim]This file is no longer tracked for storage payments[/dim]",
+                "",
+                "[dim]To purge file data completely:[/dim]",
+                "• Individual chunks may still exist on IPFS and nodes",
+                "• For complete deletion, all chunks should be unpinned manually",
+            ]
+            print_panel(
+                "\n".join(success_panel), title="Storage Cancellation Successful"
+            )
+            return 0
+        elif already_deleted:
+            # Create a panel for the already deleted case
+            already_panel = [
+                "[bold yellow]![/bold yellow] This file has already been deleted from storage",
+                "[dim]The CID was not found in the blockchain storage registry[/dim]",
+                "",
+                "This is expected if:",
+                "• You previously deleted this file",
+                "• The file was deleted by another process",
+                "• The file was never stored in the first place",
+            ]
+            print_panel("\n".join(already_panel), title="Already Deleted")
+            # Return 0 since this is not an error condition
             return 0
         else:
-            error(
-                f"Failed to delete erasure-coded file: {result.get('message', 'Unknown error')}"
-            )
+            # Create an error panel for all other failures
+            error_panel = [
+                "[bold red]×[/bold red] File not found in blockchain storage",
+                "[dim]The metadata CID was not found in the blockchain storage registry[/dim]",
+                "",
+                "Possible reasons:",
+                "• The CID may be incorrect",
+                "• You may not be the owner of this file",
+            ]
+            print_panel("\n".join(error_panel), title="Storage Cancellation Failed")
             return 1
-
     except Exception as e:
-        error(f"Failed to delete erasure-coded file: {e}")
+        error(f"Error deleting erasure-coded file: {e}")
         return 1
 
 

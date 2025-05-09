@@ -20,6 +20,13 @@ from hippius_sdk.config import (
     set_active_account,
     set_seed_phrase,
 )
+from hippius_sdk.errors import (
+    HippiusAlreadyDeletedError,
+    HippiusFailedSubstrateDelete,
+    HippiusNotFoundError,
+    HippiusSubstrateAuthError,
+    HippiusSubstrateConnectionError,
+)
 from hippius_sdk.utils import (
     format_size,
     hex_to_ipfs_cid,
@@ -1133,6 +1140,50 @@ class SubstrateClient:
         """
         return hex_to_ipfs_cid(hex_string)
 
+    async def check_storage_request_exists(self, cid: str) -> bool:
+        """
+        Check if a storage request exists for the given CID in the user's storage requests.
+
+        Args:
+            cid: Content Identifier (CID) to check
+
+        Returns:
+            bool: True if the CID exists in the user's storage requests, False otherwise
+        """
+        substrate, derived_address = initialize_substrate_connection(self)
+
+        if not derived_address:
+            # If we don't have a derived address, try to get the keypair
+            if not self._ensure_keypair():
+                raise ValueError("No account address available")
+            derived_address = self._keypair.ss58_address
+
+        # Get user storage requests to check if this CID is still stored
+        try:
+            # Get all user storage requests
+            user_files = await self.get_user_files(derived_address)
+
+            # Check if the CID is in the list
+            for file in user_files:
+                if file.get("cid") == cid or file.get("file_hash") == cid:
+                    return True
+
+            # If we didn't find it, try one more approach by querying pinning status
+            try:
+                pinning_status = self.get_pinning_status(derived_address)
+                for request in pinning_status:
+                    if request.get("cid") == cid:
+                        return True
+            except:
+                # If pinning status check fails, assume it doesn't exist
+                pass
+
+            # If we get here, the CID was not found
+            return False
+        except Exception:
+            # If we encounter an error checking, we'll assume it exists to be safe
+            return True
+
     async def cancel_storage_request(self, cid: str) -> str:
         """
         Cancel a storage request by CID from the Hippius blockchain.
@@ -1141,10 +1192,30 @@ class SubstrateClient:
             cid: Content Identifier (CID) of the file to cancel
 
         Returns:
-            str: Transaction hash
+            str: Transaction hash or status message
         """
+        # First check if this CID exists in the user's storage requests
+        try:
+            cid_exists = await self.check_storage_request_exists(cid)
+            if not cid_exists:
+                raise HippiusAlreadyDeletedError(
+                    f"CID {cid} is not found in storage requests - may already be deleted"
+                )
+        except Exception as e:
+            if not isinstance(e, HippiusAlreadyDeletedError):
+                # If there was an error checking, but not our custom exception, wrap it
+                raise HippiusSubstrateConnectionError(
+                    f"Error checking if CID exists: {str(e)}"
+                )
+            else:
+                # Re-raise our custom exception
+                raise
+
+        # Continue with cancellation if it exists
         if not self._ensure_keypair():
-            raise ValueError("Seed phrase must be set before making transactions")
+            raise HippiusSubstrateAuthError(
+                "Seed phrase must be set before making transactions"
+            )
 
         substrate, _ = initialize_substrate_connection(self)
 
@@ -1165,9 +1236,17 @@ class SubstrateClient:
         fee_tokens = fee / 10**12 if fee > 0 else 0
         print(f"Estimated transaction fee: {fee} ({fee_tokens:.10f} tokens)")
 
-        extrinsic = self._substrate.create_signed_extrinsic(
-            call=call, keypair=self._keypair
-        )
-        response = self._substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
-        print(f"Transaction hash: {response.extrinsic_hash}")
-        return response.extrinsic_hash
+        try:
+            extrinsic = self._substrate.create_signed_extrinsic(
+                call=call, keypair=self._keypair
+            )
+            response = self._substrate.submit_extrinsic(
+                extrinsic, wait_for_inclusion=True
+            )
+            print(f"Transaction hash: {response.extrinsic_hash}")
+            return response.extrinsic_hash
+        except Exception as e:
+            # If the transaction failed, raise our custom exception
+            raise HippiusFailedSubstrateDelete(
+                f"Failed to cancel storage request: {str(e)}"
+            )
