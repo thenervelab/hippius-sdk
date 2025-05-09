@@ -152,6 +152,7 @@ def main():
                 args.file_path,
                 miner_ids,
                 encrypt=encrypt,
+                publish=not args.no_publish if hasattr(args, "no_publish") else True,
             )
 
         elif args.command == "store-dir":

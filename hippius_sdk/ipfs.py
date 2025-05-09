@@ -443,6 +443,7 @@ class IPFSClient:
         output_path: str,
         decrypt: Optional[bool] = None,
         max_retries: int = 3,
+        skip_directory_check: bool = False,
     ) -> Dict[str, Any]:
         """
         Download a file from IPFS with optional decryption.
@@ -453,6 +454,7 @@ class IPFSClient:
             output_path: Path where the downloaded file/directory will be saved
             decrypt: Whether to decrypt the file (overrides default)
             max_retries: Maximum number of retry attempts (default: 3)
+            skip_directory_check: If True, skips directory check (treats as file)
 
         Returns:
             Dict[str, Any]: Dictionary containing download results:
@@ -470,15 +472,17 @@ class IPFSClient:
         """
         start_time = time.time()
 
-        # Use the improved ls function to properly detect directories
+        # Skip directory check if requested (important for erasure code chunks)
         is_directory = False
-        try:
-            # The ls function now properly detects directories
-            ls_result = await self.client.ls(cid)
-            is_directory = ls_result.get("is_directory", False)
-        except Exception:
-            # If ls fails, we'll proceed as if it's a file
-            pass
+        if not skip_directory_check:
+            # Use the improved ls function to properly detect directories
+            try:
+                # The ls function now properly detects directories
+                ls_result = await self.client.ls(cid)
+                is_directory = ls_result.get("is_directory", False)
+            except Exception:
+                # If ls fails, we'll proceed as if it's a file
+                pass
 
         # If it's a directory, handle it differently
         if is_directory:
@@ -530,7 +534,8 @@ class IPFSClient:
             else:
                 download_path = output_path
 
-            await self.client.download_file(cid, download_path)
+            # Pass the skip_directory_check parameter to the core client
+            await self.client.download_file(cid, download_path, skip_directory_check=skip_directory_check)
             download_success = True
 
             if not download_success:
@@ -1225,8 +1230,9 @@ class IPFSClient:
                         async def download_chunk(cid, path, chunk_info):
                             async with encoded_chunks_semaphore:
                                 try:
+                                    # Always skip directory check for erasure code chunks
                                     await self.download_file(
-                                        cid, path, max_retries=max_retries
+                                        cid, path, max_retries=max_retries, skip_directory_check=True
                                     )
 
                                     # Read chunk data

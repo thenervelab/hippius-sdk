@@ -219,7 +219,7 @@ class AsyncIPFSClient:
         except httpx.HTTPError:
             return False
 
-    async def download_file(self, cid: str, output_path: str) -> str:
+    async def download_file(self, cid: str, output_path: str, skip_directory_check: bool = False) -> str:
         """
         Download content from IPFS to a file.
         If the CID is a directory, it will create a directory and download all files.
@@ -227,19 +227,22 @@ class AsyncIPFSClient:
         Args:
             cid: Content identifier
             output_path: Path where to save the file/directory
+            skip_directory_check: If True, skip directory check (useful for erasure code chunks)
 
         Returns:
             Path to the saved file/directory
         """
-        # First, check if this is a directory using the improved ls function
-        try:
-            ls_result = await self.ls(cid)
-            if ls_result.get("is_directory", False):
-                # It's a directory, use the get command to download it properly
-                return await self.download_directory_with_get(cid, output_path)
-        except Exception:
-            # If ls check fails, continue with regular file download
-            pass
+        # Skip directory check if requested (useful for erasure code chunks)
+        if not skip_directory_check:
+            # First, check if this is a directory using the improved ls function
+            try:
+                ls_result = await self.ls(cid)
+                if ls_result.get("is_directory", False):
+                    # It's a directory, use the get command to download it properly
+                    return await self.download_directory_with_get(cid, output_path)
+            except Exception:
+                # If ls check fails, continue with regular file download
+                pass
 
         # If we reached here, treat it as a regular file
         try:
@@ -251,13 +254,14 @@ class AsyncIPFSClient:
                 f.write(content)
             return output_path
         except Exception as e:
-            # As a last resort, try using the get command anyway
-            # This is helpful if the CID is a directory but we failed to detect it
-            try:
-                return await self.download_directory_with_get(cid, output_path)
-            except Exception:
-                # If all methods fail, re-raise the original error
-                raise e
+            # Only try directory fallback if not skipping directory check
+            if not skip_directory_check:
+                try:
+                    return await self.download_directory_with_get(cid, output_path)
+                except Exception:
+                    pass
+            # Raise the original error
+            raise e
 
     async def download_directory(self, cid: str, output_path: str) -> str:
         """

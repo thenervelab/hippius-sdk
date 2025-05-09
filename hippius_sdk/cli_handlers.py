@@ -33,6 +33,7 @@ from hippius_sdk import (
     set_config_value,
     set_seed_phrase,
 )
+from hippius_sdk.substrate import FileInput
 from hippius_sdk.cli_parser import get_default_address
 from hippius_sdk.cli_rich import (
     console,
@@ -246,6 +247,7 @@ async def handle_store(
     file_path: str,
     miner_ids: Optional[List[str]] = None,
     encrypt: Optional[bool] = None,
+    publish: bool = True,
 ) -> int:
     """Handle the store command (upload file to IPFS and store on Substrate)"""
     if not os.path.exists(file_path):
@@ -255,6 +257,16 @@ async def handle_store(
     if not os.path.isfile(file_path):
         error(f"[bold]{file_path}[/bold] is not a file")
         return 1
+
+    # If publishing is enabled, ensure we have a valid substrate client by accessing it
+    # This will trigger password prompts if needed right at the beginning
+    if publish and hasattr(client, "substrate_client") and client.substrate_client:
+        try:
+            # Force keypair initialization - this will prompt for password if needed
+            _ = client.substrate_client._ensure_keypair()
+        except Exception as e:
+            warning(f"Failed to initialize blockchain client: {str(e)}")
+            warning("Will continue with upload but blockchain publishing may fail")
 
     # Get file size for display
     file_size = os.path.getsize(file_path)
@@ -281,6 +293,13 @@ async def handle_store(
         upload_info.append(
             "[bold yellow]Encryption: Using default setting[/bold yellow]"
         )
+
+    # Add publishing status
+    if not publish:
+        upload_info.append("[bold yellow]Publishing: Disabled (local upload only)[/bold yellow]")
+        log("\nUpload will be local only - not publishing to blockchain or pinning to IPFS")
+    else:
+        upload_info.append("[bold green]Publishing: Enabled (publishing to blockchain)[/bold green]")
 
     # Parse miner IDs if provided
     miner_id_list = None
@@ -318,12 +337,46 @@ async def handle_store(
         updater = asyncio.create_task(update_progress())
 
         try:
-            # Use the store_file method
+            # Use the upload_file method to get the CID
             result = await client.upload_file(
                 file_path=file_path,
                 encrypt=encrypt,
-                # miner_ids=miner_id_list
             )
+
+            # If publishing is enabled, store on blockchain
+            if publish and result.get("cid"):
+                try:
+                    # Pin and publish the file globally
+                    # First pin in IPFS (essential step for publishing)
+                    await client.ipfs_client.pin(result["cid"])
+
+                    # Then publish globally to make available across network
+                    publish_result = await client.ipfs_client.publish_global(result["cid"])
+
+                    log("\n[green]File has been pinned to IPFS and published to the network[/green]")
+
+                    # Add gateway URL to the result for use in output
+                    if "cid" in result:
+                        result["gateway_url"] = f"{client.ipfs_client.gateway}/ipfs/{result['cid']}"
+
+                    # Store on blockchain if miners are provided
+                    if miner_ids:
+                        # Create a file input for blockchain storage
+                        file_input = FileInput(
+                            file_hash=result["cid"],
+                            file_name=file_name
+                        )
+
+                        # Submit storage request
+                        tx_hash = await client.substrate_client.storage_request(
+                            files=[file_input],
+                            miner_ids=miner_id_list
+                        )
+
+                        # Add transaction hash to result
+                        result["transaction_hash"] = tx_hash
+                except Exception as e:
+                    warning(f"Failed to publish file globally: {str(e)}")
 
             progress.update(task, completed=100)
             updater.cancel()
@@ -336,14 +389,24 @@ async def handle_store(
                 f"IPFS CID: [bold cyan]{result['cid']}[/bold cyan]",
             ]
 
-            if result.get("gateway_url"):
+            # Always add the gateway URL
+            gateway_url = result.get("gateway_url")
+            if not gateway_url and "cid" in result:
+                gateway_url = f"{client.ipfs_client.gateway}/ipfs/{result['cid']}"
+
+            if gateway_url:
                 success_info.append(
-                    f"Gateway URL: [link]{result['gateway_url']}[/link]"
+                    f"Gateway URL: [link]{gateway_url}[/link]"
                 )
 
             if result.get("encrypted"):
                 success_info.append(
                     "[bold yellow]File was encrypted during upload[/bold yellow]"
+                )
+
+            if not publish:
+                success_info.append(
+                    "[bold yellow]File was uploaded locally only (not published to blockchain)[/bold yellow]"
                 )
 
             print_panel("\n".join(success_info), title="Upload Successful")
@@ -381,6 +444,16 @@ async def handle_store_dir(
     if not os.path.isdir(dir_path):
         error(f"[bold]{dir_path}[/bold] is not a directory")
         return 1
+
+    # If publishing is enabled, ensure we have a valid substrate client by accessing it
+    # This will trigger password prompts if needed right at the beginning
+    if publish and hasattr(client, "substrate_client") and client.substrate_client:
+        try:
+            # Force keypair initialization - this will prompt for password if needed
+            _ = client.substrate_client._ensure_keypair()
+        except Exception as e:
+            warning(f"Failed to initialize blockchain client: {str(e)}")
+            warning("Will continue with upload but blockchain publishing may fail")
 
     # Upload information panel
     upload_info = [f"Directory: [bold]{dir_path}[/bold]"]
@@ -460,14 +533,53 @@ async def handle_store_dir(
                     del result["transaction_hash"]
             else:
                 # If we want to publish, make sure files are pinned globally
-                for file_info in result.get("files", []):
-                    if "cid" in file_info:
-                        try:
-                            await client.ipfs_client.publish_global(file_info["cid"])
-                        except Exception as e:
-                            warning(
-                                f"Failed to publish file {file_info['name']} globally: {str(e)}"
-                            )
+                try:
+                    # Add gateway URL to the result for use in output
+                    if "cid" in result:
+                        result["gateway_url"] = f"{client.ipfs_client.gateway}/ipfs/{result['cid']}"
+
+                    # Pin and publish the directory root CID globally
+                    # First pin in IPFS (essential step for publishing)
+                    await client.ipfs_client.pin(result["cid"])
+
+                    # Then publish globally to make available across network
+                    await client.ipfs_client.publish_global(result["cid"])
+
+                    log("\n[green]Directory has been pinned to IPFS and published to the network[/green]")
+
+                    # Also pin and publish individual files if available
+                    for file_info in result.get("files", []):
+                        if "cid" in file_info:
+                            try:
+                                # Pin each file to ensure availability
+                                await client.ipfs_client.pin(file_info["cid"])
+
+                                # Then publish globally
+                                await client.ipfs_client.publish_global(file_info["cid"])
+                            except Exception as e:
+                                warning(
+                                    f"Failed to publish file {file_info['name']} globally: {str(e)}"
+                                )
+
+                    # Store on blockchain if miners are provided - this is what requires a password
+                    if miner_ids and hasattr(client, "substrate_client") and client.substrate_client:
+                        # Create a file input for blockchain storage
+                        file_input = FileInput(
+                            file_hash=result["cid"],
+                            file_name=os.path.basename(dir_path)
+                        )
+
+                        # This will prompt for a password if needed
+                        tx_hash = await client.substrate_client.storage_request(
+                            files=[file_input],
+                            miner_ids=miner_id_list
+                        )
+
+                        # Add transaction hash to result
+                        result["transaction_hash"] = tx_hash
+
+                except Exception as e:
+                    warning(f"Failed to publish directory globally: {str(e)}")
 
             # Complete the progress
             progress.update(task, completed=100)
@@ -482,9 +594,25 @@ async def handle_store_dir(
                 f"Directory CID: [bold cyan]{result['cid']}[/bold cyan]",
             ]
 
-            if result.get("gateway_url"):
+            # Always add the gateway URL
+            gateway_url = result.get("gateway_url")
+            if not gateway_url and "cid" in result:
+                gateway_url = f"{client.ipfs_client.gateway}/ipfs/{result['cid']}"
+
+            if gateway_url:
                 success_info.append(
-                    f"Gateway URL: [link]{result['gateway_url']}[/link]"
+                    f"Gateway URL: [link]{gateway_url}[/link]"
+                )
+
+            # Add encryption and publish status to success info
+            if result.get("encrypted"):
+                success_info.append(
+                    "[bold yellow]Directory was encrypted during upload[/bold yellow]"
+                )
+
+            if not publish:
+                success_info.append(
+                    "[bold yellow]Directory was uploaded locally only (not published to blockchain)[/bold yellow]"
                 )
 
             print_panel("\n".join(success_info), title="Directory Upload Successful")
@@ -508,10 +636,17 @@ async def handle_store_dir(
                 )
 
             # If publishing is enabled and we stored in the marketplace
-            if publish and "transaction_hash" in result:
-                log(
-                    f"\nStored in marketplace. Transaction hash: [bold]{result['transaction_hash']}[/bold]"
-                )
+            if publish:
+                # We only include transaction hash stuff if we actually created a blockchain transaction
+                if "transaction_hash" in result:
+                    log(
+                        f"\nStored in marketplace. Transaction hash: [bold]{result['transaction_hash']}[/bold]"
+                    )
+                else:
+                    # If publish is true but no transaction hash, just indicate files were published to IPFS
+                    log(
+                        "\n[green]Directory was published to IPFS network.[/green]"
+                    )
             elif not publish:
                 log(
                     "\n[yellow]Files were uploaded locally only. No blockchain publication or IPFS pinning.[/yellow]"
