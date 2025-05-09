@@ -535,7 +535,9 @@ class IPFSClient:
                 download_path = output_path
 
             # Pass the skip_directory_check parameter to the core client
-            await self.client.download_file(cid, download_path, skip_directory_check=skip_directory_check)
+            await self.client.download_file(
+                cid, download_path, skip_directory_check=skip_directory_check
+            )
             download_success = True
 
             if not download_success:
@@ -1232,7 +1234,10 @@ class IPFSClient:
                                 try:
                                     # Always skip directory check for erasure code chunks
                                     await self.download_file(
-                                        cid, path, max_retries=max_retries, skip_directory_check=True
+                                        cid,
+                                        path,
+                                        max_retries=max_retries,
+                                        skip_directory_check=True,
                                     )
 
                                     # Read chunk data

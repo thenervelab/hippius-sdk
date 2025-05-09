@@ -219,7 +219,9 @@ class AsyncIPFSClient:
         except httpx.HTTPError:
             return False
 
-    async def download_file(self, cid: str, output_path: str, skip_directory_check: bool = False) -> str:
+    async def download_file(
+        self, cid: str, output_path: str, skip_directory_check: bool = False
+    ) -> str:
         """
         Download content from IPFS to a file.
         If the CID is a directory, it will create a directory and download all files.
