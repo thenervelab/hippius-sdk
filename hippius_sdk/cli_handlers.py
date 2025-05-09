@@ -740,20 +740,32 @@ async def handle_files(
     """Handle the files command"""
     # Get the account address we're querying
     if account_address is None:
-        # If no address provided, first try to get from keypair (if available)
+        # If no address provided, try these options in order:
+        # 1. Keypair from the client (if available)
+        # 2. Address from active account
+        # 3. Default address from config
+
+        # Option 1: Try keypair from client
         if (
             hasattr(client.substrate_client, "_keypair")
             and client.substrate_client._keypair is not None
         ):
             account_address = client.substrate_client._keypair.ss58_address
         else:
-            # Try to get the default address
-            default_address = get_default_address()
-            if default_address:
-                account_address = default_address
-            else:
-                has_default = get_default_address() is not None
+            # Option 2: Try to get address from active account
+            active_account = get_active_account()
+            if active_account:
+                account_address = get_account_address(active_account)
 
+            # Option 3: If still not found, try default address
+            if not account_address:
+                default_address = get_default_address()
+                if default_address:
+                    account_address = default_address
+
+            # If we still don't have an address, show error
+            if not account_address:
+                has_default = get_default_address() is not None
                 error("No account address provided, and client has no keypair.")
 
                 if has_default:
@@ -843,7 +855,7 @@ async def handle_pinning_status(
                 cid = pin.get("cid")
 
                 # Display pin information
-                log(f"\n{i}. CID: [bold]{cid}[/bold]")
+                log(f"\n{i}. Metadata CID: [bold]{cid}[/bold]")
                 log(f"   File Name: {pin['file_name']}")
                 status = "Assigned" if pin["is_assigned"] else "Pending"
                 log(f"   Status: {status}")
@@ -862,17 +874,38 @@ async def handle_pinning_status(
 
                 # Show content info if requested
                 if show_contents:
-                    try:
-                        content_info = await client.ipfs_client.get_content_info(cid)
+                    # Add gateway URL
+                    gateway_url = f"{client.ipfs_client.gateway}/ipfs/{cid}"
+                    log(f"   Gateway URL: {gateway_url}")
 
-                        if content_info:
-                            if "size_formatted" in content_info:
-                                log(f"   Size: {content_info['size_formatted']}")
-                            if "gateway_url" in content_info:
-                                log(f"   Gateway URL: {content_info['gateway_url']}")
+                    # Try to decode the metadata file to get the original file CID
+                    try:
+                        # Fetch the content
+                        cat_result = await client.ipfs_client.cat(cid)
+
+                        # Try to parse as JSON
+                        try:
+                            # Decode JSON from content
+                            metadata_json = json.loads(cat_result["content"].decode("utf-8"))
+
+                            # This should be an array with one or more file entries
+                            if isinstance(metadata_json, list) and len(metadata_json) > 0:
+                                log(f"\n   [bold cyan]Contained files:[/bold cyan]")
+                                for idx, file_entry in enumerate(metadata_json, 1):
+                                    if isinstance(file_entry, dict):
+                                        original_cid = file_entry.get("cid")
+                                        original_name = file_entry.get("filename")
+                                        if original_cid:
+                                            log(f"   {idx}. Original CID: [bold green]{original_cid}[/bold green]")
+                                            if original_name:
+                                                log(f"      Name: {original_name}")
+                                            log(f"      Gateway URL: {client.ipfs_client.gateway}/ipfs/{original_cid}")
+                        except json.JSONDecodeError:
+                            if verbose:
+                                log("   [yellow]Could not parse metadata as JSON[/yellow]")
                     except Exception as e:
                         if verbose:
-                            warning(f"   Error getting content info: {e}")
+                            warning(f"   Error getting original file CIDs: {e}")
             except Exception as e:
                 warning(f"Error processing pin {i}: {e}")
                 if verbose:
