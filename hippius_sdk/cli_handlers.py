@@ -33,7 +33,6 @@ from hippius_sdk import (
     set_config_value,
     set_seed_phrase,
 )
-from hippius_sdk.substrate import FileInput
 from hippius_sdk.cli_parser import get_default_address
 from hippius_sdk.cli_rich import (
     console,
@@ -52,6 +51,7 @@ from hippius_sdk.errors import (
     HippiusFailedSubstrateDelete,
     HippiusMetadataError,
 )
+from hippius_sdk.substrate import FileInput
 
 try:
     import nacl.secret
