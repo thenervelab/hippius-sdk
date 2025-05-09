@@ -371,20 +371,22 @@ async def handle_store(
                             "gateway_url"
                         ] = f"{client.ipfs_client.gateway}/ipfs/{result['cid']}"
 
-                    # Store on blockchain if miners are provided
-                    if miner_ids:
-                        # Create a file input for blockchain storage
-                        file_input = FileInput(
-                            file_hash=result["cid"], file_name=file_name
-                        )
+                    # Store on blockchain - miners are optional
+                    # Create a file input for blockchain storage
+                    file_input = FileInput(
+                        file_hash=result["cid"], file_name=file_name
+                    )
 
-                        # Submit storage request
-                        tx_hash = await client.substrate_client.storage_request(
-                            files=[file_input], miner_ids=miner_id_list
-                        )
+                    # Submit storage request
+                    tx_hash = await client.substrate_client.storage_request(
+                        files=[file_input], miner_ids=miner_id_list
+                    )
 
-                        # Add transaction hash to result
-                        result["transaction_hash"] = tx_hash
+                    # Add transaction hash to result
+                    result["transaction_hash"] = tx_hash
+
+                    # Add a note about the pinning status command
+                    log("\n[bold yellow]Note:[/bold yellow] The pinning-status command will show a different CID (metadata) rather than the direct file CID.")
                 except Exception as e:
                     warning(f"Failed to publish file globally: {str(e)}")
 
@@ -575,12 +577,8 @@ async def handle_store_dir(
                                     f"Failed to publish file {file_info['name']} globally: {str(e)}"
                                 )
 
-                    # Store on blockchain if miners are provided - this is what requires a password
-                    if (
-                        miner_ids
-                        and hasattr(client, "substrate_client")
-                        and client.substrate_client
-                    ):
+                    # Store on blockchain if client is available - miners are optional
+                    if hasattr(client, "substrate_client") and client.substrate_client:
                         # Create a file input for blockchain storage
                         file_input = FileInput(
                             file_hash=result["cid"],
@@ -594,6 +592,9 @@ async def handle_store_dir(
 
                         # Add transaction hash to result
                         result["transaction_hash"] = tx_hash
+
+                        # Add a note about the pinning status command
+                        log("\n[bold yellow]Note:[/bold yellow] The pinning-status command will show a different CID (metadata) rather than the direct directory CID.")
 
                 except Exception as e:
                     warning(f"Failed to publish directory globally: {str(e)}")
