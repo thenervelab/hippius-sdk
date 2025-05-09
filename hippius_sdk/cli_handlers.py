@@ -1713,7 +1713,9 @@ async def handle_delete(client: HippiusClient, cid: str, force: bool = False) ->
     return 0
 
 
-async def handle_pin(client: HippiusClient, cid: str, publish: bool = True, miner_ids=None) -> int:
+async def handle_pin(
+    client: HippiusClient, cid: str, publish: bool = True, miner_ids=None
+) -> int:
     """Handle the pin command to pin a CID to IPFS and optionally publish to blockchain"""
     from rich.panel import Panel
 
@@ -1729,7 +1731,9 @@ async def handle_pin(client: HippiusClient, cid: str, publish: bool = True, mine
 
     # Create operation title based on publish flag
     if publish:
-        info(f"Preparing to pin and publish content with CID: [bold cyan]{cid}[/bold cyan]")
+        info(
+            f"Preparing to pin and publish content with CID: [bold cyan]{cid}[/bold cyan]"
+        )
         operation_title = "Pin & Publish Operation"
     else:
         info(f"Preparing to pin content with CID: [bold cyan]{cid}[/bold cyan]")
@@ -1752,13 +1756,17 @@ async def handle_pin(client: HippiusClient, cid: str, publish: bool = True, mine
             warning("Will continue with pinning but blockchain publishing may fail")
 
     # Show spinner during pinning
-    with console.status("[cyan]Pinning content to IPFS...[/cyan]", spinner="dots") as status:
+    with console.status(
+        "[cyan]Pinning content to IPFS...[/cyan]", spinner="dots"
+    ) as status:
         try:
             # Pin the content to IPFS
             pin_result = await client.ipfs_client.pin(cid)
 
             if not pin_result.get("success", False):
-                error(f"Failed to pin content: {pin_result.get('message', 'Unknown error')}")
+                error(
+                    f"Failed to pin content: {pin_result.get('message', 'Unknown error')}"
+                )
                 return 1
 
             # If publishing to blockchain, do that now
@@ -1767,6 +1775,7 @@ async def handle_pin(client: HippiusClient, cid: str, publish: bool = True, mine
 
                 # Create a FileInput object for the substrate client
                 from hippius_sdk.substrate import FileInput
+
                 file_input = FileInput(file_hash=cid, file_name=f"pinned_{cid}")
 
                 # Submit the storage request
@@ -1785,7 +1794,13 @@ async def handle_pin(client: HippiusClient, cid: str, publish: bool = True, mine
                     "2. Published to the IPFS network",
                     "3. Stored on the Hippius blockchain",
                 ]
-                console.print(Panel("\n".join(panel_details), title="Operation Complete", border_style="green"))
+                console.print(
+                    Panel(
+                        "\n".join(panel_details),
+                        title="Operation Complete",
+                        border_style="green",
+                    )
+                )
             else:
                 # Just pinning, no blockchain publishing
                 gateway_url = f"{client.ipfs_client.gateway}/ipfs/{cid}"
@@ -1795,7 +1810,13 @@ async def handle_pin(client: HippiusClient, cid: str, publish: bool = True, mine
                     "\nThis content is now pinned to your IPFS node.",
                     "It will remain available as long as your node is running.",
                 ]
-                console.print(Panel("\n".join(panel_details), title="Pinning Complete", border_style="green"))
+                console.print(
+                    Panel(
+                        "\n".join(panel_details),
+                        title="Pinning Complete",
+                        border_style="green",
+                    )
+                )
 
             return 0
         except Exception as e:
