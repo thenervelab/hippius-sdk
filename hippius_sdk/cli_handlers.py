@@ -1713,6 +1713,96 @@ async def handle_delete(client: HippiusClient, cid: str, force: bool = False) ->
     return 0
 
 
+async def handle_pin(client: HippiusClient, cid: str, publish: bool = True, miner_ids=None) -> int:
+    """Handle the pin command to pin a CID to IPFS and optionally publish to blockchain"""
+    from rich.panel import Panel
+
+    # First check if this CID exists
+    try:
+        exists_result = await client.exists(cid)
+        if not exists_result["exists"]:
+            error(f"CID [bold cyan]{cid}[/bold cyan] not found on IPFS")
+            return 1
+    except Exception as e:
+        warning(f"Error checking if CID exists: {e}")
+        return 1
+
+    # Create operation title based on publish flag
+    if publish:
+        info(f"Preparing to pin and publish content with CID: [bold cyan]{cid}[/bold cyan]")
+        operation_title = "Pin & Publish Operation"
+    else:
+        info(f"Preparing to pin content with CID: [bold cyan]{cid}[/bold cyan]")
+        operation_title = "Pin Operation"
+
+    # Display operation details
+    operation_details = [
+        f"CID: [bold cyan]{cid}[/bold cyan]",
+        f"Publishing to blockchain: {'Enabled' if publish else 'Disabled'}",
+    ]
+    print_panel("\n".join(operation_details), title=operation_title)
+
+    # Need to authenticate if publishing to blockchain
+    if publish:
+        try:
+            # Ensure we have a keypair for substrate operations
+            _ = client.substrate_client._ensure_keypair()
+        except Exception as e:
+            warning(f"Failed to initialize blockchain client: {str(e)}")
+            warning("Will continue with pinning but blockchain publishing may fail")
+
+    # Show spinner during pinning
+    with console.status("[cyan]Pinning content to IPFS...[/cyan]", spinner="dots") as status:
+        try:
+            # Pin the content to IPFS
+            pin_result = await client.ipfs_client.pin(cid)
+
+            if not pin_result.get("success", False):
+                error(f"Failed to pin content: {pin_result.get('message', 'Unknown error')}")
+                return 1
+
+            # If publishing to blockchain, do that now
+            if publish:
+                status.update("[cyan]Publishing content to blockchain...[/cyan]")
+
+                # Create a FileInput object for the substrate client
+                from hippius_sdk.substrate import FileInput
+                file_input = FileInput(file_hash=cid, file_name=f"pinned_{cid}")
+
+                # Submit the storage request
+                tx_hash = await client.substrate_client.storage_request(
+                    files=[file_input], miner_ids=miner_ids
+                )
+
+                # Create result panel with blockchain details
+                gateway_url = f"{client.ipfs_client.gateway}/ipfs/{cid}"
+                panel_details = [
+                    f"Successfully pinned and published: [bold cyan]{cid}[/bold cyan]",
+                    f"Gateway URL: [bold cyan]{gateway_url}[/bold cyan]",
+                    f"Transaction hash: [bold green]{tx_hash}[/bold green]",
+                    "\nThis content is now:",
+                    "1. Pinned to your IPFS node",
+                    "2. Published to the IPFS network",
+                    "3. Stored on the Hippius blockchain",
+                ]
+                console.print(Panel("\n".join(panel_details), title="Operation Complete", border_style="green"))
+            else:
+                # Just pinning, no blockchain publishing
+                gateway_url = f"{client.ipfs_client.gateway}/ipfs/{cid}"
+                panel_details = [
+                    f"Successfully pinned: [bold cyan]{cid}[/bold cyan]",
+                    f"Gateway URL: [bold cyan]{gateway_url}[/bold cyan]",
+                    "\nThis content is now pinned to your IPFS node.",
+                    "It will remain available as long as your node is running.",
+                ]
+                console.print(Panel("\n".join(panel_details), title="Pinning Complete", border_style="green"))
+
+            return 0
+        except Exception as e:
+            error(f"Error during operation: {e}")
+            return 1
+
+
 async def handle_ec_delete(
     client: HippiusClient, metadata_cid: str, force: bool = False
 ) -> int:

@@ -236,6 +236,15 @@ def main():
                 force=args.force if hasattr(args, "force") else False,
             )
 
+        elif args.command == "pin":
+            return run_async_handler(
+                cli_handlers.handle_pin,
+                client,
+                args.cid,
+                publish=not args.no_publish if hasattr(args, "no_publish") else True,
+                miner_ids=miner_ids,
+            )
+
         elif args.command == "ec-delete":
             return run_async_handler(
                 cli_handlers.handle_ec_delete,

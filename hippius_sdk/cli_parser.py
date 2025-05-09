@@ -63,13 +63,19 @@ examples:
   
   # Erasure code without publishing to global IPFS network
   hippius erasure-code large_file.avi --no-publish
-  
+
   # Reconstruct an erasure-coded file
   hippius reconstruct QmMetadataHash reconstructed_file.mp4
-  
+
+  # Pin a CID to IPFS and publish to blockchain
+  hippius pin QmHash
+
+  # Pin a CID to IPFS without publishing to blockchain
+  hippius pin QmHash --no-publish
+
   # Delete a file from IPFS and marketplace
   hippius delete QmHash
-  
+
   # Delete an erasure-coded file and all its chunks
   hippius ec-delete QmMetadataHash
 """,
@@ -248,6 +254,23 @@ def add_storage_commands(subparsers):
         "--force",
         action="store_true",
         help="Delete without confirmation prompt",
+    )
+
+    # Pin command
+    pin_parser = subparsers.add_parser(
+        "pin",
+        help="Pin a CID to IPFS and publish to blockchain",
+    )
+    pin_parser.add_argument("cid", help="CID to pin")
+    pin_parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="Publish file to IPFS and store on the blockchain (default)",
+    )
+    pin_parser.add_argument(
+        "--no-publish",
+        action="store_true",
+        help="Don't publish file to blockchain (local pinning only)",
     )
 
     # Keygen command
