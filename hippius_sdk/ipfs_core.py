@@ -64,7 +64,9 @@ class AsyncIPFSClient:
             # Specify file with name and content type to ensure consistent handling
             files = {"file": (filename, file_content, "application/octet-stream")}
             # Explicitly set wrap-with-directory=false to prevent wrapping in directory
-            response = await self.client.post(f"{self.api_url}/api/v0/add?wrap-with-directory=false", files=files)
+            response = await self.client.post(
+                f"{self.api_url}/api/v0/add?wrap-with-directory=false", files=files
+            )
             response.raise_for_status()
             return response.json()
 
@@ -82,7 +84,9 @@ class AsyncIPFSClient:
         # Specify file with name and content type to ensure consistent handling
         files = {"file": (filename, data, "application/octet-stream")}
         # Explicitly set wrap-with-directory=false to prevent wrapping in directory
-        response = await self.client.post(f"{self.api_url}/api/v0/add?wrap-with-directory=false", files=files)
+        response = await self.client.post(
+            f"{self.api_url}/api/v0/add?wrap-with-directory=false", files=files
+        )
         response.raise_for_status()
         return response.json()
 
