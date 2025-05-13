@@ -59,8 +59,12 @@ class AsyncIPFSClient:
             Dict containing the CID and other information
         """
         with open(file_path, "rb") as f:
-            files = {"file": f}
-            response = await self.client.post(f"{self.api_url}/api/v0/add", files=files)
+            file_content = f.read()
+            filename = os.path.basename(file_path)
+            # Specify file with name and content type to ensure consistent handling
+            files = {"file": (filename, file_content, "application/octet-stream")}
+            # Explicitly set wrap-with-directory=false to prevent wrapping in directory
+            response = await self.client.post(f"{self.api_url}/api/v0/add?wrap-with-directory=false", files=files)
             response.raise_for_status()
             return response.json()
 
@@ -75,8 +79,10 @@ class AsyncIPFSClient:
         Returns:
             Dict containing the CID and other information
         """
-        files = {"file": (filename, data)}
-        response = await self.client.post(f"{self.api_url}/api/v0/add", files=files)
+        # Specify file with name and content type to ensure consistent handling
+        files = {"file": (filename, data, "application/octet-stream")}
+        # Explicitly set wrap-with-directory=false to prevent wrapping in directory
+        response = await self.client.post(f"{self.api_url}/api/v0/add?wrap-with-directory=false", files=files)
         response.raise_for_status()
         return response.json()
 
@@ -149,59 +155,30 @@ class AsyncIPFSClient:
             cid: Content Identifier
 
         Returns:
-            Dict with links information and a is_directory flag
+            Dict with links information and is_directory flag
         """
-        try:
-            # Try using the direct IPFS API first (most reliable)
-            response = await self.client.post(f"{self.api_url}/api/v0/ls?arg={cid}")
-            response.raise_for_status()
-            result = response.json()
+        # Try using the direct IPFS API first (most reliable)
+        response = await self.client.post(f"{self.api_url}/api/v0/ls?arg={cid}")
+        response.raise_for_status()
+        result = response.json()
 
-            # Add a flag to indicate if this is a directory
-            # A directory has Links and typically more than one or has Type=1
-            is_directory = False
-            if "Objects" in result and len(result["Objects"]) > 0:
-                obj = result["Objects"][0]
-                if "Links" in obj and len(obj["Links"]) > 0:
-                    # It has links, likely a directory
-                    is_directory = True
-                    # Check if any links have Type=1 (directory)
-                    for link in obj["Links"]:
-                        if link.get("Type") == 1:
-                            is_directory = True
-                            break
+        # Add a flag to indicate if this is a directory.
+        # A directory has Links and typically more than one or has Type=1
+        is_directory = False
+        if "Objects" in result and len(result["Objects"]) > 0:
+            obj = result["Objects"][0]
+            if "Links" in obj and len(obj["Links"]) > 0:
+                # It has links, likely a directory
+                is_directory = True
+                # Check if any links have Type=1 (directory)
+                for link in obj["Links"]:
+                    if link.get("Type") == 1:
+                        is_directory = True
+                        break
 
-            # Add the flag to the result
-            result["is_directory"] = is_directory
-            return result
-
-        except Exception as e:
-            # If the IPFS API fails, try to get info from the gateway
-            try:
-                # Try to get a small sample of the content to check if it's a directory listing
-                content_sample = await self.cat(cid)
-                is_directory = False
-
-                # If it starts with HTML doctype and has IPFS title, it's probably a directory listing
-                if (
-                    content_sample.startswith(b"<!DOCTYPE html>")
-                    and b"<title>/ipfs/" in content_sample
-                ):
-                    is_directory = True
-
-                # Return a simplified result similar to what the ls API would return
-                return {
-                    "is_directory": is_directory,
-                    "Objects": [
-                        {
-                            "Hash": cid,
-                            "Links": [],  # We can't get links from HTML content easily
-                        }
-                    ],
-                }
-            except Exception as fallback_error:
-                # Re-raise the original error
-                raise e
+        # Add the flag to the result
+        result["is_directory"] = is_directory
+        return result
 
     async def exists(self, cid: str) -> bool:
         """
@@ -241,7 +218,7 @@ class AsyncIPFSClient:
                 ls_result = await self.ls(cid)
                 if ls_result.get("is_directory", False):
                     # It's a directory, use the get command to download it properly
-                    return await self.download_directory_with_get(cid, output_path)
+                    return await self.download_directory(cid, output_path)
             except Exception:
                 # If ls check fails, continue with regular file download
                 pass
@@ -259,80 +236,13 @@ class AsyncIPFSClient:
             # Only try directory fallback if not skipping directory check
             if not skip_directory_check:
                 try:
-                    return await self.download_directory_with_get(cid, output_path)
+                    return await self.download_directory(cid, output_path)
                 except Exception:
                     pass
             # Raise the original error
             raise e
 
     async def download_directory(self, cid: str, output_path: str) -> str:
-        """
-        Download a directory from IPFS.
-
-        Args:
-            cid: Content identifier of the directory
-            output_path: Path where to save the directory
-
-        Returns:
-            Path to the saved directory
-        """
-        # Try the more reliable get command first
-        try:
-            return await self.download_directory_with_get(cid, output_path)
-        except Exception as e:
-            # If get command fails, fall back to ls/cat method
-            try:
-                # Get directory listing
-                ls_result = await self.ls(cid)
-                if not ls_result.get("is_directory", False):
-                    raise ValueError(f"CID {cid} is not a directory")
-
-                # Create the directory if it doesn't exist
-                os.makedirs(output_path, exist_ok=True)
-
-                # Extract links from the updated response format
-                links = []
-                # The ls result format is: { "Objects": [ { "Hash": "...", "Links": [...] } ] }
-                if "Objects" in ls_result and len(ls_result["Objects"]) > 0:
-                    for obj in ls_result["Objects"]:
-                        if "Links" in obj:
-                            links.extend(obj["Links"])
-
-                # Download each file in the directory
-                for link in links:
-                    file_name = link.get("Name")
-                    file_cid = link.get("Hash")
-                    file_type = link.get("Type")
-
-                    # Skip entries without required data
-                    if not (file_name and file_cid):
-                        continue
-
-                    # Build the path for this file/directory
-                    file_path = os.path.join(output_path, file_name)
-
-                    if file_type == 1 or file_type == "dir":  # Directory type
-                        # Recursively download the subdirectory
-                        await self.download_directory(file_cid, file_path)
-                    else:  # File type
-                        # Download the file
-                        content = await self.cat(file_cid)
-                        os.makedirs(
-                            os.path.dirname(os.path.abspath(file_path)), exist_ok=True
-                        )
-                        with open(file_path, "wb") as f:
-                            f.write(content)
-
-                return output_path
-            except Exception as fallback_error:
-                # If both methods fail, raise a more detailed error
-                raise RuntimeError(
-                    f"Failed to download directory: get error: {e}, ls/cat error: {fallback_error}"
-                )
-
-        return output_path
-
-    async def download_directory_with_get(self, cid: str, output_path: str) -> str:
         """
         Download a directory from IPFS by recursively fetching its contents.
 
@@ -345,6 +255,13 @@ class AsyncIPFSClient:
         """
         # First, get the directory listing to find all contents
         try:
+            import uuid
+
+            # Handle potential file/directory collision
+            if os.path.exists(output_path) and not os.path.isdir(output_path):
+                # Generate unique path by adding a UUID suffix
+                output_path = f"{output_path}_{str(uuid.uuid4())[:8]}"
+
             ls_result = await self.ls(cid)
 
             # Create target directory
@@ -362,7 +279,6 @@ class AsyncIPFSClient:
                 link_name = link.get("Name")
                 link_hash = link.get("Hash")
                 link_type = link.get("Type")
-                link_size = link.get("Size", 0)
 
                 if not (link_name and link_hash):
                     continue  # Skip if missing essential data
@@ -372,7 +288,7 @@ class AsyncIPFSClient:
 
                 if link_type == 1 or str(link_type) == "1" or link_type == "dir":
                     # It's a directory - recursively download
-                    await self.download_directory_with_get(link_hash, target_path)
+                    await self.download_directory(link_hash, target_path)
                 else:
                     # It's a file - download it
                     try:
