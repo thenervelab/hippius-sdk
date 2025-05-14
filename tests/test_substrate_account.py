@@ -43,28 +43,32 @@ class TestSubstrateAccountCreation:
                 )
                 mock_keypair_class.create_from_mnemonic.return_value = mock_keypair
 
-                # Create the account
-                result = client.create_account("test_account")
+                # We need to mock set_seed_phrase since our implementation now uses it
+                with patch.object(client, "set_seed_phrase") as mock_set_client_seed:
+                    # Create the account
+                    result = client.create_account("test_account")
 
-                # Verify the result
-                assert result["name"] == "test_account"
-                assert (
-                    result["address"]
-                    == "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
-                )
-                assert result["mnemonic"] == test_mnemonic
-                assert result["is_active"] is True
-                assert "creation_date" in result
+                    # Verify the result
+                    assert result["name"] == "test_account"
+                    assert (
+                        result["address"]
+                        == "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+                    )
+                    assert result["mnemonic"] == test_mnemonic
+                    assert result["is_active"] is True
+                    assert "creation_date" in result
 
-                # Verify the mocks were called correctly
-                mock_generate.assert_called_once()
-                mock_keypair_class.create_from_mnemonic.assert_called_once_with(
-                    test_mnemonic
-                )
-                mock_set_seed.assert_called_once_with(
-                    test_mnemonic, encode=False, account_name="test_account"
-                )
-                mock_set_active.assert_called_once_with("test_account")
+                    # Verify the mocks were called correctly
+                    mock_generate.assert_called_once()
+                    mock_keypair_class.create_from_mnemonic.assert_called_once_with(
+                        test_mnemonic
+                    )
+                    mock_set_seed.assert_called_once_with(
+                        test_mnemonic, encode=False, account_name="test_account"
+                    )
+                    mock_set_active.assert_called_once_with("test_account")
+                    # Verify set_seed_phrase was called with the test mnemonic
+                    mock_set_client_seed.assert_called_once_with(test_mnemonic)
 
     @patch("hippius_sdk.substrate.set_seed_phrase")
     @patch("hippius_sdk.substrate.set_active_account")
@@ -96,33 +100,37 @@ class TestSubstrateAccountCreation:
                 )
                 mock_keypair_class.create_from_mnemonic.return_value = mock_keypair
 
-                # Create the account with encryption
-                test_password = "test_password"
-                result = client.create_account(
-                    "test_account", encode=True, password=test_password
-                )
+                # We need to mock set_seed_phrase since our implementation now uses it
+                with patch.object(client, "set_seed_phrase") as mock_set_client_seed:
+                    # Create the account with encryption
+                    test_password = "test_password"
+                    result = client.create_account(
+                        "test_account", encode=True, password=test_password
+                    )
 
-                # Verify the result
-                assert result["name"] == "test_account"
-                assert (
-                    result["address"]
-                    == "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
-                )
-                assert result["mnemonic"] == test_mnemonic
-                assert result["is_active"] is True
+                    # Verify the result
+                    assert result["name"] == "test_account"
+                    assert (
+                        result["address"]
+                        == "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+                    )
+                    assert result["mnemonic"] == test_mnemonic
+                    assert result["is_active"] is True
 
-                # Verify the mocks were called correctly
-                mock_generate.assert_called_once()
-                mock_keypair_class.create_from_mnemonic.assert_called_once_with(
-                    test_mnemonic
-                )
-                mock_set_seed.assert_called_once_with(
-                    test_mnemonic,
-                    encode=True,
-                    password=test_password,
-                    account_name="test_account",
-                )
-                mock_set_active.assert_called_once_with("test_account")
+                    # Verify the mocks were called correctly
+                    mock_generate.assert_called_once()
+                    mock_keypair_class.create_from_mnemonic.assert_called_once_with(
+                        test_mnemonic
+                    )
+                    mock_set_seed.assert_called_once_with(
+                        test_mnemonic,
+                        encode=True,
+                        password=test_password,
+                        account_name="test_account",
+                    )
+                    mock_set_active.assert_called_once_with("test_account")
+                    # Verify set_seed_phrase was called with the test mnemonic
+                    mock_set_client_seed.assert_called_once_with(test_mnemonic)
 
     @patch("hippius_sdk.substrate.get_all_config")
     def test_create_account_name_exists(self, mock_get_config):
@@ -256,35 +264,43 @@ class TestSubstrateAccountExportImport:
             mock_keypair.ss58_address = test_account["address"]
             mock_keypair_class.create_from_mnemonic.return_value = mock_keypair
 
-            # Mock opening the file to return our test account data
-            with patch("builtins.open", create=True) as mock_open:
-                mock_file = MagicMock()
-                mock_open.return_value.__enter__.return_value = mock_file
-                mock_file.read.return_value = json.dumps(test_account)
+            # We need to mock set_seed_phrase since our implementation now uses it
+            with patch.object(client, "set_seed_phrase") as mock_set_client_seed:
+                # Mock opening the file to return our test account data
+                with patch("builtins.open", create=True) as mock_open:
+                    mock_file = MagicMock()
+                    mock_open.return_value.__enter__.return_value = mock_file
+                    mock_file.read.return_value = json.dumps(test_account)
 
-                # Mock get_all_config to return empty accounts to avoid name collision
-                with patch("hippius_sdk.substrate.get_all_config") as mock_get_config:
-                    mock_get_config.return_value = {"substrate": {"accounts": {}}}
+                    # Mock get_all_config to return empty accounts to avoid name collision
+                    with patch(
+                        "hippius_sdk.substrate.get_all_config"
+                    ) as mock_get_config:
+                        mock_get_config.return_value = {"substrate": {"accounts": {}}}
 
-                    # Import the account
-                    result = client.import_account("test_import.json")
+                        # Import the account
+                        result = client.import_account("test_import.json")
 
-                    # Verify the result
-                    assert result["name"] == "imported_account"
-                    assert (
-                        result["address"]
-                        == "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
-                    )
-                    assert result["is_active"] is True
+                        # Verify the result
+                        assert result["name"] == "imported_account"
+                        assert (
+                            result["address"]
+                            == "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+                        )
+                        assert result["is_active"] is True
 
-                    # Verify the mocks were called correctly
-                    mock_open.assert_called_once_with("test_import.json", "r")
-                    mock_set_seed.assert_called_once_with(
-                        test_account["mnemonic"],
-                        encode=False,
-                        account_name="imported_account",
-                    )
-                    mock_set_active.assert_called_once_with("imported_account")
+                        # Verify the mocks were called correctly
+                        mock_open.assert_called_once_with("test_import.json", "r")
+                        mock_set_seed.assert_called_once_with(
+                            test_account["mnemonic"],
+                            encode=False,
+                            account_name="imported_account",
+                        )
+                        mock_set_active.assert_called_once_with("imported_account")
+                        # Verify set_seed_phrase was called with the test mnemonic
+                        mock_set_client_seed.assert_called_once_with(
+                            test_account["mnemonic"]
+                        )
 
     @patch("hippius_sdk.substrate.set_seed_phrase")
     @patch("hippius_sdk.substrate.set_active_account")
@@ -325,38 +341,47 @@ class TestSubstrateAccountExportImport:
             mock_keypair.ss58_address = test_account["address"]
             mock_keypair_class.create_from_mnemonic.return_value = mock_keypair
 
-            # Mock opening the file to return our test account data
-            with patch("builtins.open", create=True) as mock_open:
-                mock_file = MagicMock()
-                mock_open.return_value.__enter__.return_value = mock_file
-                mock_file.read.return_value = json.dumps(test_account)
+            # We need to mock set_seed_phrase since our implementation now uses it
+            with patch.object(client, "set_seed_phrase") as mock_set_client_seed:
+                # Mock opening the file to return our test account data
+                with patch("builtins.open", create=True) as mock_open:
+                    mock_file = MagicMock()
+                    mock_open.return_value.__enter__.return_value = mock_file
+                    mock_file.read.return_value = json.dumps(test_account)
 
-                # Patch datetime to get a deterministic name for the imported account
-                with patch("hippius_sdk.substrate.datetime") as mock_datetime:
-                    mock_datetime.datetime.now.return_value.strftime.return_value = (
-                        "20230428_120000"
-                    )
+                    # Patch datetime to get a deterministic name for the imported account
+                    with patch("hippius_sdk.substrate.datetime") as mock_datetime:
+                        mock_datetime.datetime.now.return_value.strftime.return_value = (
+                            "20230428_120000"
+                        )
 
-                    # Import the account - should rename to avoid collision
-                    result = client.import_account("test_import.json")
+                        # Import the account - should rename to avoid collision
+                        result = client.import_account("test_import.json")
 
-                    # Verify the result has a modified name
-                    assert result["name"] == "imported_account_imported_20230428_120000"
-                    assert (
-                        result["address"]
-                        == "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
-                    )
-                    assert result["original_name"] == "imported_account"
+                        # Verify the result has a modified name
+                        assert (
+                            result["name"]
+                            == "imported_account_imported_20230428_120000"
+                        )
+                        assert (
+                            result["address"]
+                            == "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+                        )
+                        assert result["original_name"] == "imported_account"
 
-                    # Verify the mocks were called correctly with the new name
-                    mock_set_seed.assert_called_once_with(
-                        test_account["mnemonic"],
-                        encode=False,
-                        account_name="imported_account_imported_20230428_120000",
-                    )
-                    mock_set_active.assert_called_once_with(
-                        "imported_account_imported_20230428_120000"
-                    )
+                        # Verify the mocks were called correctly with the new name
+                        mock_set_seed.assert_called_once_with(
+                            test_account["mnemonic"],
+                            encode=False,
+                            account_name="imported_account_imported_20230428_120000",
+                        )
+                        mock_set_active.assert_called_once_with(
+                            "imported_account_imported_20230428_120000"
+                        )
+                        # Verify set_seed_phrase was called with the test mnemonic
+                        mock_set_client_seed.assert_called_once_with(
+                            test_account["mnemonic"]
+                        )
 
     def test_import_account_invalid_format(self):
         """Test importing an account with invalid format."""

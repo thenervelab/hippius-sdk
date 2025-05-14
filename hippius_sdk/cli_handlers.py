@@ -102,20 +102,38 @@ def create_client(args: Any) -> HippiusClient:
     # Get substrate URL
     substrate_url = args.substrate_url if hasattr(args, "substrate_url") else None
 
-    # Skip password if we're doing erasure-code with --no-publish
-    # This avoids prompting for password when we don't need to interact with the blockchain
+    # Determine if we need to use password based on the command
+    # Only use password for: store, download, delete, erasure-code (unless --no-publish), reconstruct
     password = None
-    if (
-        hasattr(args, "command")
-        and args.command == "erasure-code"
-        and hasattr(args, "no_publish")
-        and args.no_publish
-    ):
-        # Don't need a password in this case
-        password = None
-    else:
-        # Use password from args if provided
-        password = args.password if hasattr(args, "password") else None
+
+    # First check if password is provided as an argument
+    if hasattr(args, "password") and args.password:
+        password = args.password
+    # Otherwise, decide based on the command
+    elif hasattr(args, "command"):
+        command = args.command
+        needs_password = False
+
+        # Check if this is one of the commands that needs a password
+        if command in [
+            "store",
+            "store-dir",
+            "download",
+            "delete",
+            "delete-dir",
+            "reconstruct",
+        ]:
+            needs_password = True
+        # Special case for erasure-code - only needs password if we're publishing
+        elif command == "erasure-code" and not (
+            hasattr(args, "no_publish") and args.no_publish
+        ):
+            needs_password = True
+
+        # If this command doesn't need password access, set to empty string to skip prompting
+        if not needs_password:
+            # Use empty string to indicate "skip password prompt" to the config system
+            password = ""
 
     # Initialize client with provided parameters
     client = HippiusClient(
@@ -692,27 +710,32 @@ async def handle_credits(
             ):
                 account_address = client.substrate_client._keypair.ss58_address
             else:
-                # Try to get the default address
-                default_address = get_default_address()
-                if default_address:
-                    account_address = default_address
-                else:
-                    has_default = get_default_address() is not None
+                # Get the active account name and its address
+                from hippius_sdk.config import get_account_address, get_active_account
 
-                    error("No account address provided, and client has no keypair.")
-
-                    if has_default:
-                        warning(
-                            "Please provide an account address with '--account_address' or the default address may be invalid."
-                        )
+                active_account = get_active_account()
+                if active_account:
+                    active_address = get_account_address(active_account)
+                    if active_address:
+                        account_address = active_address
                     else:
+                        error(
+                            f"Active account '{active_account}' does not have a valid address."
+                        )
                         warning(
-                            "Please provide an account address with '--account_address' or set a default with:"
+                            "Please provide an account address with '--account_address'"
                         )
-                        log(
-                            "  [bold green underline]hippius address set-default <your_account_address>[/bold green underline]"
-                        )
-
+                        return 1
+                else:
+                    error(
+                        "No account address provided, no active account set, and client has no keypair."
+                    )
+                    warning(
+                        "Please provide an account address with '--account_address' or set an active account with:"
+                    )
+                    log(
+                        "  [bold green underline]hippius account switch <account_name>[/bold green underline]"
+                    )
                     return 1
 
         credits = await client.substrate_client.get_free_credits(account_address)
@@ -3160,28 +3183,32 @@ async def handle_account_balance(
         ):
             account_address = client.substrate_client._keypair.ss58_address
         else:
-            # Try to get the default address
-            default_address = get_default_address()
-            if default_address:
-                account_address = default_address
-            else:
-                has_default = get_default_address() is not None
+            # Get the active account name and its address
+            from hippius_sdk.config import get_account_address, get_active_account
 
-                error("No account address provided, and client has no keypair.")
-
-                if has_default:
-                    warning(
-                        "Please provide an account address with '--account_address' or the default address may be invalid."
-                    )
+            active_account = get_active_account()
+            if active_account:
+                active_address = get_account_address(active_account)
+                if active_address:
+                    account_address = active_address
                 else:
+                    error(
+                        f"Active account '{active_account}' does not have a valid address."
+                    )
                     warning(
-                        "Please provide an account address with '--account_address' or set a default with:"
+                        "Please provide an account address with '--account_address'"
                     )
-                    log(
-                        "  hippius address set-default <your_account_address>",
-                        style="bold blue",
-                    )
-
+                    return 1
+            else:
+                error(
+                    "No account address provided, no active account set, and client has no keypair."
+                )
+                warning(
+                    "Please provide an account address with '--account_address' or set an active account with:"
+                )
+                log(
+                    "  [bold green underline]hippius account switch <account_name>[/bold green underline]"
+                )
                 return 1
 
     # Get the account balance
