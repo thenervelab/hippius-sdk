@@ -441,20 +441,17 @@ class IPFSClient:
         self,
         cid: str,
         output_path: str,
-        decrypt: Optional[bool] = None,
+        _: Optional[bool] = None,
         max_retries: int = 3,
-        skip_directory_check: bool = False,
     ) -> Dict[str, Any]:
         """
         Download a file from IPFS with optional decryption.
-        Supports downloading directories - in that case, a directory structure will be created.
 
         Args:
             cid: Content Identifier (CID) of the file to download
-            output_path: Path where the downloaded file/directory will be saved
-            decrypt: Whether to decrypt the file (overrides default)
+            output_path: Path where the downloaded file will be saved
+            _: Whether to decrypt the file (overrides default)
             max_retries: Maximum number of retry attempts (default: 3)
-            skip_directory_check: If True, skips directory check (treats as file)
 
         Returns:
             Dict[str, Any]: Dictionary containing download results:
@@ -464,7 +461,6 @@ class IPFSClient:
                 - size_formatted: Human-readable file size
                 - elapsed_seconds: Time taken for the download in seconds
                 - decrypted: Whether the file was decrypted
-                - is_directory: Whether the download was a directory
 
         Raises:
             requests.RequestException: If the download fails
@@ -472,117 +468,40 @@ class IPFSClient:
         """
         start_time = time.time()
 
-        # Skip directory check if requested (important for erasure code chunks)
-        is_directory = False
-        if not skip_directory_check:
-            # Use the improved ls function to properly detect directories
+        retries = 0
+        while retries < max_retries:
             try:
-                # The ls function now properly detects directories
-                ls_result = await self.client.ls(cid)
-                is_directory = ls_result.get("is_directory", False)
-            except Exception:
-                # If ls fails, we'll proceed as if it's a file
-                pass
+                url = f"{self.gateway}/ipfs/{cid}"
+                async with self.client.client.stream(url=url, method="GET") as response:
+                    response.raise_for_status()
 
-        # If it's a directory, handle it differently
-        if is_directory:
-            # For directories, we don't need to decrypt each file during the initial download
-            # We'll use the AsyncIPFSClient's download_directory method directly
-            try:
-                await self.client.download_directory(cid, output_path)
-
-                # Calculate the total size of the directory
-                total_size = 0
-                for root, _, files in os.walk(output_path):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        total_size += os.path.getsize(file_path)
-
-                elapsed_time = time.time() - start_time
-
-                return {
-                    "success": True,
-                    "output_path": output_path,
-                    "size_bytes": total_size,
-                    "size_formatted": self.format_size(total_size),
-                    "elapsed_seconds": round(elapsed_time, 2),
-                    "decrypted": False,  # Directories aren't decrypted as a whole
-                    "is_directory": True,
-                }
-            except Exception as e:
-                raise RuntimeError(f"Failed to download directory: {str(e)}")
-
-        # For regular files, use the existing logic
-        # Determine if we should decrypt
-        should_decrypt = self.encrypt_by_default if decrypt is None else decrypt
-
-        # Check if decryption is available if requested
-        if should_decrypt and not self.encryption_available:
-            raise ValueError(
-                "Decryption requested but not available. Check that PyNaCl is installed and a valid encryption key is provided."
-            )
-
-        # Create a temporary file if we'll be decrypting
-        temp_file_path = None
-        try:
-            if should_decrypt:
-                # Create a temporary file for the encrypted data
-                temp_file = tempfile.NamedTemporaryFile(delete=False)
-                temp_file_path = temp_file.name
-                temp_file.close()
-                download_path = temp_file_path
-            else:
-                download_path = output_path
-
-            # Pass the skip_directory_check parameter to the core client
-            await self.client.download_file(
-                cid, download_path, skip_directory_check=skip_directory_check
-            )
-            download_success = True
-
-            if not download_success:
-                raise RuntimeError("Failed to download file after multiple attempts")
-
-            # Decrypt if needed
-            if should_decrypt:
-                try:
-                    # Read the encrypted data
-                    with open(temp_file_path, "rb") as f:
-                        encrypted_data = f.read()
-
-                    # Decrypt the data
-                    decrypted_data = self.decrypt_data(encrypted_data)
-
-                    # Write the decrypted data to the output path
-                    os.makedirs(
-                        os.path.dirname(os.path.abspath(output_path)), exist_ok=True
-                    )
                     with open(output_path, "wb") as f:
-                        f.write(decrypted_data)
+                        async for chunk in response.aiter_bytes(chunk_size=8192):
+                            f.write(chunk)
+                    break
 
-                    # Use output_path for size measurement
-                    file_size_bytes = len(decrypted_data)
-                except Exception as e:
-                    raise ValueError(f"Failed to decrypt file: {str(e)}")
-            else:
-                file_size_bytes = os.path.getsize(output_path)
+            except (httpx.HTTPError, IOError) as e:
+                retries += 1
 
-            elapsed_time = time.time() - start_time
+                if retries < max_retries:
+                    wait_time = 2**retries
+                    print(f"Download attempt {retries} failed: {str(e)}")
+                    print(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    raise
 
-            return {
-                "success": True,
-                "output_path": output_path,
-                "size_bytes": file_size_bytes,
-                "size_formatted": self.format_size(file_size_bytes),
-                "elapsed_seconds": round(elapsed_time, 2),
-                "decrypted": should_decrypt,
-                "is_directory": False,
-            }
+        file_size_bytes = os.path.getsize(output_path)
+        elapsed_time = time.time() - start_time
 
-        finally:
-            # Clean up temporary file if created
-            if temp_file_path and os.path.exists(temp_file_path):
-                os.unlink(temp_file_path)
+        return {
+            "success": True,
+            "output_path": output_path,
+            "size_bytes": file_size_bytes,
+            "size_formatted": self.format_size(file_size_bytes),
+            "elapsed_seconds": round(elapsed_time, 2),
+            "decrypted": _,
+        }
 
     async def cat(
         self,

@@ -169,7 +169,7 @@ class HippiusClient:
             requests.RequestException: If the download fails
             ValueError: If decryption is requested but fails
         """
-        return await self.ipfs_client.download_file(cid, output_path, decrypt=decrypt)
+        return await self.ipfs_client.download_file(cid, output_path, _=decrypt)
 
     async def cat(
         self,
