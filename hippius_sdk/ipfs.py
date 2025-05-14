@@ -490,7 +490,7 @@ class IPFSClient:
                 os.makedirs(
                     os.path.dirname(os.path.abspath(output_path)), exist_ok=True
                 )
-                download_result = await self.client.get(cid, output_path)
+                output_path = await self.client.download_directory(cid, output_path)
                 downloaded_size = 0
 
                 # Walk through the downloaded directory to calculate total size
