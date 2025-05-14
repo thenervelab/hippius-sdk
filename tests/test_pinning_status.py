@@ -22,9 +22,18 @@ def mock_substrate_interface():
 @pytest.fixture
 def mock_config():
     """Create a mock for config functions."""
-    with patch("hippius_sdk.substrate.get_config_value") as mock_get_config:
+    with patch("hippius_sdk.substrate.get_config_value") as mock_get_config, patch(
+        "hippius_sdk.substrate.get_seed_phrase"
+    ) as mock_get_seed, patch(
+        "hippius_sdk.substrate.get_active_account"
+    ) as mock_get_active, patch(
+        "hippius_sdk.substrate.get_account_address"
+    ) as mock_get_addr:
         url = "wss://hippius.example.com"
         mock_get_config.return_value = url
+        mock_get_seed.return_value = None
+        mock_get_active.return_value = None
+        mock_get_addr.return_value = None
         yield mock_get_config, url
 
 
@@ -53,9 +62,11 @@ async def test_get_pinning_status(mock_substrate_interface, mock_config):
     )
 
     # Create a mock value with the request details
+    # Using a mock address instead of a real one
+    mock_address = "5MOCK_ADDRESS_FOR_TESTING_PURPOSES_ONLY_XXXXXXXXXXXXX"
     mock_data = {
         "totalReplicas": 5,
-        "owner": "5E9d3J4gDFqWdiDKiWu4gucwPUYC9rh2MbL2LezyhDjT652d",
+        "owner": mock_address,
         "fileHash": file_hash_hex,
         "fileName": "files_list_test.json",
         "lastChargedAt": 12345,
@@ -115,18 +126,23 @@ async def test_get_pinning_status(mock_substrate_interface, mock_config):
     # Create a client instance and add the mock substrate
     client = SubstrateClient(url=url)
     client._substrate = mock_substrate
-    client._account_address = "5E9d3J4gDFqWdiDKiWu4gucwPUYC9rh2MbL2LezyhDjT652d"
+    client._account_address = mock_address
 
     # Mock the _hex_to_ipfs_cid method to return a predictable value
-    with patch.object(client, "_hex_to_ipfs_cid", return_value="QmTestCid"):
-        # Get the pinning status
-        result = client.get_pinning_status()
+    with patch.object(client, "_hex_to_ipfs_cid", return_value="QmTestCid"), patch(
+        "hippius_sdk.substrate.initialize_substrate_connection"
+    ) as mock_init:
+        # Make initialize_substrate_connection return the mock substrate and our test address
+        mock_init.return_value = (mock_substrate, mock_address)
+
+        # Call get_pinning_status with explicit address to bypass any config retrieval
+        result = client.get_pinning_status(account_address=mock_address)
 
     # Check the method called the blockchain API correctly
     mock_substrate.query_map.assert_called_once_with(
         module="IpfsPallet",
         storage_function="UserStorageRequests",
-        params=["5E9d3J4gDFqWdiDKiWu4gucwPUYC9rh2MbL2LezyhDjT652d"],
+        params=[mock_address],
     )
 
     # Print the actual result for debugging
@@ -161,9 +177,7 @@ async def test_get_pinning_status(mock_substrate_interface, mock_config):
     assert total_replicas == 5, f"Expected total_replicas to be 5, got {total_replicas}"
 
     owner = get_field(request, "owner")
-    assert (
-        owner == "5E9d3J4gDFqWdiDKiWu4gucwPUYC9rh2MbL2LezyhDjT652d"
-    ), f"Expected owner to be '5E9d3J4gDFqWdiDKiWu4gucwPUYC9rh2MbL2LezyhDjT652d', got {owner}"
+    assert owner == mock_address, f"Expected owner to be '{mock_address}', got {owner}"
 
     created_at = get_field(request, "created_at", "createdAt")
     assert created_at == 12340, f"Expected created_at to be 12340, got {created_at}"
@@ -204,10 +218,16 @@ async def test_get_pinning_status_empty_result(mock_substrate_interface, mock_co
     # Create a client instance
     client = SubstrateClient(url=url)
     client._substrate = mock_substrate
-    client._account_address = "5E9d3J4gDFqWdiDKiWu4gucwPUYC9rh2MbL2LezyhDjT652d"
+    # Using a mock address that matches the one in test_get_pinning_status
+    mock_address = "5MOCK_ADDRESS_FOR_TESTING_PURPOSES_ONLY_XXXXXXXXXXXXX"
+    client._account_address = mock_address
 
-    # Get the pinning status
-    result = client.get_pinning_status()
+    # Mock initialize_substrate_connection
+    with patch("hippius_sdk.substrate.initialize_substrate_connection") as mock_init:
+        mock_init.return_value = (mock_substrate, mock_address)
+
+        # Get the pinning status
+        result = client.get_pinning_status(account_address=mock_address)
 
     # Check the result is an empty list
     assert result == []
