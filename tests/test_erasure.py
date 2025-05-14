@@ -1020,6 +1020,7 @@ async def test_missing_metadata(client, temp_dir):
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(60)
 async def test_large_file_chunked(client, temp_dir):
     """Test erasure coding with a larger file processed in chunks."""
     if not ZFEC_AVAILABLE:
@@ -1029,11 +1030,11 @@ async def test_large_file_chunked(client, temp_dir):
     try:
         # Parameters
         k, m = DEFAULT_K, DEFAULT_M
-        chunk_size = 1 * 1024 * 1024  # 1MB chunks
+        chunk_size = 256 * 1024  # 256KB chunks (reduced from 1MB for faster testing)
 
-        # Create a test file (3MB, smaller for tests but still demonstrates chunking)
+        # Create a test file (1MB, smaller for tests but still demonstrates chunking)
         file_path = cleanup.add(os.path.join(temp_dir, "large_test.bin"))
-        size_mb = 3
+        size_mb = 1  # Reduced from 3MB to 1MB for faster test execution
         await create_large_file(file_path, size_mb)
 
         # Get file size

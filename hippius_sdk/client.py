@@ -160,6 +160,7 @@ class HippiusClient:
         output_path: str,
         decrypt: Optional[bool] = None,
         seed_phrase: Optional[str] = None,
+        skip_directory_check: bool = False,
     ) -> Dict[str, Any]:
         """
         Download a file from IPFS with optional decryption.
@@ -170,6 +171,7 @@ class HippiusClient:
             output_path: Path where the downloaded file/directory will be saved
             decrypt: Whether to decrypt the file (overrides default)
             seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
+            skip_directory_check: don't check if it's a directory.
 
         Returns:
             Dict[str, Any]: Dictionary containing download details including:
@@ -186,7 +188,11 @@ class HippiusClient:
             ValueError: If decryption is requested but fails
         """
         return await self.ipfs_client.download_file(
-            cid, output_path, _=decrypt, seed_phrase=seed_phrase
+            cid,
+            output_path,
+            _=decrypt,
+            seed_phrase=seed_phrase,
+            skip_directory_check=skip_directory_check,
         )
 
     async def cat(
