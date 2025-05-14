@@ -36,7 +36,7 @@ class AsyncIPFSClient:
                 api_url = "http://localhost:5001"
         self.api_url = api_url
         self.gateway = gateway
-        self.client = httpx.AsyncClient(timeout=60.0)
+        self.client = httpx.AsyncClient(timeout=300, follow_redirects=True)
 
     async def close(self):
         """Close the httpx client."""

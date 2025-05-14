@@ -1032,8 +1032,7 @@ async def handle_ec_files(
             with tempfile.NamedTemporaryFile() as temp:
                 temp_path = temp.name
 
-                # Download the metadata file without logging
-                await client.ipfs_client.download_file(metadata_cid, temp_path)
+                await client.download_file(metadata_cid, temp_path)
 
                 # Open and parse the metadata file
                 with open(temp_path, "r") as f:

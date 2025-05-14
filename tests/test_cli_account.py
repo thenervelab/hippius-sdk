@@ -32,12 +32,12 @@ class TestCLIAccountCommands:
         mock_substrate_client.create_account.return_value = {
             "name": "test_account",
             "address": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
-            "mnemonic": "test word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12",
+            "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
             "is_active": True,
         }
 
         # Mock the client's generate_seed_phrase method
-        mock_substrate_client.generate_seed_phrase.return_value = "test word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12"
+        mock_substrate_client.generate_seed_phrase.return_value = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
         # Test creating an account without encryption
         with patch("hippius_sdk.cli_handlers.set_seed_phrase"), patch(
@@ -70,9 +70,7 @@ class TestCLIAccountCommands:
         mock_getpass.side_effect = ["password123", "password123"]
 
         # Set up mock response from generate_seed_phrase method
-        mock_substrate_client.generate_seed_phrase.return_value = (
-            "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12"
-        )
+        mock_substrate_client.generate_seed_phrase.return_value = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
         # Set up mock for temporary client creation
         mock_temp_client = MagicMock()

@@ -438,11 +438,11 @@ class IPFSClient:
         return format_cid(cid)
 
     async def download_file(
-            self,
-            cid: str,
-            output_path: str,
-            _: Optional[bool] = None,
-            max_retries: int = 3,
+        self,
+        cid: str,
+        output_path: str,
+        _: Optional[bool] = None,
+        max_retries: int = 3,
     ) -> Dict[str, Any]:
         """
         Download a file from IPFS with optional decryption.
@@ -467,24 +467,24 @@ class IPFSClient:
             ValueError: If decryption is requested but fails
         """
         start_time = time.time()
-        download_path = output_path
 
         retries = 0
         while retries < max_retries:
             try:
                 url = f"{self.gateway}/ipfs/{cid}"
-                response = await self.client.client.get(url, stream=True)
-                response.raise_for_status()
+                async with self.client.client.stream(url=url, method="GET") as response:
+                    response.raise_for_status()
 
-                with open(download_path, "wb") as f:
-                    for chunk in response.aiter_bytes(chunk_size=8192):
-                        f.write(chunk)
+                    with open(output_path, "wb") as f:
+                        async for chunk in response.aiter_bytes(chunk_size=8192):
+                            f.write(chunk)
+                    break
 
             except (httpx.HTTPError, IOError) as e:
                 retries += 1
 
                 if retries < max_retries:
-                    wait_time = 2 ** retries
+                    wait_time = 2**retries
                     print(f"Download attempt {retries} failed: {str(e)}")
                     print(f"Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)
