@@ -88,7 +88,7 @@ def test_init_with_seed_phrase(mock_substrate_interface, mock_keypair, mock_conf
         client = SubstrateClient(url=url)
         seed_phrase = "test seed phrase"
         client.set_seed_phrase(seed_phrase)
-        
+
         # Check set_seed_phrase was called correctly
         mock_set_seed_phrase.assert_called_once_with(seed_phrase)
 
@@ -206,7 +206,7 @@ async def test_storage_request(
     seed_phrase = "test seed phrase"
     client = SubstrateClient(url=url)
     client._substrate = mock_substrate
-    
+
     # Mock _ensure_keypair to simulate the seed phrase being used
     with patch.object(SubstrateClient, "_ensure_keypair") as mock_ensure_keypair:
         mock_ensure_keypair.return_value = True
@@ -247,7 +247,7 @@ async def test_storage_request(
 
     # Verify _ensure_keypair was called with the seed phrase
     mock_ensure_keypair.assert_called_once_with(seed_phrase)
-    
+
     mock_temp_file.write.assert_called_once_with(expected_json)
     mock_ipfs.upload_file.assert_called_once_with(mock_temp_file.name)
     mock_substrate.compose_call.assert_called_once()

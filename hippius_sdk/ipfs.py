@@ -13,16 +13,8 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 import httpx
-import requests
 
 from hippius_sdk.config import get_config_value, get_encryption_key
-from hippius_sdk.errors import (
-    HippiusAlreadyDeletedError,
-    HippiusFailedIPFSUnpin,
-    HippiusFailedSubstrateDelete,
-    HippiusIPFSConnectionError,
-    HippiusMetadataError,
-)
 from hippius_sdk.ipfs_core import AsyncIPFSClient
 from hippius_sdk.substrate import FileInput, SubstrateClient
 from hippius_sdk.utils import format_cid, format_size

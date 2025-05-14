@@ -273,7 +273,9 @@ class TestSubstrateAccountExportImport:
                     mock_file.read.return_value = json.dumps(test_account)
 
                     # Mock get_all_config to return empty accounts to avoid name collision
-                    with patch("hippius_sdk.substrate.get_all_config") as mock_get_config:
+                    with patch(
+                        "hippius_sdk.substrate.get_all_config"
+                    ) as mock_get_config:
                         mock_get_config.return_value = {"substrate": {"accounts": {}}}
 
                         # Import the account
@@ -296,7 +298,9 @@ class TestSubstrateAccountExportImport:
                         )
                         mock_set_active.assert_called_once_with("imported_account")
                         # Verify set_seed_phrase was called with the test mnemonic
-                        mock_set_client_seed.assert_called_once_with(test_account["mnemonic"])
+                        mock_set_client_seed.assert_called_once_with(
+                            test_account["mnemonic"]
+                        )
 
     @patch("hippius_sdk.substrate.set_seed_phrase")
     @patch("hippius_sdk.substrate.set_active_account")
@@ -355,7 +359,10 @@ class TestSubstrateAccountExportImport:
                         result = client.import_account("test_import.json")
 
                         # Verify the result has a modified name
-                        assert result["name"] == "imported_account_imported_20230428_120000"
+                        assert (
+                            result["name"]
+                            == "imported_account_imported_20230428_120000"
+                        )
                         assert (
                             result["address"]
                             == "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
@@ -372,7 +379,9 @@ class TestSubstrateAccountExportImport:
                             "imported_account_imported_20230428_120000"
                         )
                         # Verify set_seed_phrase was called with the test mnemonic
-                        mock_set_client_seed.assert_called_once_with(test_account["mnemonic"])
+                        mock_set_client_seed.assert_called_once_with(
+                            test_account["mnemonic"]
+                        )
 
     def test_import_account_invalid_format(self):
         """Test importing an account with invalid format."""
