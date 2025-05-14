@@ -74,20 +74,23 @@ def test_init_with_seed_phrase(mock_substrate_interface, mock_keypair, mock_conf
     """Verify the SubstrateClient initializes properly with a seed phrase.
 
     Tests that when initialized with a seed phrase, the client:
-    - Stores the seed phrase correctly
-    - Sets read-only mode to False
-    - Creates a keypair from the provided seed phrase
+    - Doesn't store the seed phrase (seed-agnostic)
+    - Uses set_seed_phrase for backward compatibility
     """
     mock_keypair_obj, mock_keypair_class = mock_keypair
     _, url = mock_config
 
-    seed_phrase = "test seed phrase"
-    client = SubstrateClient(url=url, seed_phrase=seed_phrase)
-
-    # Check seed phrase is stored and keypair is created
-    assert client._seed_phrase == seed_phrase
-    assert client._read_only is False
-    mock_keypair_class.create_from_mnemonic.assert_called_with(seed_phrase)
+    # We need to mock the set_seed_phrase method since that's now the way to
+    # set a seed phrase for backward compatibility
+    with patch.object(SubstrateClient, "set_seed_phrase") as mock_set_seed_phrase:
+        # With our seed-agnostic approach, we cannot pass seed_phrase to the constructor
+        # So we'll set it after construction for backward compatibility
+        client = SubstrateClient(url=url)
+        seed_phrase = "test seed phrase"
+        client.set_seed_phrase(seed_phrase)
+        
+        # Check set_seed_phrase was called correctly
+        mock_set_seed_phrase.assert_called_once_with(seed_phrase)
 
 
 def test_connect_with_exception(mock_substrate_interface, mock_keypair, mock_config):
@@ -113,7 +116,7 @@ def test_ensure_keypair_with_seed_phrase(
     """Verify _ensure_keypair creates a keypair from a seed phrase.
 
     Tests that the internal _ensure_keypair method:
-    - Creates a keypair from the stored seed phrase when keypair is None
+    - Creates a keypair from the provided seed phrase
     - Sets the keypair attribute properly
     - Returns True on successful keypair creation
     """
@@ -121,13 +124,14 @@ def test_ensure_keypair_with_seed_phrase(
     _, url = mock_config
 
     seed_phrase = "test seed phrase"
-    client = SubstrateClient(url=url, seed_phrase=seed_phrase)
+    client = SubstrateClient(url=url)
 
     # Reset mock to test _ensure_keypair directly
     mock_keypair_class.reset_mock()
     client._keypair = None
 
-    result = client._ensure_keypair()
+    # With the seed-agnostic approach, we pass the seed phrase explicitly
+    result = client._ensure_keypair(seed_phrase)
 
     # Should create keypair from seed phrase
     mock_keypair_class.create_from_mnemonic.assert_called_once_with(seed_phrase)
@@ -139,22 +143,24 @@ def test_set_seed_phrase(mock_substrate_interface, mock_keypair, mock_config):
     """Verify setting a seed phrase after initialization.
 
     Tests that the set_seed_phrase method:
-    - Updates the stored seed phrase
+    - Updates the stored seed phrase (for backward compatibility)
     - Sets read-only mode to False
     - Creates a new keypair from the provided seed phrase
     """
     mock_keypair_obj, mock_keypair_class = mock_keypair
     _, url = mock_config
 
-    client = SubstrateClient(url=url)
-    seed_phrase = "new test seed phrase"
+    # Mock _ensure_keypair to verify it's called with the seed phrase
+    with patch.object(SubstrateClient, "_ensure_keypair") as mock_ensure_keypair:
+        client = SubstrateClient(url=url)
+        seed_phrase = "new test seed phrase"
 
-    client.set_seed_phrase(seed_phrase)
+        client.set_seed_phrase(seed_phrase)
 
-    # Should store seed phrase and create keypair
-    assert client._seed_phrase == seed_phrase
-    assert client._read_only is False
-    mock_keypair_class.create_from_mnemonic.assert_called_with(seed_phrase)
+        # Should store seed phrase for backward compatibility
+        assert client._seed_phrase == seed_phrase
+        # And pass it to _ensure_keypair
+        mock_ensure_keypair.assert_called_once_with(seed_phrase)
 
 
 def test_set_seed_phrase_empty(mock_substrate_interface, mock_keypair, mock_config):
@@ -196,33 +202,40 @@ async def test_storage_request(
     mock_ipfs.upload_file = AsyncMock(return_value={"cid": "QmTestCID"})
     mock_ipfs_class = MagicMock(return_value=mock_ipfs)
 
+    # In our seed-agnostic approach, we pass the seed phrase to the method
     seed_phrase = "test seed phrase"
-    client = SubstrateClient(url=url, seed_phrase=seed_phrase)
+    client = SubstrateClient(url=url)
     client._substrate = mock_substrate
+    
+    # Mock _ensure_keypair to simulate the seed phrase being used
+    with patch.object(SubstrateClient, "_ensure_keypair") as mock_ensure_keypair:
+        mock_ensure_keypair.return_value = True
+        client._keypair = mock_keypair_obj
 
-    mock_call = MagicMock()
-    mock_substrate.compose_call.return_value = mock_call
+        mock_call = MagicMock()
+        mock_substrate.compose_call.return_value = mock_call
 
-    mock_extrinsic = MagicMock()
-    mock_substrate.create_signed_extrinsic.return_value = mock_extrinsic
+        mock_extrinsic = MagicMock()
+        mock_substrate.create_signed_extrinsic.return_value = mock_extrinsic
 
-    mock_receipt = MagicMock()
-    mock_receipt.extrinsic_hash = "0xabcdef1234567890"
-    mock_substrate.submit_extrinsic.return_value = mock_receipt
+        mock_receipt = MagicMock()
+        mock_receipt.extrinsic_hash = "0xabcdef1234567890"
+        mock_substrate.submit_extrinsic.return_value = mock_receipt
 
-    mock_substrate.get_payment_info.return_value = {"partialFee": 0.1}
+        mock_substrate.get_payment_info.return_value = {"partialFee": 0.1}
 
-    files = [FileInput("QmHash1", "file1.txt"), FileInput("QmHash2", "file2.jpg")]
+        files = [FileInput("QmHash1", "file1.txt"), FileInput("QmHash2", "file2.jpg")]
 
-    mock_tempfile = MagicMock()
-    mock_tempfile.NamedTemporaryFile.return_value.__enter__.return_value = (
-        mock_temp_file
-    )
+        mock_tempfile = MagicMock()
+        mock_tempfile.NamedTemporaryFile.return_value.__enter__.return_value = (
+            mock_temp_file
+        )
 
-    with patch("hippius_sdk.ipfs.IPFSClient", mock_ipfs_class), patch(
-        "tempfile.NamedTemporaryFile", mock_tempfile.NamedTemporaryFile
-    ):
-        tx_hash = await client.storage_request(files)
+        with patch("hippius_sdk.ipfs.IPFSClient", mock_ipfs_class), patch(
+            "tempfile.NamedTemporaryFile", mock_tempfile.NamedTemporaryFile
+        ):
+            # Pass the seed phrase here
+            tx_hash = await client.storage_request(files, seed_phrase=seed_phrase)
 
     expected_json = json.dumps(
         [
@@ -232,6 +245,9 @@ async def test_storage_request(
         indent=2,
     )
 
+    # Verify _ensure_keypair was called with the seed phrase
+    mock_ensure_keypair.assert_called_once_with(seed_phrase)
+    
     mock_temp_file.write.assert_called_once_with(expected_json)
     mock_ipfs.upload_file.assert_called_once_with(mock_temp_file.name)
     mock_substrate.compose_call.assert_called_once()

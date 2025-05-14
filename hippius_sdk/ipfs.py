@@ -203,6 +203,7 @@ class IPFSClient:
         include_formatted_size: bool = True,
         encrypt: Optional[bool] = None,
         max_retries: int = 3,
+        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Upload a file to IPFS with optional encryption.
@@ -212,6 +213,7 @@ class IPFSClient:
             include_formatted_size: Whether to include formatted size in the result (default: True)
             encrypt: Whether to encrypt the file (overrides default)
             max_retries: Maximum number of retry attempts (default: 3)
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -291,6 +293,7 @@ class IPFSClient:
         dir_path: str,
         include_formatted_size: bool = True,
         encrypt: Optional[bool] = None,
+        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Upload a directory to IPFS with optional encryption of files.
@@ -299,6 +302,7 @@ class IPFSClient:
             dir_path: Path to the directory to upload
             include_formatted_size: Whether to include formatted size in the result (default: True)
             encrypt: Whether to encrypt files (overrides default)
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -443,6 +447,8 @@ class IPFSClient:
         output_path: str,
         _: Optional[bool] = None,
         max_retries: int = 3,
+        seed_phrase: Optional[str] = None,
+        skip_directory_check: bool = False,
     ) -> Dict[str, Any]:
         """
         Download a file from IPFS with optional decryption.
@@ -452,6 +458,8 @@ class IPFSClient:
             output_path: Path where the downloaded file will be saved
             _: Whether to decrypt the file (overrides default)
             max_retries: Maximum number of retry attempts (default: 3)
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
+            skip_directory_check: Whether to skip checking if the CID is a directory (default: False)
 
         Returns:
             Dict[str, Any]: Dictionary containing download results:
@@ -467,29 +475,76 @@ class IPFSClient:
             ValueError: If decryption is requested but fails
         """
         start_time = time.time()
+        is_directory = False
 
-        retries = 0
-        while retries < max_retries:
+        # Check if this is a directory (unless skip_directory_check is True)
+        if not skip_directory_check:
             try:
-                url = f"{self.gateway}/ipfs/{cid}"
-                async with self.client.client.stream(url=url, method="GET") as response:
-                    response.raise_for_status()
+                ls_result = await self.client.ls(cid)
+                if isinstance(ls_result, dict) and ls_result.get("Objects", []):
+                    # Check if we have Links in the object, which means it's a directory
+                    for obj in ls_result["Objects"]:
+                        if obj.get("Links", []):
+                            is_directory = True
+                            break
+            except Exception:
+                # If ls check fails, continue treating as a regular file
+                pass
 
-                    with open(output_path, "wb") as f:
-                        async for chunk in response.aiter_bytes(chunk_size=8192):
-                            f.write(chunk)
+        # Handle based on whether it's a directory or file
+        if is_directory:
+            try:
+                # Use the AsyncIPFSClient's directory handling method
+                os.makedirs(
+                    os.path.dirname(os.path.abspath(output_path)), exist_ok=True
+                )
+                download_result = await self.client.get(cid, output_path)
+                downloaded_size = 0
+
+                # Walk through the downloaded directory to calculate total size
+                for root, _, files in os.walk(output_path):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        downloaded_size += os.path.getsize(file_path)
+
+                # Return success
+                return {
+                    "success": True,
+                    "output_path": output_path,
+                    "size_bytes": downloaded_size,
+                    "size_formatted": self.format_size(downloaded_size),
+                    "elapsed_seconds": time.time() - start_time,
+                    "decrypted": False,
+                    "is_directory": True,
+                }
+            except Exception as e:
+                raise RuntimeError(f"Failed to download directory: {str(e)}")
+        else:
+            # Regular file download
+            retries = 0
+            while retries < max_retries:
+                try:
+                    url = f"{self.gateway}/ipfs/{cid}"
+                    async with self.client.client.stream(
+                        url=url, method="GET"
+                    ) as response:
+                        response.raise_for_status()
+
+                        with open(output_path, "wb") as f:
+                            async for chunk in response.aiter_bytes(chunk_size=8192):
+                                f.write(chunk)
                     break
 
-            except (httpx.HTTPError, IOError) as e:
-                retries += 1
+                except (httpx.HTTPError, IOError) as e:
+                    retries += 1
 
-                if retries < max_retries:
-                    wait_time = 2**retries
-                    print(f"Download attempt {retries} failed: {str(e)}")
-                    print(f"Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    raise
+                    if retries < max_retries:
+                        wait_time = 2**retries
+                        print(f"Download attempt {retries} failed: {str(e)}")
+                        print(f"Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
+                    else:
+                        raise
 
         file_size_bytes = os.path.getsize(output_path)
         elapsed_time = time.time() - start_time
@@ -509,6 +564,7 @@ class IPFSClient:
         max_display_bytes: int = 1024,
         format_output: bool = True,
         decrypt: Optional[bool] = None,
+        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Get the content of a file from IPFS with optional decryption.
@@ -518,6 +574,7 @@ class IPFSClient:
             max_display_bytes: Maximum number of bytes to include in the preview (default: 1024)
             format_output: Whether to attempt to decode the content as text (default: True)
             decrypt: Whether to decrypt the file (overrides default)
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -578,12 +635,15 @@ class IPFSClient:
 
         return result
 
-    async def exists(self, cid: str) -> Dict[str, Any]:
+    async def exists(
+        self, cid: str, seed_phrase: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Check if a CID exists on IPFS.
 
         Args:
             cid: Content Identifier (CID) to check
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -603,7 +663,9 @@ class IPFSClient:
             "gateway_url": gateway_url if exists else None,
         }
 
-    async def publish_global(self, cid: str) -> Dict[str, Any]:
+    async def publish_global(
+        self, cid: str, seed_phrase: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Publish a CID to the global IPFS network, ensuring it's widely available.
 
@@ -612,6 +674,7 @@ class IPFSClient:
 
         Args:
             cid: Content Identifier (CID) to publish globally
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -621,7 +684,7 @@ class IPFSClient:
                 - message: Status message
         """
         # First ensure it's pinned locally
-        pin_result = await self.pin(cid)
+        pin_result = await self.pin(cid, seed_phrase=seed_phrase)
 
         if not pin_result.get("success", False):
             return {
@@ -641,12 +704,13 @@ class IPFSClient:
             "message": "Content published to global IPFS network",
         }
 
-    async def pin(self, cid: str) -> Dict[str, Any]:
+    async def pin(self, cid: str, seed_phrase: Optional[str] = None) -> Dict[str, Any]:
         """
         Pin a CID to IPFS to keep it available.
 
         Args:
             cid: Content Identifier (CID) to pin
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -689,6 +753,7 @@ class IPFSClient:
         max_retries: int = 3,
         verbose: bool = True,
         progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Split a file using erasure coding, then upload the chunks to IPFS.
@@ -708,6 +773,7 @@ class IPFSClient:
             verbose: Whether to print progress information
             progress_callback: Optional callback function for progress updates
                             Function receives (stage_name, current, total)
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             dict: Metadata including the original file info and chunk information
@@ -1019,6 +1085,7 @@ class IPFSClient:
         temp_dir: str = None,
         max_retries: int = 3,
         verbose: bool = True,
+        seed_phrase: Optional[str] = None,
     ) -> Dict:
         """
         Reconstruct a file from erasure-coded chunks using its metadata.
@@ -1029,6 +1096,7 @@ class IPFSClient:
             temp_dir: Directory to use for temporary files (default: system temp)
             max_retries: Maximum number of retry attempts for IPFS downloads
             verbose: Whether to print progress information
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict: containing file reconstruction info.
@@ -1059,7 +1127,10 @@ class IPFSClient:
 
             metadata_path = os.path.join(temp_dir, "metadata.json")
             await self.download_file(
-                metadata_cid, metadata_path, max_retries=max_retries
+                metadata_cid,
+                metadata_path,
+                max_retries=max_retries,
+                seed_phrase=seed_phrase,
             )
 
             if verbose:
@@ -1157,6 +1228,7 @@ class IPFSClient:
                                         path,
                                         max_retries=max_retries,
                                         skip_directory_check=True,
+                                        seed_phrase=seed_phrase,
                                     )
 
                                     # Read chunk data
@@ -1251,20 +1323,48 @@ class IPFSClient:
                 )
 
             # Wait for all chunks to be reconstructed
+            if verbose:
+                print(f"Waiting for {len(chunk_tasks)} chunk tasks to complete...")
+
+            # Track progress
+            start_chunks_time = time.time()
+
+            # Wait for all chunks to complete (preserves ordering)
             reconstructed_chunks = await asyncio.gather(*chunk_tasks)
+
+            if verbose:
+                print(
+                    f"All chunks downloaded and decoded successfully in {time.time() - start_chunks_time:.2f} seconds"
+                )
 
             if verbose:
                 download_time = time.time() - start_time
                 print(f"Chunk reconstruction completed in {download_time:.2f} seconds")
+                print(
+                    f"Received {len(reconstructed_chunks)} of {len(chunk_tasks)} expected chunks"
+                )
 
             # Step 5: Combine the reconstructed chunks into a file
             print("Combining reconstructed chunks...")
+
+            if verbose:
+                print(f"Processing {len(reconstructed_chunks)} reconstructed chunks...")
 
             # Process chunks to remove padding correctly
             processed_chunks = []
             size_processed = 0
 
+            # Guard against empty chunks
+            if not reconstructed_chunks:
+                raise ValueError("No chunks were successfully reconstructed")
+
+            # Track progress for large files
+            chunk_process_start = time.time()
+
             for i, chunk in enumerate(reconstructed_chunks):
+                if verbose and i % 10 == 0:
+                    print(f"Processing chunk {i+1}/{len(reconstructed_chunks)}...")
+
                 # For all chunks except the last one, use full chunk size
                 if i < len(reconstructed_chunks) - 1:
                     # Calculate how much of this chunk should be used (handle full chunks)
@@ -1279,8 +1379,19 @@ class IPFSClient:
                     processed_chunks.append(chunk[:remaining_bytes])
                     size_processed += remaining_bytes
 
+            if verbose:
+                print(
+                    f"Chunk processing completed in {time.time() - chunk_process_start:.2f} seconds"
+                )
+                print(f"Concatenating {len(processed_chunks)} processed chunks...")
+
             # Concatenate all processed chunks
+            concat_start = time.time()
             file_data = b"".join(processed_chunks)
+            if verbose:
+                print(
+                    f"Concatenation completed in {time.time() - concat_start:.2f} seconds"
+                )
 
             # Double-check the final size matches the original
             if len(file_data) != original_file["size"]:
@@ -1311,11 +1422,19 @@ class IPFSClient:
                 file_data = self.decrypt_data(file_data)
 
             # Step 7: Write to the output file
+            print(f"Writing {len(file_data)} bytes to {output_file}...")
+            write_start = time.time()
             with open(output_file, "wb") as f:
                 f.write(file_data)
+            if verbose:
+                print(
+                    f"File writing completed in {time.time() - write_start:.2f} seconds"
+                )
 
             # Step 8: Verify hash if available
             if "hash" in original_file:
+                print("Verifying file hash...")
+                hash_start = time.time()
                 actual_hash = hashlib.sha256(file_data).hexdigest()
                 expected_hash = original_file["hash"]
 
@@ -1324,7 +1443,9 @@ class IPFSClient:
                     print(f"  Expected: {expected_hash}")
                     print(f"  Actual:   {actual_hash}")
                 else:
-                    print("Hash verification successful!")
+                    print(
+                        f"Hash verification successful in {time.time() - hash_start:.2f} seconds!"
+                    )
 
             total_time = time.time() - start_time
             if verbose:
@@ -1354,6 +1475,7 @@ class IPFSClient:
         verbose: bool = True,
         progress_callback: Optional[Callable[[str, int, int], None]] = None,
         publish: bool = True,
+        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Erasure code a file, upload the chunks to IPFS, and store in the Hippius marketplace.
@@ -1375,6 +1497,7 @@ class IPFSClient:
             publish: Whether to publish to the blockchain (True) or just perform local
                     erasure coding without publishing (False). When False, no password
                     is needed for seed phrase access.
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             dict: Result including metadata CID and transaction hash (if published)
@@ -1385,7 +1508,7 @@ class IPFSClient:
         """
         # Step 1: Create substrate client if we need it and are publishing
         if substrate_client is None and publish:
-            substrate_client = SubstrateClient()
+            substrate_client = SubstrateClient(password=None, account_name=None)
         # Step 2: Erasure code the file and upload chunks
         metadata = await self.erasure_code_file(
             file_path=file_path,
@@ -1396,6 +1519,7 @@ class IPFSClient:
             max_retries=max_retries,
             verbose=verbose,
             progress_callback=progress_callback,
+            seed_phrase=seed_phrase,
         )
 
         original_file = metadata["original_file"]
@@ -1450,7 +1574,7 @@ class IPFSClient:
                 )
 
             tx_hash = await substrate_client.storage_request(
-                files=all_file_inputs, miner_ids=miner_ids
+                files=all_file_inputs, miner_ids=miner_ids, seed_phrase=seed_phrase
             )
             if verbose:
                 print("Successfully stored all files in marketplace!")
@@ -1483,7 +1607,10 @@ class IPFSClient:
         return result
 
     async def delete_file(
-        self, cid: str, cancel_from_blockchain: bool = True
+        self,
+        cid: str,
+        cancel_from_blockchain: bool = True,
+        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Delete a file or directory from IPFS and optionally cancel its storage on the blockchain.
@@ -1492,6 +1619,7 @@ class IPFSClient:
         Args:
             cid: Content Identifier (CID) of the file/directory to delete
             cancel_from_blockchain: Whether to also cancel the storage request from the blockchain
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict containing the result of the operation
@@ -1597,7 +1725,9 @@ class IPFSClient:
         if cancel_from_blockchain:
             try:
                 substrate_client = SubstrateClient()
-                await substrate_client.cancel_storage_request(cid)
+                await substrate_client.cancel_storage_request(
+                    cid, seed_phrase=seed_phrase
+                )
                 print("Successfully cancelled storage from blockchain")
                 result["blockchain_result"] = {"success": True}
             except Exception as e:
@@ -1628,6 +1758,7 @@ class IPFSClient:
         metadata_cid: str,
         cancel_from_blockchain: bool = True,
         parallel_limit: int = 20,
+        seed_phrase: Optional[str] = None,
     ) -> bool:
         """
         Delete an erasure-coded file, including all its chunks in parallel.
@@ -1636,6 +1767,7 @@ class IPFSClient:
             metadata_cid: CID of the metadata file for the erasure-coded file
             cancel_from_blockchain: Whether to cancel storage from blockchain
             parallel_limit: Maximum number of concurrent deletion operations
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             bool: True if the deletion was successful, False otherwise
@@ -1712,7 +1844,9 @@ class IPFSClient:
             # - HippiusAlreadyDeletedError if already deleted
             # - HippiusFailedSubstrateDelete if transaction fails
             # - Other exceptions for other failures
-            await substrate_client.cancel_storage_request(metadata_cid)
+            await substrate_client.cancel_storage_request(
+                metadata_cid, seed_phrase=seed_phrase
+            )
 
         # If we get here, either:
         # 1. Blockchain cancellation succeeded (if requested)

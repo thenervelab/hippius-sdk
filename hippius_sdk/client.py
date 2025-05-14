@@ -85,13 +85,15 @@ class HippiusClient:
         # Initialize Substrate client
         self.substrate_client = SubstrateClient(
             url=substrate_url,
-            seed_phrase=substrate_seed_phrase,
             password=seed_phrase_password,
             account_name=account_name,
         )
 
     async def upload_file(
-        self, file_path: str, encrypt: Optional[bool] = None
+        self,
+        file_path: str,
+        encrypt: Optional[bool] = None,
+        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Upload a file to IPFS with optional encryption.
@@ -99,6 +101,7 @@ class HippiusClient:
         Args:
             file_path: Path to the file to upload
             encrypt: Whether to encrypt the file (overrides default)
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing file details including:
@@ -114,10 +117,15 @@ class HippiusClient:
             ValueError: If encryption is requested but not available
         """
         # Use the enhanced IPFSClient method directly with encryption parameter
-        return await self.ipfs_client.upload_file(file_path, encrypt=encrypt)
+        return await self.ipfs_client.upload_file(
+            file_path, encrypt=encrypt, seed_phrase=seed_phrase
+        )
 
     async def upload_directory(
-        self, dir_path: str, encrypt: Optional[bool] = None
+        self,
+        dir_path: str,
+        encrypt: Optional[bool] = None,
+        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Upload a directory to IPFS with optional encryption.
@@ -125,6 +133,7 @@ class HippiusClient:
         Args:
             dir_path: Path to the directory to upload
             encrypt: Whether to encrypt files (overrides default)
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing directory details including:
@@ -141,10 +150,16 @@ class HippiusClient:
             ValueError: If encryption is requested but not available
         """
         # Use the enhanced IPFSClient method directly with encryption parameter
-        return await self.ipfs_client.upload_directory(dir_path, encrypt=encrypt)
+        return await self.ipfs_client.upload_directory(
+            dir_path, encrypt=encrypt, seed_phrase=seed_phrase
+        )
 
     async def download_file(
-        self, cid: str, output_path: str, decrypt: Optional[bool] = None
+        self,
+        cid: str,
+        output_path: str,
+        decrypt: Optional[bool] = None,
+        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Download a file from IPFS with optional decryption.
@@ -154,6 +169,7 @@ class HippiusClient:
             cid: Content Identifier (CID) of the file to download
             output_path: Path where the downloaded file/directory will be saved
             decrypt: Whether to decrypt the file (overrides default)
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing download details including:
@@ -169,7 +185,9 @@ class HippiusClient:
             requests.RequestException: If the download fails
             ValueError: If decryption is requested but fails
         """
-        return await self.ipfs_client.download_file(cid, output_path, _=decrypt)
+        return await self.ipfs_client.download_file(
+            cid, output_path, _=decrypt, seed_phrase=seed_phrase
+        )
 
     async def cat(
         self,
@@ -177,6 +195,7 @@ class HippiusClient:
         max_display_bytes: int = 1024,
         format_output: bool = True,
         decrypt: Optional[bool] = None,
+        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Get the content of a file from IPFS with optional decryption.
@@ -186,6 +205,7 @@ class HippiusClient:
             max_display_bytes: Maximum number of bytes to include in the preview
             format_output: Whether to attempt to decode the content as text
             decrypt: Whether to decrypt the file (overrides default)
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing content details including:
@@ -197,15 +217,22 @@ class HippiusClient:
                 - decrypted: Whether the file was decrypted
         """
         return await self.ipfs_client.cat(
-            cid, max_display_bytes, format_output, decrypt=decrypt
+            cid,
+            max_display_bytes,
+            format_output,
+            decrypt=decrypt,
+            seed_phrase=seed_phrase,
         )
 
-    async def exists(self, cid: str) -> Dict[str, Any]:
+    async def exists(
+        self, cid: str, seed_phrase: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Check if a CID exists on IPFS.
 
         Args:
             cid: Content Identifier (CID) to check
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -214,14 +241,15 @@ class HippiusClient:
                 - formatted_cid: Formatted version of the CID
                 - gateway_url: URL to access the content if it exists
         """
-        return await self.ipfs_client.exists(cid)
+        return await self.ipfs_client.exists(cid, seed_phrase=seed_phrase)
 
-    async def pin(self, cid: str) -> Dict[str, Any]:
+    async def pin(self, cid: str, seed_phrase: Optional[str] = None) -> Dict[str, Any]:
         """
         Pin a CID to IPFS to keep it available.
 
         Args:
             cid: Content Identifier (CID) to pin
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -230,7 +258,7 @@ class HippiusClient:
                 - formatted_cid: Formatted version of the CID
                 - message: Status message
         """
-        return await self.ipfs_client.pin(cid)
+        return await self.ipfs_client.pin(cid, seed_phrase=seed_phrase)
 
     def format_cid(self, cid: str) -> str:
         """
@@ -293,6 +321,7 @@ class HippiusClient:
         encrypt: Optional[bool] = None,
         max_retries: int = 3,
         verbose: bool = True,
+        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Split a file using erasure coding, then upload the chunks to IPFS.
@@ -310,6 +339,7 @@ class HippiusClient:
             encrypt: Whether to encrypt the file before encoding (defaults to self.encrypt_by_default)
             max_retries: Maximum number of retry attempts for IPFS uploads
             verbose: Whether to print progress information
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             dict: Metadata including the original file info and chunk information
@@ -326,6 +356,7 @@ class HippiusClient:
             encrypt=encrypt,
             max_retries=max_retries,
             verbose=verbose,
+            seed_phrase=seed_phrase,
         )
 
     async def reconstruct_from_erasure_code(
@@ -335,6 +366,7 @@ class HippiusClient:
         temp_dir: str = None,
         max_retries: int = 3,
         verbose: bool = True,
+        seed_phrase: Optional[str] = None,
     ) -> Dict:
         """
         Reconstruct a file from erasure-coded chunks using its metadata.
@@ -345,6 +377,7 @@ class HippiusClient:
             temp_dir: Directory to use for temporary files (default: system temp)
             max_retries: Maximum number of retry attempts for IPFS downloads
             verbose: Whether to print progress information
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict: containing file reconstruction info.
@@ -359,6 +392,7 @@ class HippiusClient:
             temp_dir=temp_dir,
             max_retries=max_retries,
             verbose=verbose,
+            seed_phrase=seed_phrase,
         )
 
     async def store_erasure_coded_file(
@@ -373,6 +407,7 @@ class HippiusClient:
         verbose: bool = True,
         progress_callback: Optional[Callable[[str, int, int], None]] = None,
         publish: bool = True,
+        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Erasure code a file, upload the chunks to IPFS, and store in the Hippius marketplace.
@@ -393,6 +428,7 @@ class HippiusClient:
             publish: Whether to publish to the blockchain (True) or just perform local
                     erasure coding without publishing (False). When False, no password
                     is needed for seed phrase access.
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             dict: Result including metadata CID and transaction hash (if published)
@@ -413,10 +449,14 @@ class HippiusClient:
             verbose=verbose,
             progress_callback=progress_callback,
             publish=publish,
+            seed_phrase=seed_phrase,
         )
 
     async def delete_file(
-        self, cid: str, cancel_from_blockchain: bool = True
+        self,
+        cid: str,
+        cancel_from_blockchain: bool = True,
+        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Delete a file from IPFS and optionally cancel its storage on the blockchain.
@@ -424,6 +464,7 @@ class HippiusClient:
         Args:
             cid: Content Identifier (CID) of the file to delete
             cancel_from_blockchain: Whether to also cancel the storage request from the blockchain
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict containing the result of the operation
@@ -431,13 +472,16 @@ class HippiusClient:
         Raises:
             RuntimeError: If deletion fails completely
         """
-        return await self.ipfs_client.delete_file(cid, cancel_from_blockchain)
+        return await self.ipfs_client.delete_file(
+            cid, cancel_from_blockchain, seed_phrase=seed_phrase
+        )
 
     async def delete_ec_file(
         self,
         metadata_cid: str,
         cancel_from_blockchain: bool = True,
         parallel_limit: int = 20,
+        seed_phrase: Optional[str] = None,
     ) -> bool:
         """
         Delete an erasure-coded file, including all its chunks in parallel.
@@ -446,6 +490,7 @@ class HippiusClient:
             metadata_cid: CID of the metadata file for the erasure-coded file
             cancel_from_blockchain: Whether to cancel storage from blockchain
             parallel_limit: Maximum number of concurrent deletion operations
+            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             True or false if failed.
@@ -454,5 +499,8 @@ class HippiusClient:
             RuntimeError: If deletion fails completely
         """
         return await self.ipfs_client.delete_ec_file(
-            metadata_cid, cancel_from_blockchain, parallel_limit
+            metadata_cid,
+            cancel_from_blockchain,
+            parallel_limit,
+            seed_phrase=seed_phrase,
         )

@@ -67,7 +67,6 @@ class SubstrateClient:
     def __init__(
         self,
         url: Optional[str] = None,
-        seed_phrase: Optional[str] = None,
         password: Optional[str] = None,
         account_name: Optional[str] = None,
     ):
@@ -76,7 +75,6 @@ class SubstrateClient:
 
         Args:
             url: WebSocket URL of the Hippius substrate node (from config if None)
-            seed_phrase: Seed phrase for the account (mnemonic) (from config if None)
             password: Optional password to decrypt the seed phrase if it's encrypted
             account_name: Optional name of the account to use (uses active account if None)
         """
@@ -91,29 +89,27 @@ class SubstrateClient:
         self._account_name = account_name or get_active_account()
         self._account_address = None
         self._read_only = False
+        self._seed_phrase_password = password
 
         # Get the account address for read-only operations
         addr = get_account_address(self._account_name)
         if addr:
             self._account_address = addr
 
-        # Set seed phrase if provided or available in configuration
-        if seed_phrase:
-            self.set_seed_phrase(seed_phrase)
-        else:
-            # Only try to get the seed phrase if we need it for the current operation
-            # We'll defer this to when it's actually needed
-            self._seed_phrase = None
-            self._seed_phrase_password = password
+        # For backward compatibility - storing the seed phrase is deprecated but needed for older code
+        self._seed_phrase = None
 
         # Don't connect immediately to avoid exceptions during initialization
         # Connection will happen lazily when needed
 
-    def connect(self) -> None:
+    def connect(self, seed_phrase: Optional[str] = None) -> None:
         """
         Connect to the Substrate node.
 
         Initializes the connection to the Substrate node and creates a keypair from the seed phrase.
+
+        Args:
+            seed_phrase: Optional seed phrase for the connection
         """
         try:
             print(f"Connecting to Substrate node at {self.url}...")
@@ -123,10 +119,8 @@ class SubstrateClient:
                 type_registry_preset="substrate-node-template",
             )
 
-            # Only create keypair if seed phrase is available
-            if hasattr(self, "_seed_phrase") and self._seed_phrase:
-                self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
-                self._account_address = self._keypair.ss58_address
+            # Create keypair if seed_phrase is provided or try to get from config
+            if self._ensure_keypair(seed_phrase):
                 print(
                     f"Connected successfully. Account address: {self._keypair.ss58_address}"
                 )
@@ -146,36 +140,45 @@ class SubstrateClient:
                 f"Could not connect to Substrate node at {self.url}: {e}"
             )
 
-    def _ensure_keypair(self) -> bool:
+    def _ensure_keypair(self, seed_phrase: Optional[str] = None) -> bool:
         """
         Ensure we have a keypair for signing transactions.
-        Will prompt for password if needed.
+        Will use the provided seed_phrase if given, otherwise get it from config.
+
+        Args:
+            seed_phrase: Optional seed phrase to use for creating keypair
 
         Returns:
             bool: True if keypair is available, False if it couldn't be created
         """
-        if self._keypair:
+        # If we already have a keypair and no new seed phrase was provided, use existing keypair
+        if self._keypair and not seed_phrase:
             return True
 
-        # If we have a seed phrase, create the keypair
-        if hasattr(self, "_seed_phrase") and self._seed_phrase:
+        # If a seed phrase was provided, use it to create a keypair
+        if seed_phrase:
             try:
-                self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
+                self._keypair = Keypair.create_from_mnemonic(seed_phrase)
                 self._account_address = self._keypair.ss58_address
                 self._read_only = False
                 return True
             except Exception as e:
-                print(f"Warning: Could not create keypair from seed phrase: {e}")
+                print(
+                    f"Warning: Could not create keypair from provided seed phrase: {e}"
+                )
                 return False
 
         # Otherwise, try to get the seed phrase from config
         config_seed = get_seed_phrase(self._seed_phrase_password, self._account_name)
         if config_seed:
-            self._seed_phrase = config_seed
-            self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
-            self._account_address = self._keypair.ss58_address
-            self._read_only = False
-            return True
+            try:
+                self._keypair = Keypair.create_from_mnemonic(config_seed)
+                self._account_address = self._keypair.ss58_address
+                self._read_only = False
+                return True
+            except Exception as e:
+                print(f"Warning: Could not create keypair from config seed phrase: {e}")
+                return False
         else:
             return False
 
@@ -200,6 +203,25 @@ class SubstrateClient:
             str: A 12-word mnemonic seed phrase
         """
         return self.generate_mnemonic()
+
+    def set_seed_phrase(self, seed_phrase: str) -> None:
+        """
+        Set or update the seed phrase used for signing transactions.
+
+        Note: This method is kept for backward compatibility.
+        The preferred approach is to pass seed_phrase to individual methods.
+
+        Args:
+            seed_phrase: Mnemonic seed phrase for the account
+        """
+        if not seed_phrase or not seed_phrase.strip():
+            raise ValueError("Seed phrase cannot be empty")
+
+        # Store the seed phrase in memory for this session (deprecated)
+        self._seed_phrase = seed_phrase.strip()
+
+        # Create the keypair for future operations
+        self._ensure_keypair(seed_phrase)
 
     def create_account(
         self, name: str, encode: bool = False, password: Optional[str] = None
@@ -244,8 +266,8 @@ class SubstrateClient:
         # Update the client's state to use this account
         self._account_name = name
         self._account_address = ss58_address
-        self._seed_phrase = mnemonic
-        self._keypair = keypair
+        # Set seed phrase using the method to ensure proper state update
+        self.set_seed_phrase(mnemonic)
         self._read_only = False
 
         # Return the new account details
@@ -372,8 +394,8 @@ class SubstrateClient:
             # Update the client's state to use this account
             self._account_name = name
             self._account_address = address
-            self._seed_phrase = mnemonic
-            self._keypair = Keypair.create_from_mnemonic(mnemonic)
+            # Set seed phrase using the method to ensure proper state update
+            self.set_seed_phrase(mnemonic)
             self._read_only = False
 
             # Return the imported account details
@@ -471,29 +493,11 @@ class SubstrateClient:
 
         return account_info
 
-    def set_seed_phrase(self, seed_phrase: str) -> None:
-        """
-        Set or update the seed phrase used for signing transactions.
-
-        Args:
-            seed_phrase: Mnemonic seed phrase for the account
-        """
-        if not seed_phrase or not seed_phrase.strip():
-            raise ValueError("Seed phrase cannot be empty")
-
-        # Store the seed phrase in memory for this session
-        self._seed_phrase = seed_phrase.strip()
-        self._read_only = False
-
-        # Try to create the keypair if possible
-        try:
-            self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
-            self._account_address = self._keypair.ss58_address
-        except Exception as e:
-            raise ValueError(f"Could not create keypair from seed phrase: {e}")
-
     async def storage_request(
-        self, files: List[Union[FileInput, Dict[str, str]]], miner_ids: List[str] = None
+        self,
+        files: List[Union[FileInput, Dict[str, str]]],
+        miner_ids: List[str] = None,
+        seed_phrase: Optional[str] = None,
     ) -> str:
         """
         Submit a storage request for IPFS files to the marketplace.
@@ -504,6 +508,7 @@ class SubstrateClient:
         Args:
             files: List of FileInput objects or dictionaries with fileHash and fileName
             miner_ids: List of miner IDs to store the files (optional)
+            seed_phrase: Optional seed phrase to use for this transaction (uses config if None)
 
         Returns:
             str: Transaction hash
@@ -515,8 +520,10 @@ class SubstrateClient:
             ... ])
         """
         # Check if we have a keypair for signing transactions
-        if not self._ensure_keypair():
-            raise ValueError("Seed phrase must be set before making transactions")
+        if not self._ensure_keypair(seed_phrase):
+            raise ValueError(
+                "Valid seed phrase must be provided or available in config"
+            )
 
         # Convert any dict inputs to FileInput objects
         file_inputs = []
@@ -537,8 +544,9 @@ class SubstrateClient:
         for file in file_inputs:
             print(f"  - {file.file_name}: {file.file_hash}")
 
-        # Initialize Substrate connection
-        substrate, _ = initialize_substrate_connection(self)
+        # Initialize Substrate connection with seed phrase
+        if not self._substrate:
+            self.connect(seed_phrase)
 
         # Step 1: Create a JSON file with the list of files to pin
         file_list = []
@@ -647,6 +655,7 @@ class SubstrateClient:
         self,
         cid: str,
         filename: str = None,
+        seed_phrase: Optional[str] = None,
     ) -> str:
         """
         Store a CID on the blockchain.
@@ -654,28 +663,32 @@ class SubstrateClient:
         Args:
             cid: Content Identifier (CID) to store
             filename: Original filename (optional)
+            seed_phrase: Optional seed phrase to use for this transaction (uses config if None)
 
         Returns:
             str: Transaction hash
         """
         file_input = FileInput(file_hash=cid, file_name=filename or "unnamed_file")
-        return await self.storage_request([file_input])
+        return await self.storage_request([file_input], seed_phrase=seed_phrase)
 
     async def get_account_balance(
-        self, account_address: Optional[str] = None
+        self, account_address: Optional[str] = None, seed_phrase: Optional[str] = None
     ) -> Dict[str, float]:
         """
         Get the balance of an account.
 
         Args:
             account_address: Substrate account address (uses keypair address if not specified)
+            seed_phrase: Optional seed phrase to use for this operation (uses config if None)
 
         Returns:
             Dict[str, float]: Account balances (free, reserved, total)
         """
         try:
             # Initialize Substrate connection and get account address
-            substrate, derived_address = initialize_substrate_connection(self)
+            substrate, derived_address = initialize_substrate_connection(
+                self, seed_phrase
+            )
 
             # Use provided account address or the one derived from initialization
             if not account_address:
@@ -733,7 +746,10 @@ class SubstrateClient:
             raise ValueError(f"Error querying account balance: {str(e)}")
 
     async def watch_account_balance(
-        self, account_address: Optional[str] = None, interval: int = 5
+        self,
+        account_address: Optional[str] = None,
+        interval: int = 5,
+        seed_phrase: Optional[str] = None,
     ) -> None:
         """
         Watch account balance in real-time, updating at specified intervals.
@@ -743,6 +759,7 @@ class SubstrateClient:
         Args:
             account_address: Substrate account address (uses keypair address if not specified)
             interval: Polling interval in seconds (default: 5)
+            seed_phrase: Optional seed phrase to use for this operation (uses config if None)
         """
         try:
             # Use provided account address or default to keypair/configured address
@@ -750,8 +767,8 @@ class SubstrateClient:
                 if self._account_address:
                     account_address = self._account_address
                 else:
-                    # Try to get the address from the keypair (requires seed phrase)
-                    if not self._ensure_keypair():
+                    # Try to get the address from the keypair (with seed phrase if provided)
+                    if not self._ensure_keypair(seed_phrase):
                         raise ValueError("No account address available")
                     account_address = self._keypair.ss58_address
 
@@ -765,7 +782,9 @@ class SubstrateClient:
 
                     # Get current balance
                     try:
-                        balance = await self.get_account_balance(account_address)
+                        balance = await self.get_account_balance(
+                            account_address, seed_phrase
+                        )
 
                         # Clear screen (ANSI escape sequence)
                         print("\033c", end="")
@@ -819,13 +838,16 @@ class SubstrateClient:
         except Exception as e:
             print(f"Error in watch_account_balance: {e}")
 
-    async def get_free_credits(self, account_address: Optional[str] = None) -> float:
+    async def get_free_credits(
+        self, account_address: Optional[str] = None, seed_phrase: Optional[str] = None
+    ) -> float:
         """
         Get the free credits available for an account in the marketplace.
 
         Args:
             account_address: Substrate account address (uses keypair address if not specified)
                              Format: 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+            seed_phrase: Optional seed phrase to use for this operation (uses config if None)
 
         Returns:
             float: Free credits amount (with 18 decimal places)
@@ -836,7 +858,9 @@ class SubstrateClient:
         """
         try:
             # Initialize Substrate connection and get account address
-            substrate, derived_address = initialize_substrate_connection(self)
+            substrate, derived_address = initialize_substrate_connection(
+                self, seed_phrase
+            )
 
             # Use provided account address or the one derived from initialization
             if not account_address:
@@ -871,13 +895,16 @@ class SubstrateClient:
             print(error_msg)
             raise ValueError(error_msg)
 
-    def get_user_file_hashes(self, account_address: Optional[str] = None) -> List[str]:
+    def get_user_file_hashes(
+        self, account_address: Optional[str] = None, seed_phrase: Optional[str] = None
+    ) -> List[str]:
         """
         Get all file hashes (CIDs) stored by a user in the marketplace.
 
         Args:
             account_address: Substrate account address (uses keypair address if not specified)
                              Format: 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+            seed_phrase: Optional seed phrase to use for this operation (uses config if None)
 
         Returns:
             List[str]: List of CIDs stored by the user
@@ -888,7 +915,9 @@ class SubstrateClient:
         """
         try:
             # Initialize Substrate connection and get account address
-            substrate, derived_address = initialize_substrate_connection(self)
+            substrate, derived_address = initialize_substrate_connection(
+                self, seed_phrase
+            )
 
             # Use provided account address or the one derived from initialization
             if not account_address:
@@ -920,6 +949,7 @@ class SubstrateClient:
         account_address: Optional[str] = None,
         truncate_miners: bool = True,
         max_miners: int = 3,
+        seed_phrase: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get detailed information about all files stored by a user in the marketplace.
@@ -931,6 +961,7 @@ class SubstrateClient:
                              Format: 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
             truncate_miners: Whether to truncate long miner IDs for display (default: True)
             max_miners: Maximum number of miners to include in the response (default: 3, 0 for all)
+            seed_phrase: Optional seed phrase to use for this operation (uses config if None)
 
         Returns:
             List[Dict[str, Any]]: List of file objects with the following structure:
@@ -949,11 +980,12 @@ class SubstrateClient:
         """
         # For backward compatibility, this method now calls get_user_files_from_profile
         # with appropriate conversions
-        return await self.get_user_files_from_profile(account_address)
+        return await self.get_user_files_from_profile(account_address, seed_phrase)
 
     async def get_user_files_from_profile(
         self,
         account_address: Optional[str] = None,
+        seed_phrase: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get user files by fetching the user profile CID from ipfsPallet and then retrieving
@@ -962,6 +994,7 @@ class SubstrateClient:
         Args:
             account_address: Substrate account address (uses keypair address if not specified)
                              Format: 5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH
+            seed_phrase: Optional seed phrase to use for this operation (uses config if None)
 
         Returns:
             List[Dict[str, Any]]: List of file objects from the user profile
@@ -972,7 +1005,9 @@ class SubstrateClient:
         """
         try:
             # Initialize Substrate connection and get account address
-            substrate, derived_address = initialize_substrate_connection(self)
+            substrate, derived_address = initialize_substrate_connection(
+                self, seed_phrase
+            )
 
             # Use provided account address or the one derived from initialization
             if not account_address:
@@ -1055,7 +1090,7 @@ class SubstrateClient:
             raise ValueError(f"Error retrieving user files from profile: {str(e)}")
 
     def get_pinning_status(
-        self, account_address: Optional[str] = None
+        self, account_address: Optional[str] = None, seed_phrase: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Get the status of file pinning requests for an account.
@@ -1066,6 +1101,7 @@ class SubstrateClient:
         Args:
             account_address: Substrate account address (uses keypair address if not specified)
                              Format: 5HoreGVb17XhY3wanDvzoAWS7yHYbc5uMteXqRNTiZ6Txkqq
+            seed_phrase: Optional seed phrase to use for this operation (uses config if None)
 
         Returns:
             List[Dict[str, Any]]: List of storage requests with their status information:
@@ -1086,7 +1122,7 @@ class SubstrateClient:
             ValueError: If query fails or no requests found
         """
         # Initialize Substrate connection and get account address
-        substrate, derived_address = initialize_substrate_connection(self)
+        substrate, derived_address = initialize_substrate_connection(self, seed_phrase)
 
         # Use provided account address or the one derived from initialization
         if not account_address:
@@ -1140,21 +1176,24 @@ class SubstrateClient:
         """
         return hex_to_ipfs_cid(hex_string)
 
-    async def check_storage_request_exists(self, cid: str) -> bool:
+    async def check_storage_request_exists(
+        self, cid: str, seed_phrase: Optional[str] = None
+    ) -> bool:
         """
         Check if a storage request exists for the given CID in the user's storage requests.
 
         Args:
             cid: Content Identifier (CID) to check
+            seed_phrase: Optional seed phrase to use for this operation (uses config if None)
 
         Returns:
             bool: True if the CID exists in the user's storage requests, False otherwise
         """
-        substrate, derived_address = initialize_substrate_connection(self)
+        substrate, derived_address = initialize_substrate_connection(self, seed_phrase)
 
         if not derived_address:
             # If we don't have a derived address, try to get the keypair
-            if not self._ensure_keypair():
+            if not self._ensure_keypair(seed_phrase):
                 raise ValueError("No account address available")
             derived_address = self._keypair.ss58_address
 
@@ -1184,12 +1223,15 @@ class SubstrateClient:
             # If we encounter an error checking, we'll assume it exists to be safe
             return True
 
-    async def cancel_storage_request(self, cid: str) -> str:
+    async def cancel_storage_request(
+        self, cid: str, seed_phrase: Optional[str] = None
+    ) -> str:
         """
         Cancel a storage request by CID from the Hippius blockchain.
 
         Args:
             cid: Content Identifier (CID) of the file to cancel
+            seed_phrase: Optional seed phrase to use for this transaction (uses config if None)
 
         Returns:
             str: Transaction hash or status message
@@ -1212,12 +1254,14 @@ class SubstrateClient:
                 raise
 
         # Continue with cancellation if it exists
-        if not self._ensure_keypair():
+        if not self._ensure_keypair(seed_phrase):
             raise HippiusSubstrateAuthError(
-                "Seed phrase must be set before making transactions"
+                "Valid seed phrase must be provided or available in config"
             )
 
-        substrate, _ = initialize_substrate_connection(self)
+        # Initialize Substrate connection with seed phrase if needed
+        if not self._substrate:
+            self.connect(seed_phrase)
 
         call = self._substrate.compose_call(
             call_module="Marketplace",

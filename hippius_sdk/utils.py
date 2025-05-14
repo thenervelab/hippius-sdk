@@ -193,6 +193,7 @@ def generate_key() -> str:
 
 def initialize_substrate_connection(
     self_obj: Any,
+    seed_phrase: Optional[str] = None,
 ) -> Tuple[SubstrateInterface, Optional[str]]:
     """
     Initialize a Substrate connection if not already connected and set up the account.
@@ -201,6 +202,7 @@ def initialize_substrate_connection(
 
     Args:
         self_obj: The object (usually SubstrateClient instance) with required attributes
+        seed_phrase: Optional seed phrase to use for the connection
 
     Returns:
         Tuple[SubstrateInterface, Optional[str]]: A tuple containing the Substrate interface
@@ -216,19 +218,23 @@ def initialize_substrate_connection(
         )
         print(f"Connected to Substrate node at {self_obj.url}")
 
-    # Use provided account address or default to keypair/configured address
+    # Use provided account address or create keypair from seed_phrase
     account_address = None
-    if hasattr(self_obj, "_account_address") and self_obj._account_address:
-        account_address = self_obj._account_address
 
-    elif hasattr(self_obj, "_ensure_keypair") and callable(self_obj._ensure_keypair):
-        # Try to get the address from the keypair (requires seed phrase)
-        if not self_obj._ensure_keypair():
-            # No keypair available, so we'll return None for account_address
-            return self_obj._substrate, None
+    if hasattr(self_obj, "_ensure_keypair") and callable(self_obj._ensure_keypair):
+        # Try to get the address from the keypair (using seed_phrase if provided)
+        if not self_obj._ensure_keypair(seed_phrase):
+            # If we have an account address already, use that
+            if hasattr(self_obj, "_account_address") and self_obj._account_address:
+                account_address = self_obj._account_address
+            else:
+                # No keypair or address available
+                return self_obj._substrate, None
 
         if hasattr(self_obj, "_keypair") and self_obj._keypair:
             account_address = self_obj._keypair.ss58_address
             print(f"Using keypair address: {account_address}")
+    elif hasattr(self_obj, "_account_address") and self_obj._account_address:
+        account_address = self_obj._account_address
 
     return self_obj._substrate, account_address

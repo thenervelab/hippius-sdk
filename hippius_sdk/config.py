@@ -380,7 +380,7 @@ def decrypt_seed_phrase(
     Decrypt the substrate seed phrase using password-based decryption.
 
     Args:
-        password: Optional password (if None, will prompt)
+        password: Optional password (if None, will prompt; if empty string, will skip password for read-only operations)
         account_name: Optional account name (if None, uses active account)
 
     Returns:
@@ -412,6 +412,12 @@ def decrypt_seed_phrase(
         print("Error: No encrypted seed phrase found or missing salt")
         return None
 
+    # Check if we're in skip-password mode (empty string)
+    # This is used for read-only operations that don't need blockchain interaction
+    if password == "":
+        # Don't print a message as it's confusing to the user
+        return None
+
     # Get password from user if not provided
     if password is None:
         password = getpass.getpass("Enter password to decrypt seed phrase: \n\n")
@@ -427,7 +433,8 @@ def get_seed_phrase(
     Get the substrate seed phrase from configuration, decrypting if necessary.
 
     Args:
-        password: Optional password for decryption (if None and needed, will prompt)
+        password: Optional password for decryption (if None and needed, will prompt;
+                if empty string, will skip decryption for read-only operations)
         account_name: Optional account name (if None, uses active account)
 
     Returns:
@@ -448,6 +455,11 @@ def get_seed_phrase(
 
     account_data = config["substrate"]["accounts"][name_to_use]
     is_encoded = account_data.get("seed_phrase_encoded", False)
+
+    # If password is an empty string, this indicates we're doing a read-only operation
+    # that doesn't require the seed phrase, so we can return None
+    if password == "" and is_encoded:
+        return None
 
     if is_encoded:
         return decrypt_seed_phrase(password, name_to_use)
