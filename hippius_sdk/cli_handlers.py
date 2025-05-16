@@ -970,26 +970,21 @@ async def handle_ec_files(
         ):
             account_address = client.substrate_client._keypair.ss58_address
         else:
-            # Try to get the default address
-            default_address = get_default_address()
-            if default_address:
-                account_address = default_address
-            else:
-                has_default = get_default_address() is not None
+            # Use the active account address instead of default address
+            from hippius_sdk.config import get_account_address, get_active_account
 
-                error("No account address provided, and client has no keypair.")
+            active_account = get_active_account()
+            if active_account:
+                account_address = get_account_address(active_account)
 
-                if has_default:
-                    warning(
-                        "Please provide an account address with '--account_address' or the default address may be invalid."
-                    )
-                else:
-                    info(
-                        "Please provide an account address with '--account_address' or set a default with:"
-                    )
-                    log(
-                        "  [bold green underline]hippius address set-default <your_account_address>[/bold green underline]"
-                    )
+            if not account_address:
+                error("No account address provided and client has no keypair.")
+                info(
+                    "Please provide an account address with '--account_address' or set an active account with:"
+                )
+                log(
+                    "  [bold green underline]hippius account switch <account_name>[/bold green underline]"
+                )
                 return 1
 
     info(f"Getting erasure-coded files for account: [bold]{account_address}[/bold]")

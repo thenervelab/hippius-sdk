@@ -1751,6 +1751,7 @@ class IPFSClient:
         cancel_from_blockchain: bool = True,
         parallel_limit: int = 20,
         seed_phrase: Optional[str] = None,
+        metadata_timeout: int = 30,  # Timeout in seconds for metadata fetch
     ) -> bool:
         """
         Delete an erasure-coded file, including all its chunks in parallel.
@@ -1760,30 +1761,49 @@ class IPFSClient:
             cancel_from_blockchain: Whether to cancel storage from blockchain
             parallel_limit: Maximum number of concurrent deletion operations
             seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
+            metadata_timeout: Timeout in seconds for metadata fetch operation (default: 30)
 
         Returns:
             bool: True if the deletion was successful, False otherwise
         """
+        print(f"Starting deletion process for metadata CID: {metadata_cid}")
 
         # Try to download and process metadata file and chunks
         ipfs_failure = False
         metadata_error = False
+        chunks = []
 
         try:
-            # First download the metadata to get chunk CIDs
+            # First download the metadata to get chunk CIDs with timeout
             try:
-                metadata_result = await self.cat(metadata_cid)
-                metadata_json = json.loads(metadata_result["content"].decode("utf-8"))
-                chunks = metadata_json.get("chunks", [])
-            except json.JSONDecodeError:
+                print("Attempting to fetch metadata file...")
+                # Create a task for fetching metadata with timeout
+                metadata_task = asyncio.create_task(self.cat(metadata_cid))
+                try:
+                    metadata_result = await asyncio.wait_for(
+                        metadata_task, timeout=metadata_timeout
+                    )
+                    print(
+                        f"Successfully fetched metadata (size: {len(metadata_result['content'])} bytes)"
+                    )
+
+                    # Parse the metadata JSON
+                    metadata_json = json.loads(
+                        metadata_result["content"].decode("utf-8")
+                    )
+                    chunks = metadata_json.get("chunks", [])
+                    print(f"Found {len(chunks)} chunks in metadata")
+                except asyncio.TimeoutError:
+                    print(
+                        f"Timed out after {metadata_timeout}s waiting for metadata download"
+                    )
+                    # We'll continue with blockchain cancellation even without metadata
+            except json.JSONDecodeError as e:
                 # If we can't parse the metadata JSON, record the error but continue
-                metadata_error = True
-                # Continue with empty chunks so we can at least try to unpin the metadata file
-                chunks = []
-            except Exception:
+                print(f"Error parsing metadata JSON: {e}")
+            except Exception as e:
                 # Any other metadata error
-                metadata_error = True
-                chunks = []
+                print(f"Error retrieving or processing metadata: {e}")
 
             # Extract all chunk CIDs
             chunk_cids = []
@@ -1794,54 +1814,79 @@ class IPFSClient:
                 elif isinstance(chunk_cid, str):
                     chunk_cids.append(chunk_cid)
 
+            print(f"Extracted {len(chunk_cids)} CIDs from chunks")
+
             # Create a semaphore to limit concurrent operations
             semaphore = asyncio.Semaphore(parallel_limit)
 
-            # Define the unpin task for each chunk with error handling
+            # Define the unpin task for each chunk with error handling and timeout
             async def unpin_chunk(cid):
                 async with semaphore:
                     try:
-                        await self.client.unpin(cid)
+                        # Add a timeout for each unpin operation
+                        unpin_task = asyncio.create_task(self.client.unpin(cid))
+                        await asyncio.wait_for(
+                            unpin_task, timeout=10
+                        )  # 10-second timeout per unpin
                         return {"success": True, "cid": cid}
-                    except Exception:
+                    except asyncio.TimeoutError:
+                        print(f"Unpin operation timed out for CID: {cid}")
+                        return {"success": False, "cid": cid, "error": "timeout"}
+                    except Exception as e:
                         # Record failure but continue with other chunks
-                        return {"success": False, "cid": cid}
+                        print(f"Error unpinning CID {cid}: {str(e)}")
+                        return {"success": False, "cid": cid, "error": str(e)}
 
             # Unpin all chunks in parallel
             if chunk_cids:
+                print(f"Starting parallel unpin of {len(chunk_cids)} chunks...")
                 unpin_tasks = [unpin_chunk(cid) for cid in chunk_cids]
                 results = await asyncio.gather(*unpin_tasks)
 
                 # Count failures
                 failures = [r for r in results if not r["success"]]
                 if failures:
-                    ipfs_failure = True
-        except Exception:
+                    print(f"Failed to unpin {len(failures)} chunks")
+                else:
+                    print("Successfully unpinned all chunks")
+        except Exception as e:
             # If we can't process chunks at all, record the failure
-            ipfs_failure = True
+            print(f"Exception during chunks processing: {e}")
 
         # Unpin the metadata file itself, regardless of whether we could process chunks
         try:
-            await self.client.unpin(metadata_cid)
-        except Exception:
+            print(f"Unpinning metadata file: {metadata_cid}")
+            unpin_task = asyncio.create_task(self.client.unpin(metadata_cid))
+            await asyncio.wait_for(unpin_task, timeout=10)  # 10-second timeout
+            print("Successfully unpinned metadata file")
+        except Exception as e:
             # Record the failure but continue with blockchain cancellation
-            ipfs_failure = True
+            print(f"Error unpinning metadata file: {e}")
 
         # Handle blockchain cancellation if requested
         if cancel_from_blockchain:
-            # Create a substrate client
-            substrate_client = SubstrateClient()
+            try:
+                # Create a substrate client
+                print("Creating substrate client for blockchain cancellation...")
+                substrate_client = SubstrateClient()
 
-            # This will raise appropriate exceptions if it fails:
-            # - HippiusAlreadyDeletedError if already deleted
-            # - HippiusFailedSubstrateDelete if transaction fails
-            # - Other exceptions for other failures
-            await substrate_client.cancel_storage_request(
-                metadata_cid, seed_phrase=seed_phrase
-            )
+                # This will raise appropriate exceptions if it fails:
+                # - HippiusAlreadyDeletedError if already deleted
+                # - HippiusFailedSubstrateDelete if transaction fails
+                # - Other exceptions for other failures
+                print(f"Cancelling storage request for CID: {metadata_cid}")
+                await substrate_client.cancel_storage_request(
+                    metadata_cid, seed_phrase=seed_phrase
+                )
+                print("Successfully cancelled storage request on blockchain")
+            except Exception as e:
+                print(f"Error during blockchain cancellation: {e}")
+                # Re-raise the exception to be handled by the caller
+                raise
 
         # If we get here, either:
         # 1. Blockchain cancellation succeeded (if requested)
         # 2. We weren't doing blockchain cancellation
         # In either case, we report success
+        print("Delete EC file operation completed successfully")
         return True
