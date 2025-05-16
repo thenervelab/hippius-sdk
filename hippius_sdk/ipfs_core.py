@@ -141,9 +141,7 @@ class AsyncIPFSClient:
         Returns:
             Response from the IPFS node
         """
-        pin_ls_url = f"{self.api_url}/api/v0/pin/ls?arg={cid}"
-        pin_ls_response = await self.client.post(pin_ls_url)
-        pin_ls_response.raise_for_status()
+
         response = await self.client.post(f"{self.api_url}/api/v0/pin/rm?arg={cid}")
 
         response.raise_for_status()
