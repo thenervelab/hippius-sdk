@@ -34,6 +34,9 @@ examples:
   # Store a file
   hippius store example.txt
   
+  # Add a file (alias for store)
+  hippius add example.txt
+  
   # Store a directory
   hippius store-dir ./my_directory
   
@@ -209,6 +212,22 @@ def add_storage_commands(subparsers):
         help="Publish file to IPFS and store on the blockchain (default)",
     )
     store_parser.add_argument(
+        "--no-publish",
+        action="store_true",
+        help="Don't publish file to IPFS or store on the blockchain (local only)",
+    )
+
+    # Add command (alias for store)
+    add_parser = subparsers.add_parser(
+        "add", help="Upload a file to IPFS and store it on Substrate (alias for 'store')"
+    )
+    add_parser.add_argument("file_path", help="Path to file to upload")
+    add_parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="Publish file to IPFS and store on the blockchain (default)",
+    )
+    add_parser.add_argument(
         "--no-publish",
         action="store_true",
         help="Don't publish file to IPFS or store on the blockchain (local only)",

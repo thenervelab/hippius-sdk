@@ -145,7 +145,7 @@ def main():
                 decrypt=decrypt,
             )
 
-        elif args.command == "store":
+        elif args.command == "store" or args.command == "add":
             return run_async_handler(
                 cli_handlers.handle_store,
                 client,
