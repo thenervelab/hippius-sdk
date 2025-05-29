@@ -219,7 +219,8 @@ def add_storage_commands(subparsers):
 
     # Add command (alias for store)
     add_parser = subparsers.add_parser(
-        "add", help="Upload a file to IPFS and store it on Substrate (alias for 'store')"
+        "add",
+        help="Upload a file to IPFS and store it on Substrate (alias for 'store')",
     )
     add_parser.add_argument("file_path", help="Path to file to upload")
     add_parser.add_argument(
