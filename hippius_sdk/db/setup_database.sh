@@ -47,7 +47,9 @@ PGPASSWORD=$DB_PASSWORD createdb -h $DB_HOST -p $DB_PORT -U $DB_USER $DB_NAME 2>
 # Run migrations with dbmate
 echo "🚀 Running database migrations..."
 if command -v dbmate &> /dev/null; then
-    dbmate up
+    # Use explicit --migrations-dir flag to override any config
+    echo "📁 Using migrations from: $(pwd)/hippius_s3/sql/sdk_migrations"
+    dbmate --migrations-dir="hippius_s3/sql/sdk_migrations" up
     echo "✅ Database migrations completed successfully!"
 else
     echo "❌ dbmate not found. Please install it first:"
