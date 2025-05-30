@@ -2,7 +2,23 @@
 
 This directory contains database migrations for the Hippius SDK key storage feature.
 
-## Setup
+## Setup for End Users
+
+If you've installed hippius-sdk as a dependency, you can set up the database files in your project:
+
+```bash
+# Copy database files to your project
+hippius-setup-db
+
+# Edit the database URL
+cp env.db.template .env.db
+# Edit .env.db with your database credentials
+
+# Run the setup
+./setup_database.sh
+```
+
+## Development Setup
 
 1. **Install dbmate**:
    ```bash
