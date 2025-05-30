@@ -2,8 +2,10 @@
 IPFS operations for the Hippius SDK.
 """
 import asyncio
+import base64
 import hashlib
 import json
+import logging
 import os
 import random
 import shutil
@@ -13,8 +15,10 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 import httpx
+from pydantic import BaseModel
 
 from hippius_sdk.config import get_config_value, get_encryption_key
+from hippius_sdk.errors import HippiusIPFSError, HippiusSubstrateError
 from hippius_sdk.ipfs_core import AsyncIPFSClient
 from hippius_sdk.substrate import FileInput, SubstrateClient
 from hippius_sdk.utils import format_cid, format_size
@@ -41,6 +45,20 @@ PARALLEL_EC_CHUNKS = 20  # Maximum number of concurrent chunk downloads
 PARALLEL_ORIGINAL_CHUNKS = (
     15  # Maximum number of original chunks to process in parallel
 )
+
+
+class S3PublishResult(BaseModel):
+    """Result model for s3_publish method."""
+
+    cid: str
+    file_name: str
+    size_bytes: int
+    encryption_key: Optional[str]
+    tx_hash: str
+
+
+# Set up logger for this module
+logger = logging.getLogger(__name__)
 
 
 class IPFSClient:
@@ -513,6 +531,9 @@ class IPFSClient:
                 raise RuntimeError(f"Failed to download directory: {str(e)}")
         else:
             # Regular file download
+            # Create parent directories if they don't exist
+            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
             retries = 0
             while retries < max_retries:
                 try:
@@ -1890,3 +1911,171 @@ class IPFSClient:
         # In either case, we report success
         print("Delete EC file operation completed successfully")
         return True
+
+    async def s3_publish(
+        self, file_path: str, encrypt: bool, seed_phrase: str
+    ) -> S3PublishResult:
+        """
+        Publish a file to IPFS and the Hippius marketplace in one operation.
+
+        This method automatically manages encryption keys per seed phrase:
+        - If encrypt=True, it will get or generate an encryption key for the seed phrase
+        - Keys are stored in PostgreSQL and versioned (never deleted)
+        - Always uses the most recent key for a seed phrase
+
+        Args:
+            file_path: Path to the file to publish
+            encrypt: Whether to encrypt the file before uploading
+            seed_phrase: Seed phrase for blockchain transaction signing
+
+        Returns:
+            S3PublishResult: Object containing CID, file info, and transaction hash
+
+        Raises:
+            HippiusIPFSError: If IPFS operations (add or pin) fail
+            HippiusSubstrateError: If substrate call fails
+            FileNotFoundError: If the file doesn't exist
+            ValueError: If encryption is requested but not available
+        """
+        # Check if file exists and get initial info
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File {file_path} not found")
+
+        # Get file info
+        filename = os.path.basename(file_path)
+        size_bytes = os.path.getsize(file_path)
+
+        # Handle encryption if requested with automatic key management
+        encryption_key_used = None
+        if encrypt:
+            # Check if key storage is enabled and available
+            key_storage_available = False
+            try:
+                from hippius_sdk.key_storage import (
+                    generate_and_store_key_for_seed,
+                    get_key_for_seed,
+                    is_key_storage_enabled,
+                )
+
+                key_storage_available = is_key_storage_enabled()
+                logger.debug(f"Key storage enabled: {key_storage_available}")
+            except ImportError:
+                logger.debug("Key storage module not available")
+                key_storage_available = False
+
+            if key_storage_available:
+                # Use PostgreSQL-backed key storage
+                logger.info(f"Using PostgreSQL key storage for seed phrase")
+
+                # Try to get existing key for this seed phrase
+                existing_key_b64 = await get_key_for_seed(seed_phrase)
+
+                if existing_key_b64:
+                    # Use existing key
+                    logger.debug("Using existing encryption key for seed phrase")
+                    encryption_key_bytes = base64.b64decode(existing_key_b64)
+                    encryption_key_used = existing_key_b64
+                else:
+                    # Generate and store new key for this seed phrase
+                    logger.info("Generating new encryption key for seed phrase")
+                    new_key_b64 = await generate_and_store_key_for_seed(seed_phrase)
+                    encryption_key_bytes = base64.b64decode(new_key_b64)
+                    encryption_key_used = new_key_b64
+
+                # Read file content into memory
+                with open(file_path, "rb") as f:
+                    file_data = f.read()
+
+                # Encrypt the data using the key from key storage
+                import nacl.secret
+
+                box = nacl.secret.SecretBox(encryption_key_bytes)
+                encrypted_data = box.encrypt(file_data)
+
+                # Overwrite the original file with encrypted data
+                with open(file_path, "wb") as f:
+                    f.write(encrypted_data)
+            else:
+                # Fallback to the original encryption system if key_storage is not available
+                if not self.encryption_available:
+                    raise ValueError(
+                        "Encryption requested but not available. Either install key storage with 'pip install hippius_sdk[key_storage]' or configure an encryption key with 'hippius keygen --save'"
+                    )
+
+                # Read file content into memory
+                with open(file_path, "rb") as f:
+                    file_data = f.read()
+
+                # Encrypt the data using the client's encryption key
+                encrypted_data = self.encrypt_data(file_data)
+
+                # Overwrite the original file with encrypted data
+                with open(file_path, "wb") as f:
+                    f.write(encrypted_data)
+
+                # Store the encryption key for the result
+                encryption_key_used = (
+                    base64.b64encode(self.encryption_key).decode("utf-8")
+                    if self.encryption_key
+                    else None
+                )
+
+        # Add file to IPFS
+        try:
+            result = await self.client.add_file(file_path)
+            cid = result["Hash"]
+        except Exception as e:
+            raise HippiusIPFSError(f"Failed to add file to IPFS: {str(e)}")
+
+        # Pin the file to IPFS
+        try:
+            pin_result = await self.client.pin(cid)
+        except Exception as e:
+            raise HippiusIPFSError(f"Failed to pin file to IPFS: {str(e)}")
+
+        # Publish to substrate marketplace
+        try:
+            # Pass the seed phrase directly to avoid password prompts for encrypted config
+            substrate_client = SubstrateClient(seed_phrase=seed_phrase)
+            logger.info(
+                f"Submitting storage request to substrate for file: {filename}, CID: {cid}"
+            )
+
+            tx_hash = await substrate_client.storage_request(
+                files=[
+                    FileInput(
+                        file_hash=cid,
+                        file_name=filename,
+                    )
+                ],
+                miner_ids=[],
+                seed_phrase=seed_phrase,
+            )
+
+            logger.debug(f"Substrate call result: {tx_hash}")
+
+            # Check if we got a valid transaction hash
+            if not tx_hash or tx_hash == "0x" or len(tx_hash) < 10:
+                logger.error(f"Invalid transaction hash received: {tx_hash}")
+                raise HippiusSubstrateError(
+                    f"Invalid transaction hash received: {tx_hash}. This might indicate insufficient credits or transaction failure."
+                )
+
+            logger.info(
+                f"Successfully published to substrate with transaction: {tx_hash}"
+            )
+
+        except Exception as e:
+            logger.error(f"Substrate call failed: {str(e)}")
+            logger.debug(
+                "Possible causes: insufficient credits, network issues, invalid seed phrase, or substrate node unavailability"
+            )
+            raise HippiusSubstrateError(f"Failed to publish to substrate: {str(e)}")
+
+        return S3PublishResult(
+            cid=cid,
+            file_name=filename,
+            size_bytes=size_bytes,
+            encryption_key=encryption_key_used,
+            tx_hash=tx_hash,
+        )

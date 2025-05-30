@@ -49,6 +49,10 @@ DEFAULT_CONFIG = {
         "verbose": False,
         "max_retries": 3,
     },
+    "key_storage": {
+        "database_url": "postgresql://postgres:password@localhost:5432/hippius_keys",
+        "enabled": False,
+    },
 }
 
 

@@ -59,8 +59,8 @@ METADATA_CID=$($PYTHON -m hippius_sdk.cli erasure-code test_binary_small.bin --n
 echo "Erasure-code metadata CID: $METADATA_CID"
 
 # Test uploading a text file
-run_test "Upload text file" "$PYTHON -m hippius_sdk.cli store test_file.txt"
-FILE_CID=$($PYTHON -m hippius_sdk.cli store test_file.txt | grep -o 'CID: [^ ]*' | cut -d' ' -f2)
+run_test "Upload text file" "$PYTHON -m hippius_sdk.cli store test_file.txt --no-publish"
+FILE_CID=$($PYTHON -m hippius_sdk.cli store test_file.txt --no-publish | grep -o 'IPFS CID: [^ ]*' | cut -d' ' -f3)
 echo "Uploaded file CID: $FILE_CID"
 
 echo -e "\n\033[1;33m==== Testing reconstruction from erasure-coded file ====\033[0m"

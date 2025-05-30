@@ -9,7 +9,7 @@ import nacl.secret
 import nacl.utils
 
 from hippius_sdk.config import get_config_value, get_encryption_key
-from hippius_sdk.ipfs import IPFSClient
+from hippius_sdk.ipfs import IPFSClient, S3PublishResult
 from hippius_sdk.substrate import SubstrateClient
 
 
@@ -510,3 +510,25 @@ class HippiusClient:
             parallel_limit,
             seed_phrase=seed_phrase,
         )
+
+    async def s3_publish(
+        self, file_path: str, encrypt: bool, seed_phrase: str
+    ) -> S3PublishResult:
+        """
+        Publish a file to IPFS and the Hippius marketplace in one operation.
+
+        Args:
+            file_path: Path to the file to publish
+            encrypt: Whether to encrypt the file before uploading
+            seed_phrase: Seed phrase for blockchain transaction signing
+
+        Returns:
+            S3PublishResult: Object containing CID, file info, and transaction hash
+
+        Raises:
+            HippiusIPFSError: If IPFS operations (add or pin) fail
+            HippiusSubstrateError: If substrate call fails
+            FileNotFoundError: If the file doesn't exist
+            ValueError: If encryption is requested but not available
+        """
+        return await self.ipfs_client.s3_publish(file_path, encrypt, seed_phrase)

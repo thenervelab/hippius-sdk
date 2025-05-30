@@ -45,11 +45,11 @@ run_test "cat help" "$PYTHON -m hippius_sdk.cli cat -h"
 echo -e "\n\033[1;33m==== Uploading test files to get CIDs ====\033[0m"
 
 # Upload the text file and get its CID
-TEXT_CID=$($PYTHON -m hippius_sdk.cli store small_text.txt | grep -o 'CID: [^ ]*' | cut -d' ' -f2)
+TEXT_CID=$($PYTHON -m hippius_sdk.cli store small_text.txt --no-publish | grep -o 'IPFS CID: [^ ]*' | cut -d' ' -f3)
 echo "Uploaded text file CID: $TEXT_CID"
 
 # Upload the JSON file and get its CID
-JSON_CID=$($PYTHON -m hippius_sdk.cli store json_file.json | grep -o 'CID: [^ ]*' | cut -d' ' -f2)
+JSON_CID=$($PYTHON -m hippius_sdk.cli store json_file.json --no-publish | grep -o 'IPFS CID: [^ ]*' | cut -d' ' -f3)
 echo "Uploaded JSON file CID: $JSON_CID"
 
 echo -e "\n\033[1;34m==== Testing cat command ====\033[0m"

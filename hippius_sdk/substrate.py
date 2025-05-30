@@ -69,6 +69,7 @@ class SubstrateClient:
         url: Optional[str] = None,
         password: Optional[str] = None,
         account_name: Optional[str] = None,
+        seed_phrase: Optional[str] = None,
     ):
         """
         Initialize the Substrate client.
@@ -77,6 +78,7 @@ class SubstrateClient:
             url: WebSocket URL of the Hippius substrate node (from config if None)
             password: Optional password to decrypt the seed phrase if it's encrypted
             account_name: Optional name of the account to use (uses active account if None)
+            seed_phrase: Optional unencrypted seed phrase to use directly (bypasses config)
         """
         # Load configuration values if not explicitly provided
         if url is None:
@@ -96,8 +98,7 @@ class SubstrateClient:
         if addr:
             self._account_address = addr
 
-        # For backward compatibility - storing the seed phrase is deprecated but needed for older code
-        self._seed_phrase = None
+        self._seed_phrase = seed_phrase  # Use passed seed phrase if provided
 
         # Don't connect immediately to avoid exceptions during initialization
         # Connection will happen lazily when needed
@@ -595,33 +596,19 @@ class SubstrateClient:
         }
 
         # Create the call to the marketplace
-        try:
-            call = self._substrate.compose_call(
-                call_module="Marketplace",
-                call_function="storage_request",
-                call_params=call_params,
-            )
-        except Exception as e:
-            print(f"Warning: Error composing call: {e}")
-            print("Attempting to use IpfsPallet.storeFile instead...")
-
-            # Try with IpfsPallet.storeFile as an alternative
-            alt_call_params = {
-                "fileHash": files_list_cid,
-                "fileName": f"files_list_{uuid.uuid4()}",  # Generate a unique ID
-            }
-            call = self._substrate.compose_call(
-                call_module="IpfsPallet",
-                call_function="storeFile",
-                call_params=alt_call_params,
-            )
+        call = self._substrate.compose_call(
+            call_module="Marketplace",
+            call_function="storage_request",
+            call_params=call_params,
+        )
 
         # Get payment info to estimate the fee
         payment_info = self._substrate.get_payment_info(
-            call=call, keypair=self._keypair
+            call=call,
+            keypair=self._keypair,
         )
 
-        print(f"Payment info: {json.dumps(payment_info, indent=2)}")
+        print(f"]Payment info: {json.dumps(payment_info, indent=2)}")
 
         # Convert partialFee from Substrate (10^18 units) to a more readable format
         estimated_fee = payment_info.get("partialFee", 0)

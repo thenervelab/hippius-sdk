@@ -81,6 +81,10 @@ examples:
 
   # Delete an erasure-coded file and all its chunks
   hippius ec-delete QmMetadataHash
+  
+  # Configure PostgreSQL key storage
+  hippius config set key_storage database_url 'postgresql://user:pass@localhost:5432/hippius_keys'
+  hippius config set key_storage enabled true
 """,
     )
 
@@ -219,7 +223,8 @@ def add_storage_commands(subparsers):
 
     # Add command (alias for store)
     add_parser = subparsers.add_parser(
-        "add", help="Upload a file to IPFS and store it on Substrate (alias for 'store')"
+        "add",
+        help="Upload a file to IPFS and store it on Substrate (alias for 'store')",
     )
     add_parser.add_argument("file_path", help="Path to file to upload")
     add_parser.add_argument(
@@ -439,7 +444,7 @@ def add_config_commands(subparsers):
     get_parser = config_subparsers.add_parser("get", help="Get a configuration value")
     get_parser.add_argument(
         "section",
-        help="Configuration section (ipfs, substrate, encryption, erasure_coding, cli)",
+        help="Configuration section (ipfs, substrate, encryption, erasure_coding, cli, key_storage)",
     )
     get_parser.add_argument("key", help="Configuration key")
 
@@ -447,7 +452,7 @@ def add_config_commands(subparsers):
     set_parser = config_subparsers.add_parser("set", help="Set a configuration value")
     set_parser.add_argument(
         "section",
-        help="Configuration section (ipfs, substrate, encryption, erasure_coding, cli)",
+        help="Configuration section (ipfs, substrate, encryption, erasure_coding, cli, key_storage)",
     )
     set_parser.add_argument("key", help="Configuration key")
     set_parser.add_argument("value", help="Configuration value")

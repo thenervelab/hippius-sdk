@@ -54,11 +54,11 @@ run_test "download help" "$PYTHON -m hippius_sdk.cli download -h"
 echo -e "\n\033[1;33m==== Uploading test files to get CIDs ====\033[0m"
 
 # Upload a regular file and get its CID
-FILE_CID=$($PYTHON -m hippius_sdk.cli store test_file.txt | grep -o 'CID: [^ ]*' | cut -d' ' -f2)
+FILE_CID=$($PYTHON -m hippius_sdk.cli store test_file.txt --no-publish | grep -o 'IPFS CID: [^ ]*' | cut -d' ' -f3)
 echo "Uploaded file CID: $FILE_CID"
 
 # Upload a directory and get its CID
-DIR_CID=$($PYTHON -m hippius_sdk.cli store-dir test_dir | grep -o 'Directory CID: [^ ]*' | cut -d' ' -f3)
+DIR_CID=$($PYTHON -m hippius_sdk.cli store-dir test_dir --no-publish | grep -o 'Directory CID: [^ ]*' | cut -d' ' -f3)
 echo "Uploaded directory CID: $DIR_CID"
 
 echo -e "\n\033[1;34m==== Testing download command ====\033[0m"

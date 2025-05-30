@@ -44,7 +44,7 @@ run_test "exists help" "$PYTHON -m hippius_sdk.cli exists -h"
 echo -e "\n\033[1;33m==== Uploading test file to get CID ====\033[0m"
 
 # Upload a regular file and get its CID
-FILE_CID=$($PYTHON -m hippius_sdk.cli store test_file.txt | grep -o 'CID: [^ ]*' | cut -d' ' -f2)
+FILE_CID=$($PYTHON -m hippius_sdk.cli store test_file.txt --no-publish | grep -o 'IPFS CID: [^ ]*' | cut -d' ' -f3)
 echo "Uploaded file CID: $FILE_CID"
 
 echo -e "\n\033[1;34m==== Testing exists command ====\033[0m"
