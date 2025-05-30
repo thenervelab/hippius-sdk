@@ -49,7 +49,9 @@ def setup_db_cli() -> None:
     print("✅ Database setup files copied successfully!")
     print()
     print("🚀 Next steps:")
-    print("  1. Copy env.db.template to .env.db and edit with your database credentials")
+    print(
+        "  1. Copy env.db.template to .env.db and edit with your database credentials"
+    )
     print("  2. Run: ./setup_database.sh")
 
 
