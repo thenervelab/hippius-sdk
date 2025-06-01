@@ -234,7 +234,7 @@ _default_storage = None
 def is_key_storage_enabled() -> bool:
     """
     Check if key storage is enabled and available.
-    
+
     Returns True if:
     1. Explicitly enabled in config, OR
     2. asyncpg is available (key_storage extra installed) AND not explicitly disabled
@@ -243,11 +243,11 @@ def is_key_storage_enabled() -> bool:
     config_value = get_config_value("key_storage", "enabled", None)
     if config_value is False:
         return False
-    
+
     # If explicitly enabled, return True
     if config_value is True:
         return True
-    
+
     # If not set in config, auto-detect based on asyncpg availability
     # This allows users who install [key_storage] extra to use it without manual config
     return ASYNCPG_AVAILABLE
