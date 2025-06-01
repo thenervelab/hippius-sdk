@@ -1932,7 +1932,7 @@ class IPFSClient:
         encrypt: bool,
         seed_phrase: str,
         store_node: str = "http://localhost:5001",
-        pin_node: str = "https://store.hippius.network"
+        pin_node: str = "https://store.hippius.network",
     ) -> S3PublishResult:
         """
         Publish a file to IPFS and the Hippius marketplace in one operation.
@@ -2043,7 +2043,9 @@ class IPFSClient:
             cid = result["Hash"]
             logger.info(f"File uploaded to store node {store_node} with CID: {cid}")
         except Exception as e:
-            raise HippiusIPFSError(f"Failed to upload file to store node {store_node}: {str(e)}")
+            raise HippiusIPFSError(
+                f"Failed to upload file to store node {store_node}: {str(e)}"
+            )
 
         # Step 2: Pin to pin_node (remote) for persistence and backup
         try:
@@ -2051,7 +2053,9 @@ class IPFSClient:
             await pin_client.pin(cid)
             logger.info(f"File pinned to backup node {pin_node}")
         except Exception as e:
-            raise HippiusIPFSError(f"Failed to pin file to store node {store_node}: {str(e)}")
+            raise HippiusIPFSError(
+                f"Failed to pin file to store node {store_node}: {str(e)}"
+            )
 
         # Publish to substrate marketplace
         try:
@@ -2106,7 +2110,7 @@ class IPFSClient:
         output_path: str,
         seed_phrase: str,
         auto_decrypt: bool = True,
-        download_node: str = "http://localhost:5001"
+        download_node: str = "http://localhost:5001",
     ) -> S3DownloadResult:
         """
         Download a file from IPFS with automatic decryption.
@@ -2153,7 +2157,9 @@ class IPFSClient:
             logger.info(f"File downloaded from {download_node} with CID: {cid}")
 
         except Exception as e:
-            raise HippiusIPFSError(f"Failed to download file from {download_node}: {str(e)}")
+            raise HippiusIPFSError(
+                f"Failed to download file from {download_node}: {str(e)}"
+            )
 
         # Get file info after download
         size_bytes = os.path.getsize(output_path)
@@ -2184,8 +2190,12 @@ class IPFSClient:
                     f"File may not exist on download node {download_node}. "
                     f"Download URL: {download_url}"
                 )
-            elif len(file_data) < 40:  # PyNaCl encrypted data is at least 40 bytes (24-byte nonce + 16-byte auth tag + data)
-                logger.info(f"File too small to be encrypted ({len(file_data)} bytes), treating as plaintext")
+            elif (
+                len(file_data) < 40
+            ):  # PyNaCl encrypted data is at least 40 bytes (24-byte nonce + 16-byte auth tag + data)
+                logger.info(
+                    f"File too small to be encrypted ({len(file_data)} bytes), treating as plaintext"
+                )
                 decrypted = False
                 encryption_key_used = None
             else:
@@ -2199,7 +2209,9 @@ class IPFSClient:
                         existing_key_b64 = await get_key_for_seed(seed_phrase)
 
                         if existing_key_b64:
-                            logger.debug("Found encryption key for seed phrase, attempting decryption")
+                            logger.debug(
+                                "Found encryption key for seed phrase, attempting decryption"
+                            )
                             decryption_attempted = True
                             encryption_key_used = existing_key_b64
 
@@ -2207,7 +2219,9 @@ class IPFSClient:
                             try:
                                 import nacl.secret
 
-                                encryption_key_bytes = base64.b64decode(existing_key_b64)
+                                encryption_key_bytes = base64.b64decode(
+                                    existing_key_b64
+                                )
                                 box = nacl.secret.SecretBox(encryption_key_bytes)
                                 decrypted_data = box.decrypt(file_data)
 
@@ -2217,11 +2231,17 @@ class IPFSClient:
 
                                 decryption_successful = True
                                 decrypted = True
-                                size_bytes = len(decrypted_data)  # Update size to decrypted size
-                                logger.info("Successfully decrypted file using stored key")
+                                size_bytes = len(
+                                    decrypted_data
+                                )  # Update size to decrypted size
+                                logger.info(
+                                    "Successfully decrypted file using stored key"
+                                )
 
                             except Exception as decrypt_error:
-                                logger.debug(f"Decryption failed with stored key: {decrypt_error}")
+                                logger.debug(
+                                    f"Decryption failed with stored key: {decrypt_error}"
+                                )
                                 # Continue to try fallback decryption
                         else:
                             logger.debug("No encryption key found for seed phrase")
@@ -2243,7 +2263,9 @@ class IPFSClient:
 
                         decryption_successful = True
                         decrypted = True
-                        size_bytes = len(decrypted_data)  # Update size to decrypted size
+                        size_bytes = len(
+                            decrypted_data
+                        )  # Update size to decrypted size
 
                         # Store the encryption key for the result
                         encryption_key_used = (
@@ -2251,14 +2273,20 @@ class IPFSClient:
                             if self.encryption_key
                             else None
                         )
-                        logger.info("Successfully decrypted file using client encryption key")
+                        logger.info(
+                            "Successfully decrypted file using client encryption key"
+                        )
 
                     except Exception as decrypt_error:
-                        logger.debug(f"Decryption failed with client key: {decrypt_error}")
+                        logger.debug(
+                            f"Decryption failed with client key: {decrypt_error}"
+                        )
 
                 # Log final decryption status
                 if decryption_attempted and not decryption_successful:
-                    logger.info("File may not be encrypted or decryption keys don't match")
+                    logger.info(
+                        "File may not be encrypted or decryption keys don't match"
+                    )
                 elif not decryption_attempted:
                     logger.debug("No decryption attempted - no keys available")
 

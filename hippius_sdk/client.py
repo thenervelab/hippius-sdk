@@ -517,7 +517,7 @@ class HippiusClient:
         encrypt: bool,
         seed_phrase: str,
         store_node: str = "http://localhost:5001",
-        pin_node: str = "https://store.hippius.network"
+        pin_node: str = "https://store.hippius.network",
     ) -> S3PublishResult:
         """
         Publish a file to IPFS and the Hippius marketplace in one operation.
@@ -542,7 +542,9 @@ class HippiusClient:
             FileNotFoundError: If the file doesn't exist
             ValueError: If encryption is requested but not available
         """
-        return await self.ipfs_client.s3_publish(file_path, encrypt, seed_phrase, store_node, pin_node)
+        return await self.ipfs_client.s3_publish(
+            file_path, encrypt, seed_phrase, store_node, pin_node
+        )
 
     async def s3_download(
         self,
@@ -550,7 +552,7 @@ class HippiusClient:
         output_path: str,
         seed_phrase: str,
         auto_decrypt: bool = True,
-        download_node: str = "http://localhost:5001"
+        download_node: str = "http://localhost:5001",
     ) -> S3DownloadResult:
         """
         Download a file from IPFS with automatic decryption.
@@ -577,4 +579,6 @@ class HippiusClient:
             FileNotFoundError: If the output directory doesn't exist
             ValueError: If decryption fails
         """
-        return await self.ipfs_client.s3_download(cid, output_path, seed_phrase, auto_decrypt, download_node)
+        return await self.ipfs_client.s3_download(
+            cid, output_path, seed_phrase, auto_decrypt, download_node
+        )
