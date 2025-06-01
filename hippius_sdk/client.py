@@ -9,7 +9,7 @@ import nacl.secret
 import nacl.utils
 
 from hippius_sdk.config import get_config_value, get_encryption_key
-from hippius_sdk.ipfs import IPFSClient, S3PublishResult
+from hippius_sdk.ipfs import IPFSClient, S3PublishResult, S3DownloadResult
 from hippius_sdk.substrate import SubstrateClient
 
 
@@ -532,3 +532,31 @@ class HippiusClient:
             ValueError: If encryption is requested but not available
         """
         return await self.ipfs_client.s3_publish(file_path, encrypt, seed_phrase)
+
+    async def s3_download(
+        self, cid: str, output_path: str, seed_phrase: str, auto_decrypt: bool = True
+    ) -> S3DownloadResult:
+        """
+        Download a file from IPFS with automatic decryption.
+
+        This method automatically manages decryption keys per seed phrase:
+        - Downloads the file from IPFS
+        - If auto_decrypt=True, attempts to decrypt using stored keys for the seed phrase
+        - Falls back to client encryption key if key storage is not available
+        - Returns the file in decrypted form if decryption succeeds
+
+        Args:
+            cid: Content Identifier (CID) of the file to download
+            output_path: Path where the downloaded file will be saved
+            seed_phrase: Seed phrase to use for retrieving decryption keys
+            auto_decrypt: Whether to attempt automatic decryption (default: True)
+
+        Returns:
+            S3DownloadResult: Object containing download info and decryption status
+
+        Raises:
+            HippiusIPFSError: If IPFS download fails
+            FileNotFoundError: If the output directory doesn't exist
+            ValueError: If decryption fails
+        """
+        return await self.ipfs_client.s3_download(cid, output_path, seed_phrase, auto_decrypt)
