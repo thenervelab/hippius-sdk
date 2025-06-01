@@ -13,17 +13,18 @@ import tempfile
 import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
-from hippius_sdk.key_storage import (
-    generate_and_store_key_for_seed,
-    get_key_for_seed,
-    is_key_storage_enabled,
-)
+
 import httpx
 from pydantic import BaseModel
 
 from hippius_sdk.config import get_config_value, get_encryption_key
 from hippius_sdk.errors import HippiusIPFSError, HippiusSubstrateError
 from hippius_sdk.ipfs_core import AsyncIPFSClient
+from hippius_sdk.key_storage import (
+    generate_and_store_key_for_seed,
+    get_key_for_seed,
+    is_key_storage_enabled,
+)
 from hippius_sdk.substrate import FileInput, SubstrateClient
 from hippius_sdk.utils import format_cid, format_size
 
@@ -1805,9 +1806,6 @@ class IPFSClient:
         """
         print(f"Starting deletion process for metadata CID: {metadata_cid}")
 
-        # Try to download and process metadata file and chunks
-        ipfs_failure = False
-        metadata_error = False
         chunks = []
 
         try:
@@ -1929,10 +1927,20 @@ class IPFSClient:
         return True
 
     async def s3_publish(
-        self, file_path: str, encrypt: bool, seed_phrase: str
+        self,
+        file_path: str,
+        encrypt: bool,
+        seed_phrase: str,
+        store_node: str = "http://localhost:5001",
+        pin_node: str = "https://store.hippius.network"
     ) -> S3PublishResult:
         """
         Publish a file to IPFS and the Hippius marketplace in one operation.
+
+        This method uses a two-node architecture for optimal performance:
+        1. Uploads to store_node (local) for immediate availability
+        2. Pins to pin_node (remote) for persistence and backup
+        3. Publishes to substrate marketplace
 
         This method automatically manages encryption keys per seed phrase:
         - If encrypt=True, it will get or generate an encryption key for the seed phrase
@@ -1943,6 +1951,8 @@ class IPFSClient:
             file_path: Path to the file to publish
             encrypt: Whether to encrypt the file before uploading
             seed_phrase: Seed phrase for blockchain transaction signing
+            store_node: IPFS node URL for initial upload (default: local node)
+            pin_node: IPFS node URL for backup pinning (default: remote service)
 
         Returns:
             S3PublishResult: Object containing CID, file info, and transaction hash
@@ -2026,18 +2036,22 @@ class IPFSClient:
                     else None
                 )
 
-        # Add file to IPFS
+        # Step 1: Upload to store_node (local) for immediate availability
         try:
-            result = await self.client.add_file(file_path)
+            store_client = AsyncIPFSClient(api_url=store_node)
+            result = await store_client.add_file(file_path)
             cid = result["Hash"]
+            logger.info(f"File uploaded to store node {store_node} with CID: {cid}")
         except Exception as e:
-            raise HippiusIPFSError(f"Failed to add file to IPFS: {str(e)}")
+            raise HippiusIPFSError(f"Failed to upload file to store node {store_node}: {str(e)}")
 
-        # Pin the file to IPFS
+        # Step 2: Pin to pin_node (remote) for persistence and backup
         try:
-            pin_result = await self.client.pin(cid)
+            pin_client = AsyncIPFSClient(api_url=pin_node)
+            await pin_client.pin(cid)
+            logger.info(f"File pinned to backup node {pin_node}")
         except Exception as e:
-            raise HippiusIPFSError(f"Failed to pin file to IPFS: {str(e)}")
+            raise HippiusIPFSError(f"Failed to pin file to store node {store_node}: {str(e)}")
 
         # Publish to substrate marketplace
         try:
@@ -2087,13 +2101,19 @@ class IPFSClient:
         )
 
     async def s3_download(
-        self, cid: str, output_path: str, seed_phrase: str, auto_decrypt: bool = True
+        self,
+        cid: str,
+        output_path: str,
+        seed_phrase: str,
+        auto_decrypt: bool = True,
+        download_node: str = "http://localhost:5001"
     ) -> S3DownloadResult:
         """
         Download a file from IPFS with automatic decryption.
 
-        This method automatically manages decryption keys per seed phrase:
-        - Downloads the file from IPFS
+        This method uses the download_node for immediate availability and automatically
+        manages decryption keys per seed phrase:
+        - Downloads the file from the specified download_node (local by default)
         - If auto_decrypt=True, attempts to decrypt using stored keys for the seed phrase
         - Falls back to client encryption key if key storage is not available
         - Returns the file in decrypted form if decryption succeeds
@@ -2103,6 +2123,7 @@ class IPFSClient:
             output_path: Path where the downloaded file will be saved
             seed_phrase: Seed phrase to use for retrieving decryption keys
             auto_decrypt: Whether to attempt automatic decryption (default: True)
+            download_node: IPFS node URL for download (default: local node)
 
         Returns:
             S3DownloadResult: Object containing download info and decryption status
@@ -2114,24 +2135,25 @@ class IPFSClient:
         """
         start_time = time.time()
 
-        # Download the file first using the existing download_file method
+        # Download the file directly from the specified download_node
         try:
             # Create parent directories if they don't exist
             os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
-            # Download without decryption first
-            download_result = await self.download_file(
-                cid=cid,
-                output_path=output_path,
-                skip_directory_check=False,
-                seed_phrase=seed_phrase,
-            )
+            download_client = AsyncIPFSClient(api_url=download_node)
 
-            if not download_result.get("success", False):
-                raise HippiusIPFSError("Download failed")
+            download_url = f"{download_node.rstrip('/')}/api/v0/cat?arg={cid}"
+            async with download_client.client.stream("POST", download_url) as response:
+                response.raise_for_status()
+
+                with open(output_path, "wb") as f:
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        f.write(chunk)
+
+            logger.info(f"File downloaded from {download_node} with CID: {cid}")
 
         except Exception as e:
-            raise HippiusIPFSError(f"Failed to download file from IPFS: {str(e)}")
+            raise HippiusIPFSError(f"Failed to download file from {download_node}: {str(e)}")
 
         # Get file info after download
         size_bytes = os.path.getsize(output_path)
@@ -2154,85 +2176,91 @@ class IPFSClient:
             with open(output_path, "rb") as f:
                 file_data = f.read()
 
-            decryption_attempted = False
-            decryption_successful = False
+            # Check if file is empty - this indicates a problem
+            if len(file_data) == 0:
+                logger.error(f"Downloaded file is empty (0 bytes) for CID: {cid}")
+                raise HippiusIPFSError(
+                    f"File not available: Downloaded 0 bytes for CID {cid}. "
+                    f"File may not exist on download node {download_node}. "
+                    f"Download URL: {download_url}"
+                )
+            elif len(file_data) < 40:  # PyNaCl encrypted data is at least 40 bytes (24-byte nonce + 16-byte auth tag + data)
+                logger.info(f"File too small to be encrypted ({len(file_data)} bytes), treating as plaintext")
+                decrypted = False
+                encryption_key_used = None
+            else:
+                # File has content, attempt decryption if requested
+                decryption_attempted = False
+                decryption_successful = False
 
-            if key_storage_available:
-                # Try to get the encryption key for this seed phrase
-                try:
-                    existing_key_b64 = await get_key_for_seed(seed_phrase)
+                if key_storage_available:
+                    # Try to get the encryption key for this seed phrase
+                    try:
+                        existing_key_b64 = await get_key_for_seed(seed_phrase)
 
-                    if existing_key_b64:
-                        logger.debug(
-                            "Found encryption key for seed phrase, attempting decryption"
+                        if existing_key_b64:
+                            logger.debug("Found encryption key for seed phrase, attempting decryption")
+                            decryption_attempted = True
+                            encryption_key_used = existing_key_b64
+
+                            # Attempt decryption with the stored key
+                            try:
+                                import nacl.secret
+
+                                encryption_key_bytes = base64.b64decode(existing_key_b64)
+                                box = nacl.secret.SecretBox(encryption_key_bytes)
+                                decrypted_data = box.decrypt(file_data)
+
+                                # Write the decrypted data back to the file
+                                with open(output_path, "wb") as f:
+                                    f.write(decrypted_data)
+
+                                decryption_successful = True
+                                decrypted = True
+                                size_bytes = len(decrypted_data)  # Update size to decrypted size
+                                logger.info("Successfully decrypted file using stored key")
+
+                            except Exception as decrypt_error:
+                                logger.debug(f"Decryption failed with stored key: {decrypt_error}")
+                                # Continue to try fallback decryption
+                        else:
+                            logger.debug("No encryption key found for seed phrase")
+
+                    except Exception as e:
+                        logger.debug(f"Error retrieving key from storage: {e}")
+
+                # If key storage decryption failed or wasn't available, try client encryption key
+                if not decryption_successful and self.encryption_available:
+                    logger.debug("Attempting decryption with client encryption key")
+                    decryption_attempted = True
+
+                    try:
+                        decrypted_data = self.decrypt_data(file_data)
+
+                        # Write the decrypted data back to the file
+                        with open(output_path, "wb") as f:
+                            f.write(decrypted_data)
+
+                        decryption_successful = True
+                        decrypted = True
+                        size_bytes = len(decrypted_data)  # Update size to decrypted size
+
+                        # Store the encryption key for the result
+                        encryption_key_used = (
+                            base64.b64encode(self.encryption_key).decode("utf-8")
+                            if self.encryption_key
+                            else None
                         )
-                        decryption_attempted = True
-                        encryption_key_used = existing_key_b64
+                        logger.info("Successfully decrypted file using client encryption key")
 
-                        # Attempt decryption with the stored key
-                        try:
-                            import nacl.secret
+                    except Exception as decrypt_error:
+                        logger.debug(f"Decryption failed with client key: {decrypt_error}")
 
-                            encryption_key_bytes = base64.b64decode(existing_key_b64)
-                            box = nacl.secret.SecretBox(encryption_key_bytes)
-                            decrypted_data = box.decrypt(file_data)
-
-                            # Write the decrypted data back to the file
-                            with open(output_path, "wb") as f:
-                                f.write(decrypted_data)
-
-                            decryption_successful = True
-                            decrypted = True
-                            size_bytes = len(
-                                decrypted_data
-                            )  # Update size to decrypted size
-                            logger.info("Successfully decrypted file using stored key")
-
-                        except Exception as decrypt_error:
-                            logger.debug(
-                                f"Decryption failed with stored key: {decrypt_error}"
-                            )
-                            # Continue to try fallback decryption
-                    else:
-                        logger.debug("No encryption key found for seed phrase")
-
-                except Exception as e:
-                    logger.debug(f"Error retrieving key from storage: {e}")
-
-            # If key storage decryption failed or wasn't available, try client encryption key
-            if not decryption_successful and self.encryption_available:
-                logger.debug("Attempting decryption with client encryption key")
-                decryption_attempted = True
-
-                try:
-                    decrypted_data = self.decrypt_data(file_data)
-
-                    # Write the decrypted data back to the file
-                    with open(output_path, "wb") as f:
-                        f.write(decrypted_data)
-
-                    decryption_successful = True
-                    decrypted = True
-                    size_bytes = len(decrypted_data)  # Update size to decrypted size
-
-                    # Store the encryption key for the result
-                    encryption_key_used = (
-                        base64.b64encode(self.encryption_key).decode("utf-8")
-                        if self.encryption_key
-                        else None
-                    )
-                    logger.info(
-                        "Successfully decrypted file using client encryption key"
-                    )
-
-                except Exception as decrypt_error:
-                    logger.debug(f"Decryption failed with client key: {decrypt_error}")
-
-            # Log final decryption status
-            if decryption_attempted and not decryption_successful:
-                logger.info("File may not be encrypted or decryption keys don't match")
-            elif not decryption_attempted:
-                logger.debug("No decryption attempted - no keys available")
+                # Log final decryption status
+                if decryption_attempted and not decryption_successful:
+                    logger.info("File may not be encrypted or decryption keys don't match")
+                elif not decryption_attempted:
+                    logger.debug("No decryption attempted - no keys available")
 
         return S3DownloadResult(
             cid=cid,
