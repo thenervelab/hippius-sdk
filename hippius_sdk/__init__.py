@@ -26,7 +26,7 @@ from hippius_sdk.config import (
 from hippius_sdk.ipfs import IPFSClient, S3PublishResult, S3DownloadResult
 from hippius_sdk.utils import format_cid, format_size, hex_to_ipfs_cid
 
-__version__ = "0.2.5"
+__version__ = "0.2.22"
 __all__ = [
     "HippiusClient",
     "IPFSClient",
