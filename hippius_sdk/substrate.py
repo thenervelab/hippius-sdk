@@ -1223,29 +1223,6 @@ class SubstrateClient:
         Returns:
             str: Transaction hash or status message
         """
-        # First check if this CID exists in the user's storage requests
-        try:
-            cid_exists = await self.check_storage_request_exists(cid)
-            if not cid_exists:
-                raise HippiusAlreadyDeletedError(
-                    f"CID {cid} is not found in storage requests - may already be deleted"
-                )
-        except Exception as e:
-            if not isinstance(e, HippiusAlreadyDeletedError):
-                # If there was an error checking, but not our custom exception, wrap it
-                raise HippiusSubstrateConnectionError(
-                    f"Error checking if CID exists: {str(e)}"
-                )
-            else:
-                # Re-raise our custom exception
-                raise
-
-        # Continue with cancellation if it exists
-        if not self._ensure_keypair(seed_phrase):
-            raise HippiusSubstrateAuthError(
-                "Valid seed phrase must be provided or available in config"
-            )
-
         # Initialize Substrate connection with seed phrase if needed
         if not self._substrate:
             self.connect(seed_phrase)
