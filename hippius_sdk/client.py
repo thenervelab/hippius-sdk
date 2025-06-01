@@ -512,9 +512,9 @@ class HippiusClient:
         )
 
     async def s3_publish(
-        self, 
-        file_path: str, 
-        encrypt: bool, 
+        self,
+        file_path: str,
+        encrypt: bool,
         seed_phrase: str,
         store_node: str = "http://localhost:5001",
         pin_node: str = "https://store.hippius.network"
@@ -545,17 +545,17 @@ class HippiusClient:
         return await self.ipfs_client.s3_publish(file_path, encrypt, seed_phrase, store_node, pin_node)
 
     async def s3_download(
-        self, 
-        cid: str, 
-        output_path: str, 
-        seed_phrase: str, 
+        self,
+        cid: str,
+        output_path: str,
+        seed_phrase: str,
         auto_decrypt: bool = True,
         download_node: str = "http://localhost:5001"
     ) -> S3DownloadResult:
         """
         Download a file from IPFS with automatic decryption.
 
-        This method uses the download_node for immediate availability and automatically 
+        This method uses the download_node for immediate availability and automatically
         manages decryption keys per seed phrase:
         - Downloads the file from the specified download_node (local by default)
         - If auto_decrypt=True, attempts to decrypt using stored keys for the seed phrase
