@@ -13,7 +13,11 @@ import tempfile
 import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
-
+from hippius_sdk.key_storage import (
+    generate_and_store_key_for_seed,
+    get_key_for_seed,
+    is_key_storage_enabled,
+)
 import httpx
 from pydantic import BaseModel
 
@@ -55,6 +59,18 @@ class S3PublishResult(BaseModel):
     size_bytes: int
     encryption_key: Optional[str]
     tx_hash: str
+
+
+class S3DownloadResult(BaseModel):
+    """Result model for s3_download method."""
+
+    cid: str
+    output_path: str
+    size_bytes: int
+    size_formatted: str
+    elapsed_seconds: float
+    decrypted: bool
+    encryption_key: Optional[str]
 
 
 # Set up logger for this module
@@ -1949,14 +1965,7 @@ class IPFSClient:
         encryption_key_used = None
         if encrypt:
             # Check if key storage is enabled and available
-            key_storage_available = False
             try:
-                from hippius_sdk.key_storage import (
-                    generate_and_store_key_for_seed,
-                    get_key_for_seed,
-                    is_key_storage_enabled,
-                )
-
                 key_storage_available = is_key_storage_enabled()
                 logger.debug(f"Key storage enabled: {key_storage_available}")
             except ImportError:
@@ -1964,9 +1973,6 @@ class IPFSClient:
                 key_storage_available = False
 
             if key_storage_available:
-                # Use PostgreSQL-backed key storage
-                logger.info(f"Using PostgreSQL key storage for seed phrase")
-
                 # Try to get existing key for this seed phrase
                 existing_key_b64 = await get_key_for_seed(seed_phrase)
 
@@ -2078,4 +2084,154 @@ class IPFSClient:
             size_bytes=size_bytes,
             encryption_key=encryption_key_used,
             tx_hash=tx_hash,
+        )
+
+    async def s3_download(
+        self, cid: str, output_path: str, seed_phrase: str, auto_decrypt: bool = True
+    ) -> S3DownloadResult:
+        """
+        Download a file from IPFS with automatic decryption.
+
+        This method automatically manages decryption keys per seed phrase:
+        - Downloads the file from IPFS
+        - If auto_decrypt=True, attempts to decrypt using stored keys for the seed phrase
+        - Falls back to client encryption key if key storage is not available
+        - Returns the file in decrypted form if decryption succeeds
+
+        Args:
+            cid: Content Identifier (CID) of the file to download
+            output_path: Path where the downloaded file will be saved
+            seed_phrase: Seed phrase to use for retrieving decryption keys
+            auto_decrypt: Whether to attempt automatic decryption (default: True)
+
+        Returns:
+            S3DownloadResult: Object containing download info and decryption status
+
+        Raises:
+            HippiusIPFSError: If IPFS download fails
+            FileNotFoundError: If the output directory doesn't exist
+            ValueError: If decryption fails
+        """
+        start_time = time.time()
+
+        # Download the file first using the existing download_file method
+        try:
+            # Create parent directories if they don't exist
+            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+            # Download without decryption first
+            download_result = await self.download_file(
+                cid=cid,
+                output_path=output_path,
+                skip_directory_check=False,
+                seed_phrase=seed_phrase,
+            )
+
+            if not download_result.get("success", False):
+                raise HippiusIPFSError("Download failed")
+
+        except Exception as e:
+            raise HippiusIPFSError(f"Failed to download file from IPFS: {str(e)}")
+
+        # Get file info after download
+        size_bytes = os.path.getsize(output_path)
+        elapsed_time = time.time() - start_time
+
+        # Attempt automatic decryption if requested
+        decrypted = False
+        encryption_key_used = None
+
+        if auto_decrypt:
+            # Check if key storage is enabled and available
+            try:
+                key_storage_available = is_key_storage_enabled()
+                logger.debug(f"Key storage enabled: {key_storage_available}")
+            except ImportError:
+                logger.debug("Key storage module not available")
+                key_storage_available = False
+
+            # Read the downloaded file content
+            with open(output_path, "rb") as f:
+                file_data = f.read()
+
+            decryption_attempted = False
+            decryption_successful = False
+
+            if key_storage_available:
+                # Try to get the encryption key for this seed phrase
+                try:
+                    existing_key_b64 = await get_key_for_seed(seed_phrase)
+
+                    if existing_key_b64:
+                        logger.debug("Found encryption key for seed phrase, attempting decryption")
+                        decryption_attempted = True
+                        encryption_key_used = existing_key_b64
+
+                        # Attempt decryption with the stored key
+                        try:
+                            import nacl.secret
+
+                            encryption_key_bytes = base64.b64decode(existing_key_b64)
+                            box = nacl.secret.SecretBox(encryption_key_bytes)
+                            decrypted_data = box.decrypt(file_data)
+
+                            # Write the decrypted data back to the file
+                            with open(output_path, "wb") as f:
+                                f.write(decrypted_data)
+
+                            decryption_successful = True
+                            decrypted = True
+                            size_bytes = len(decrypted_data)  # Update size to decrypted size
+                            logger.info("Successfully decrypted file using stored key")
+
+                        except Exception as decrypt_error:
+                            logger.debug(f"Decryption failed with stored key: {decrypt_error}")
+                            # Continue to try fallback decryption
+                    else:
+                        logger.debug("No encryption key found for seed phrase")
+
+                except Exception as e:
+                    logger.debug(f"Error retrieving key from storage: {e}")
+
+            # If key storage decryption failed or wasn't available, try client encryption key
+            if not decryption_successful and self.encryption_available:
+                logger.debug("Attempting decryption with client encryption key")
+                decryption_attempted = True
+
+                try:
+                    decrypted_data = self.decrypt_data(file_data)
+
+                    # Write the decrypted data back to the file
+                    with open(output_path, "wb") as f:
+                        f.write(decrypted_data)
+
+                    decryption_successful = True
+                    decrypted = True
+                    size_bytes = len(decrypted_data)  # Update size to decrypted size
+                    
+                    # Store the encryption key for the result
+                    encryption_key_used = (
+                        base64.b64encode(self.encryption_key).decode("utf-8")
+                        if self.encryption_key
+                        else None
+                    )
+                    logger.info("Successfully decrypted file using client encryption key")
+
+                except Exception as decrypt_error:
+                    logger.debug(f"Decryption failed with client key: {decrypt_error}")
+
+            # Log final decryption status
+            if decryption_attempted and not decryption_successful:
+                logger.info("File may not be encrypted or decryption keys don't match")
+            elif not decryption_attempted:
+                logger.debug("No decryption attempted - no keys available")
+
+        return S3DownloadResult(
+            cid=cid,
+            output_path=output_path,
+            size_bytes=size_bytes,
+            size_formatted=self.format_size(size_bytes),
+            elapsed_seconds=round(elapsed_time, 2),
+            decrypted=decrypted,
+            encryption_key=encryption_key_used,
         )
