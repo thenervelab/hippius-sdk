@@ -559,4 +559,6 @@ class HippiusClient:
             FileNotFoundError: If the output directory doesn't exist
             ValueError: If decryption fails
         """
-        return await self.ipfs_client.s3_download(cid, output_path, seed_phrase, auto_decrypt)
+        return await self.ipfs_client.s3_download(
+            cid, output_path, seed_phrase, auto_decrypt
+        )
