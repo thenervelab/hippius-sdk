@@ -1255,16 +1255,13 @@ class SubstrateClient:
                 f"Failed to cancel storage request: {str(e)}"
             )
 
-
     def query_sub_account(self, account_id: str, seed_phrase: str) -> str | None:
         try:
             if not self._substrate:
                 self.connect(seed_phrase)
             # Initialize connection to the Substrate node
             result = self._substrate.query(
-                module="SubAccount",
-                storage_function="SubAccount",
-                params=[account_id]
+                module="SubAccount", storage_function="SubAccount", params=[account_id]
             )
 
             # Check if the result exists and return the value
@@ -1276,11 +1273,9 @@ class SubstrateClient:
             print(f"Error querying SubAccount: {e}")
             return None
 
-
     def is_main_account(self, account_id: str, seed_phrase: str) -> bool:
         sub_account = self.query_sub_account(account_id, seed_phrase=seed_phrase)
         return sub_account is None
-
 
     def query_free_credits(self, account_id: str, seed_phrase) -> int:
         try:
@@ -1289,9 +1284,7 @@ class SubstrateClient:
 
             # Query the FreeCredits storage map
             result = self._substrate.query(
-                module="Credits",
-                storage_function="FreeCredits",
-                params=[account_id]
+                module="Credits", storage_function="FreeCredits", params=[account_id]
             )
 
             # Return the u128 value (converted to int for Python compatibility)
