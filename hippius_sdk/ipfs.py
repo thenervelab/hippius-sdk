@@ -1941,6 +1941,7 @@ class IPFSClient:
         seed_phrase: str,
         store_node: str = "http://localhost:5001",
         pin_node: str = "https://store.hippius.network",
+        substrate_url: str = "wss://rpc.hippius.network",
     ) -> S3PublishResult:
         """
         Publish a file to IPFS and the Hippius marketplace in one operation.
@@ -1961,6 +1962,7 @@ class IPFSClient:
             seed_phrase: Seed phrase for blockchain transaction signing
             store_node: IPFS node URL for initial upload (default: local node)
             pin_node: IPFS node URL for backup pinning (default: remote service)
+            substrate_url: the substrate url to connect to for the storage request.
 
         Returns:
             S3PublishResult: Object containing CID, file info, and transaction hash
@@ -2068,7 +2070,7 @@ class IPFSClient:
         # Publish to substrate marketplace
         try:
             # Pass the seed phrase directly to avoid password prompts for encrypted config
-            substrate_client = SubstrateClient(seed_phrase=seed_phrase)
+            substrate_client = SubstrateClient(seed_phrase=seed_phrase, url=substrate_url)
             logger.info(
                 f"Submitting storage request to substrate for file: {filename}, CID: {cid}"
             )
