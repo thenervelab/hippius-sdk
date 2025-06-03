@@ -509,10 +509,16 @@ class IPFSClient:
             try:
                 ls_result = await self.client.ls(cid)
                 if isinstance(ls_result, dict) and ls_result.get("Objects", []):
-                    # Check if we have Links in the object, which means it's a directory
+                    # Check if we have Links with non-empty names, which indicates a directory
+                    # Links with empty names are file chunks, not directory entries
                     for obj in ls_result["Objects"]:
-                        if obj.get("Links", []):
-                            is_directory = True
+                        links = obj.get("Links", [])
+                        if links:
+                            # Check if any link has a non-empty name (directory entry)
+                            # Links with empty names are file chunks, not directory entries
+                            has_named_links = any(link.get("Name", "").strip() for link in links)
+                            if has_named_links:
+                                is_directory = True
                             break
             except Exception:
                 # If ls check fails, continue treating as a regular file
