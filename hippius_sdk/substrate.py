@@ -1264,6 +1264,8 @@ class SubstrateClient:
                 module="SubAccount", storage_function="SubAccount", params=[account_id]
             )
 
+            print(f"Got SubAccount result {result=}")
+
             # Check if the result exists and return the value
             if result and result.value:
                 return result.value
@@ -1286,6 +1288,7 @@ class SubstrateClient:
             result = self._substrate.query(
                 module="Credits", storage_function="FreeCredits", params=[account_id]
             )
+            print(f"Got FreeCredits result {result=}")
 
             # Return the u128 value (converted to int for Python compatibility)
             return int(result.value) if result and result.value is not None else 0
@@ -1307,6 +1310,8 @@ class SubstrateClient:
                 storage_function="SubAccountRole",
                 params=[account_id],
             )
+            print(f"Got SubAccountRole result {result=}")
+
             return result.value
         except Exception as e:
             print(f"Error querying SubAccountRole: {e}")
