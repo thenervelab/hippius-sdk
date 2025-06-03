@@ -1,7 +1,6 @@
 import datetime
 import json
 import os
-import pprint
 import tempfile
 import time
 import uuid
@@ -9,6 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from dotenv import load_dotenv
 from mnemonic import Mnemonic
+from scalecodec.exceptions import RemainingScaleBytesNotEmptyException
 from substrateinterface import Keypair, SubstrateInterface
 
 from hippius_sdk.config import (
@@ -21,11 +21,7 @@ from hippius_sdk.config import (
     set_seed_phrase,
 )
 from hippius_sdk.errors import (
-    HippiusAlreadyDeletedError,
     HippiusFailedSubstrateDelete,
-    HippiusNotFoundError,
-    HippiusSubstrateAuthError,
-    HippiusSubstrateConnectionError,
 )
 from hippius_sdk.utils import (
     format_size,
@@ -608,7 +604,7 @@ class SubstrateClient:
             keypair=self._keypair,
         )
 
-        print(f"]Payment info: {json.dumps(payment_info, indent=2)}")
+        print(f"Payment info: {json.dumps(payment_info, indent=2)}")
 
         # Convert partialFee from Substrate (10^18 units) to a more readable format
         estimated_fee = payment_info.get("partialFee", 0)
@@ -1258,3 +1254,52 @@ class SubstrateClient:
             raise HippiusFailedSubstrateDelete(
                 f"Failed to cancel storage request: {str(e)}"
             )
+
+
+    def query_sub_account(self, account_id: str, seed_phrase: str) -> str | None:
+        try:
+            if not self._substrate:
+                self.connect(seed_phrase)
+            # Initialize connection to the Substrate node
+            result = self._substrate.query(
+                module="SubAccount",
+                storage_function="SubAccount",
+                params=[account_id]
+            )
+
+            # Check if the result exists and return the value
+            if result and result.value:
+                return result.value
+            return None
+
+        except Exception as e:
+            print(f"Error querying SubAccount: {e}")
+            return None
+
+
+    def is_main_account(self, account_id: str, seed_phrase: str) -> bool:
+        sub_account = self.query_sub_account(account_id, seed_phrase=seed_phrase)
+        return sub_account is None
+
+
+    def query_free_credits(self, account_id: str, seed_phrase) -> int:
+        try:
+            if not self._substrate:
+                self.connect(seed_phrase)
+
+            # Query the FreeCredits storage map
+            result = self._substrate.query(
+                module="Credits",
+                storage_function="FreeCredits",
+                params=[account_id]
+            )
+
+            # Return the u128 value (converted to int for Python compatibility)
+            return int(result.value) if result and result.value is not None else 0
+
+        except RemainingScaleBytesNotEmptyException as e:
+            print(f"Scale decoding error in query_free_credits: {e}")
+            return 0
+        except Exception as e:
+            print(f"Error querying FreeCredits: {e}")
+            return 0
