@@ -545,7 +545,12 @@ class HippiusClient:
             ValueError: If encryption is requested but not available
         """
         return await self.ipfs_client.s3_publish(
-            file_path, encrypt, seed_phrase, store_node, pin_node, substrate_url,
+            file_path,
+            encrypt,
+            seed_phrase,
+            store_node,
+            pin_node,
+            substrate_url,
         )
 
     async def s3_download(
