@@ -516,7 +516,9 @@ class IPFSClient:
                         if links:
                             # Check if any link has a non-empty name (directory entry)
                             # Links with empty names are file chunks, not directory entries
-                            has_named_links = any(link.get("Name", "").strip() for link in links)
+                            has_named_links = any(
+                                link.get("Name", "").strip() for link in links
+                            )
                             if has_named_links:
                                 is_directory = True
                             break
