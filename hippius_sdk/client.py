@@ -518,6 +518,7 @@ class HippiusClient:
         seed_phrase: str,
         store_node: str = "http://localhost:5001",
         pin_node: str = "https://store.hippius.network",
+        substrate_url: str = "wss://rpc.hippius.network",
     ) -> S3PublishResult:
         """
         Publish a file to IPFS and the Hippius marketplace in one operation.
@@ -532,6 +533,7 @@ class HippiusClient:
             seed_phrase: Seed phrase for blockchain transaction signing
             store_node: IPFS node URL for initial upload (default: local node)
             pin_node: IPFS node URL for backup pinning (default: remote service)
+            substrate_url: substrate url to use for the storage request.
 
         Returns:
             S3PublishResult: Object containing CID, file info, and transaction hash
@@ -543,7 +545,7 @@ class HippiusClient:
             ValueError: If encryption is requested but not available
         """
         return await self.ipfs_client.s3_publish(
-            file_path, encrypt, seed_phrase, store_node, pin_node
+            file_path, encrypt, seed_phrase, store_node, pin_node, substrate_url,
         )
 
     async def s3_download(
