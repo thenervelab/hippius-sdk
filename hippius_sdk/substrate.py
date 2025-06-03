@@ -1256,62 +1256,49 @@ class SubstrateClient:
             )
 
     def query_sub_account(self, account_id: str, seed_phrase: str) -> str | None:
-        try:
-            if not self._substrate:
-                self.connect(seed_phrase)
-            # Initialize connection to the Substrate node
-            result = self._substrate.query(
-                module="SubAccount", storage_function="SubAccount", params=[account_id]
-            )
+        if not self._substrate:
+            self.connect(seed_phrase)
+        # Initialize connection to the Substrate node
+        result = self._substrate.query(
+            module="SubAccount", storage_function="SubAccount", params=[account_id]
+        )
 
-            print(f"Got SubAccount result {result=}")
+        print(f"Got SubAccount result {result=}")
 
-            # Check if the result exists and return the value
-            if result and result.value:
-                return result.value
-            return None
+        # Check if the result exists and return the value
+        if result and result.value:
+            return result.value
+        return None
 
-        except Exception as e:
-            print(f"Error querying SubAccount: {e}")
-            return None
 
     def is_main_account(self, account_id: str, seed_phrase: str) -> bool:
         sub_account = self.query_sub_account(account_id, seed_phrase=seed_phrase)
         return sub_account is None
 
     def query_free_credits(self, account_id: str, seed_phrase) -> int:
-        try:
-            if not self._substrate:
-                self.connect(seed_phrase)
+        if not self._substrate:
+            self.connect(seed_phrase)
 
-            # Query the FreeCredits storage map
-            result = self._substrate.query(
-                module="Credits", storage_function="FreeCredits", params=[account_id]
-            )
-            print(f"Got FreeCredits result {result=}")
+        # Query the FreeCredits storage map
+        result = self._substrate.query(
+            module="Credits", storage_function="FreeCredits", params=[account_id]
+        )
+        print(f"Got FreeCredits result {result=}")
 
-            # Return the u128 value (converted to int for Python compatibility)
-            return int(result.value) if result and result.value is not None else 0
+        # Return the u128 value (converted to int for Python compatibility)
+        return int(result.value) if result and result.value is not None else 0
 
-        except RemainingScaleBytesNotEmptyException as e:
-            print(f"Scale decoding error in query_free_credits: {e}")
-            return 0
-        except Exception as e:
-            print(f"Error querying FreeCredits: {e}")
-            return 0
+
 
     def get_account_roles(self, account_id: str, seed_phrase) -> int:
-        try:
-            if not self._substrate:
-                self.connect(seed_phrase)
+        if not self._substrate:
+            self.connect(seed_phrase)
 
-            result = self._substrate.query(
-                module="SubAccount",
-                storage_function="SubAccountRole",
-                params=[account_id],
-            )
-            print(f"Got SubAccountRole result {result=}")
+        result = self._substrate.query(
+            module="SubAccount",
+            storage_function="SubAccountRole",
+            params=[account_id],
+        )
+        print(f"Got SubAccountRole result {result=}")
 
-            return result.value
-        except Exception as e:
-            print(f"Error querying SubAccountRole: {e}")
+        return result.value
