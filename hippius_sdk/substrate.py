@@ -1303,3 +1303,18 @@ class SubstrateClient:
         except Exception as e:
             print(f"Error querying FreeCredits: {e}")
             return 0
+
+
+    def get_account_roles(self, account_id: str, seed_phrase) -> int:
+        try:
+            if not self._substrate:
+                self.connect(seed_phrase)
+
+            result = self._substrate.query(
+                module="SubAccount",
+                storage_function="SubAccountRole",
+                params=[account_id]
+            )
+            return result.value
+        except Exception as e:
+            print(f"Error querying SubAccountRole: {e}")
