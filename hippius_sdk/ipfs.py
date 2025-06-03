@@ -2070,7 +2070,9 @@ class IPFSClient:
         # Publish to substrate marketplace
         try:
             # Pass the seed phrase directly to avoid password prompts for encrypted config
-            substrate_client = SubstrateClient(seed_phrase=seed_phrase, url=substrate_url)
+            substrate_client = SubstrateClient(
+                seed_phrase=seed_phrase, url=substrate_url
+            )
             logger.info(
                 f"Submitting storage request to substrate for file: {filename}, CID: {cid}"
             )
