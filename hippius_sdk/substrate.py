@@ -1270,7 +1270,6 @@ class SubstrateClient:
             return result.value
         return None
 
-
     def is_main_account(self, account_id: str, seed_phrase: str) -> bool:
         sub_account = self.query_sub_account(account_id, seed_phrase=seed_phrase)
         return sub_account is None
@@ -1287,8 +1286,6 @@ class SubstrateClient:
 
         # Return the u128 value (converted to int for Python compatibility)
         return int(result.value) if result and result.value is not None else 0
-
-
 
     def get_account_roles(self, account_id: str, seed_phrase) -> int:
         if not self._substrate:
