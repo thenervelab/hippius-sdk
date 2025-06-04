@@ -516,6 +516,7 @@ class HippiusClient:
         file_path: str,
         encrypt: bool,
         seed_phrase: str,
+        subaccount_id: str,
         store_node: str = "http://localhost:5001",
         pin_node: str = "https://store.hippius.network",
         substrate_url: str = "wss://rpc.hippius.network",
@@ -548,6 +549,7 @@ class HippiusClient:
             file_path,
             encrypt,
             seed_phrase,
+            subaccount_id,
             store_node,
             pin_node,
             substrate_url,
@@ -557,7 +559,7 @@ class HippiusClient:
         self,
         cid: str,
         output_path: str,
-        seed_phrase: str,
+        subaccount_id: str,
         auto_decrypt: bool = True,
         download_node: str = "http://localhost:5001",
     ) -> S3DownloadResult:
@@ -574,7 +576,7 @@ class HippiusClient:
         Args:
             cid: Content Identifier (CID) of the file to download
             output_path: Path where the downloaded file will be saved
-            seed_phrase: Seed phrase to use for retrieving decryption keys
+            subaccount_id: The subaccount id as api key
             auto_decrypt: Whether to attempt automatic decryption (default: True)
             download_node: IPFS node URL for download (default: local node)
 
@@ -587,5 +589,5 @@ class HippiusClient:
             ValueError: If decryption fails
         """
         return await self.ipfs_client.s3_download(
-            cid, output_path, seed_phrase, auto_decrypt, download_node
+            cid, output_path, subaccount_id, auto_decrypt, download_node
         )

@@ -21,8 +21,8 @@ from hippius_sdk.config import get_config_value, get_encryption_key
 from hippius_sdk.errors import HippiusIPFSError, HippiusSubstrateError
 from hippius_sdk.ipfs_core import AsyncIPFSClient
 from hippius_sdk.key_storage import (
-    generate_and_store_key_for_seed,
-    get_key_for_seed,
+    generate_and_store_key_for_subaccount,
+    get_key_for_subaccount,
     is_key_storage_enabled,
 )
 from hippius_sdk.substrate import FileInput, SubstrateClient
@@ -1939,6 +1939,7 @@ class IPFSClient:
         file_path: str,
         encrypt: bool,
         seed_phrase: str,
+        subaccount_id: str,
         store_node: str = "http://localhost:5001",
         pin_node: str = "https://store.hippius.network",
         substrate_url: str = "wss://rpc.hippius.network",
@@ -1994,17 +1995,17 @@ class IPFSClient:
 
             if key_storage_available:
                 # Try to get existing key for this seed phrase
-                existing_key_b64 = await get_key_for_seed(seed_phrase)
+                existing_key_b64 = await get_key_for_subaccount(subaccount_id)
 
                 if existing_key_b64:
                     # Use existing key
-                    logger.debug("Using existing encryption key for seed phrase")
+                    logger.debug("Using existing encryption key for subaccount")
                     encryption_key_bytes = base64.b64decode(existing_key_b64)
                     encryption_key_used = existing_key_b64
                 else:
-                    # Generate and store new key for this seed phrase
-                    logger.info("Generating new encryption key for seed phrase")
-                    new_key_b64 = await generate_and_store_key_for_seed(seed_phrase)
+                    # Generate and store new key for this subaccount
+                    logger.info("Generating new encryption key for subaccount")
+                    new_key_b64 = await generate_and_store_key_for_subaccount(subaccount_id)
                     encryption_key_bytes = base64.b64decode(new_key_b64)
                     encryption_key_used = new_key_b64
 
@@ -2120,7 +2121,7 @@ class IPFSClient:
         self,
         cid: str,
         output_path: str,
-        seed_phrase: str,
+        subaccount_id: str,
         auto_decrypt: bool = True,
         download_node: str = "http://localhost:5001",
     ) -> S3DownloadResult:
@@ -2137,7 +2138,7 @@ class IPFSClient:
         Args:
             cid: Content Identifier (CID) of the file to download
             output_path: Path where the downloaded file will be saved
-            seed_phrase: Seed phrase to use for retrieving decryption keys
+            subaccount_id: The subaccount id as api key
             auto_decrypt: Whether to attempt automatic decryption (default: True)
             download_node: IPFS node URL for download (default: local node)
 
@@ -2218,11 +2219,11 @@ class IPFSClient:
                 if key_storage_available:
                     # Try to get the encryption key for this seed phrase
                     try:
-                        existing_key_b64 = await get_key_for_seed(seed_phrase)
+                        existing_key_b64 = await get_key_for_subaccount(subaccount_id)
 
                         if existing_key_b64:
                             logger.debug(
-                                "Found encryption key for seed phrase, attempting decryption"
+                                "Found encryption key for subaccount, attempting decryption"
                             )
                             decryption_attempted = True
                             encryption_key_used = existing_key_b64

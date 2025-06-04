@@ -30,12 +30,13 @@ async def s3_encrypted():
     client = HippiusClient()
 
     seed_phrase = input("Enter your raw seed phrase:\n").strip()
+    subaccount_id = input("Enter your subaccount ID:\n").strip()
 
     try:
         print("🔐 Publishing with encryption...")
 
         result: S3PublishResult = await client.s3_publish(
-            file_path=encrypted_file, encrypt=True, seed_phrase=seed_phrase
+            file_path=encrypted_file, encrypt=True, seed_phrase=seed_phrase, subaccount_id=subaccount_id
         )
 
         print("✅ SUCCESS!")
