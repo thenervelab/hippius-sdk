@@ -1648,6 +1648,7 @@ class IPFSClient:
         self,
         cid: str,
         cancel_from_blockchain: bool = True,
+        unpin: bool = True,
         seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
@@ -1657,6 +1658,7 @@ class IPFSClient:
         Args:
             cid: Content Identifier (CID) of the file/directory to delete
             cancel_from_blockchain: Whether to also cancel the storage request from the blockchain
+            unpin: Whether to unpin the file from IPFS (default: True)
             seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
@@ -1709,21 +1711,26 @@ class IPFSClient:
                             ):
                                 # Recursive delete, but don't cancel from blockchain (we'll do that for parent)
                                 await self.delete_file(
-                                    link_hash, cancel_from_blockchain=False
+                                    link_hash, cancel_from_blockchain=False, unpin=unpin
                                 )
                             else:
                                 # Regular file unpin
-                                try:
-                                    await self.client.unpin(link_hash)
+                                if unpin:
+                                    try:
+                                        await self.client.unpin(link_hash)
+                                        print(
+                                            f"Unpinned file: {link_name} (CID: {link_hash})"
+                                        )
+                                    except Exception as unpin_error:
+                                        # Just note the error but don't let it stop the whole process
+                                        # This is common with IPFS servers that may return 500 errors for
+                                        # unpinning content that was never explicitly pinned
+                                        print(
+                                            f"Note: Could not unpin {link_name}: {str(unpin_error).split('For more information')[0]}"
+                                        )
+                                else:
                                     print(
-                                        f"Unpinned file: {link_name} (CID: {link_hash})"
-                                    )
-                                except Exception as unpin_error:
-                                    # Just note the error but don't let it stop the whole process
-                                    # This is common with IPFS servers that may return 500 errors for
-                                    # unpinning content that was never explicitly pinned
-                                    print(
-                                        f"Note: Could not unpin {link_name}: {str(unpin_error).split('For more information')[0]}"
+                                        f"Skipped unpinning file: {link_name} (CID: {link_hash})"
                                     )
                         except Exception as e:
                             print(
@@ -1737,27 +1744,32 @@ class IPFSClient:
             # Continue with regular file unpin
 
         # Now unpin the main file/directory
-        try:
-            print(f"Unpinning from IPFS: {cid}")
-            unpin_result = await self.client.unpin(cid)
-            result["unpin_result"] = unpin_result
-            result["success"] = True
-            print("Successfully unpinned from IPFS")
-        except Exception as e:
-            # Handle 500 errors from IPFS server gracefully - they often occur
-            # when the content wasn't explicitly pinned or was already unpinned
-            error_str = str(e)
-            if "500 Internal Server Error" in error_str:
-                print(
-                    f"Note: IPFS server reported content may already be unpinned: {cid}"
-                )
-                result["unpin_result"] = {"Pins": [cid]}  # Simulate successful unpin
+        if unpin:
+            try:
+                print(f"Unpinning from IPFS: {cid}")
+                unpin_result = await self.client.unpin(cid)
+                result["unpin_result"] = unpin_result
                 result["success"] = True
-            else:
-                print(
-                    f"Warning: Failed to unpin from IPFS: {error_str.split('For more information')[0]}"
-                )
-                result["success"] = False
+                print("Successfully unpinned from IPFS")
+            except Exception as e:
+                # Handle 500 errors from IPFS server gracefully - they often occur
+                # when the content wasn't explicitly pinned or was already unpinned
+                error_str = str(e)
+                if "500 Internal Server Error" in error_str:
+                    print(
+                        f"Note: IPFS server reported content may already be unpinned: {cid}"
+                    )
+                    result["unpin_result"] = {"Pins": [cid]}  # Simulate successful unpin
+                    result["success"] = True
+                else:
+                    print(
+                        f"Warning: Failed to unpin from IPFS: {error_str.split('For more information')[0]}"
+                    )
+                    result["success"] = False
+        else:
+            print(f"Skipped unpinning from IPFS: {cid}")
+            result["unpin_result"] = {"skipped": True}
+            result["success"] = True
 
         # Then, if requested, cancel from blockchain
         if cancel_from_blockchain:
