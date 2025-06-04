@@ -36,7 +36,10 @@ async def s3_encrypted():
         print("🔐 Publishing with encryption...")
 
         result: S3PublishResult = await client.s3_publish(
-            file_path=encrypted_file, encrypt=True, seed_phrase=seed_phrase, subaccount_id=subaccount_id
+            file_path=encrypted_file,
+            encrypt=True,
+            seed_phrase=seed_phrase,
+            subaccount_id=subaccount_id,
         )
 
         print("✅ SUCCESS!")

@@ -38,11 +38,15 @@ class KeyStorage:
         """
         if not ASYNCPG_AVAILABLE:
             raise KeyStorageError(
-                "asyncpg is required for key storage. Install it with: pip install 'hippius_sdk[key_storage]'")
+                "asyncpg is required for key storage. Install it with: pip install 'hippius_sdk[key_storage]'"
+            )
 
         if database_url is None:
-            database_url = get_config_value("key_storage", "database_url",
-                "postgresql://postgres:password@localhost:5432/hippius_keys", )
+            database_url = get_config_value(
+                "key_storage",
+                "database_url",
+                "postgresql://postgres:password@localhost:5432/hippius_keys",
+            )
 
         self.database_url = database_url
 
@@ -83,7 +87,9 @@ class KeyStorage:
         """Create a SHA-256 hash of the subaccount ID for indexing."""
         return hashlib.sha256(subaccount_id.encode("utf-8")).hexdigest()
 
-    async def set_key_for_subaccount(self, subaccount_id: str, encryption_key_b64: str) -> None:
+    async def set_key_for_subaccount(
+        self, subaccount_id: str, encryption_key_b64: str
+    ) -> None:
         """
         Store a new encryption key for a subaccount.
 
@@ -102,10 +108,14 @@ class KeyStorage:
         try:
             conn = await self._get_connection()
             try:
-                await conn.execute("""
+                await conn.execute(
+                    """
                     INSERT INTO encryption_keys (subaccount_id, encryption_key_b64)
                     VALUES ($1, $2)
-                """, subaccount_hash, encryption_key_b64, )
+                """,
+                    subaccount_hash,
+                    encryption_key_b64,
+                )
             finally:
                 await conn.close()
         except Exception as e:
@@ -130,13 +140,16 @@ class KeyStorage:
         try:
             conn = await self._get_connection()
             try:
-                result = await conn.fetchrow("""
+                result = await conn.fetchrow(
+                    """
                     SELECT encryption_key_b64 
                     FROM encryption_keys 
                     WHERE subaccount_id = $1 
                     ORDER BY created_at DESC 
                     LIMIT 1
-                """, subaccount_hash, )
+                """,
+                    subaccount_hash,
+                )
 
                 return result["encryption_key_b64"] if result else None
             finally:
@@ -169,7 +182,8 @@ class KeyStorage:
             return key_b64
         except ImportError:
             raise KeyStorageError(
-                "PyNaCl is required for key generation. Install it with: pip install pynacl")
+                "PyNaCl is required for key generation. Install it with: pip install pynacl"
+            )
         except Exception as e:
             raise KeyStorageError(f"Failed to generate encryption key: {e}")
 
@@ -229,7 +243,9 @@ async def set_key_for_subaccount(subaccount_id: str, encryption_key_b64: str) ->
         subaccount_id: The subaccount identifier
         encryption_key_b64: Base64-encoded encryption key
     """
-    return await get_default_storage().set_key_for_subaccount(subaccount_id, encryption_key_b64)
+    return await get_default_storage().set_key_for_subaccount(
+        subaccount_id, encryption_key_b64
+    )
 
 
 async def generate_and_store_key_for_subaccount(subaccount_id: str) -> str:
@@ -242,4 +258,6 @@ async def generate_and_store_key_for_subaccount(subaccount_id: str) -> str:
     Returns:
         Base64-encoded encryption key that was generated and stored
     """
-    return await get_default_storage().generate_and_store_key_for_subaccount(subaccount_id)
+    return await get_default_storage().generate_and_store_key_for_subaccount(
+        subaccount_id
+    )

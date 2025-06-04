@@ -2005,7 +2005,9 @@ class IPFSClient:
                 else:
                     # Generate and store new key for this subaccount
                     logger.info("Generating new encryption key for subaccount")
-                    new_key_b64 = await generate_and_store_key_for_subaccount(subaccount_id)
+                    new_key_b64 = await generate_and_store_key_for_subaccount(
+                        subaccount_id
+                    )
                     encryption_key_bytes = base64.b64decode(new_key_b64)
                     encryption_key_used = new_key_b64
 
