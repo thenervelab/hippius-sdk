@@ -480,7 +480,10 @@ class HippiusClient:
             RuntimeError: If deletion fails completely
         """
         return await self.ipfs_client.delete_file(
-            cid, cancel_from_blockchain, seed_phrase=seed_phrase, unpin=unpin,
+            cid,
+            cancel_from_blockchain,
+            seed_phrase=seed_phrase,
+            unpin=unpin,
         )
 
     async def delete_ec_file(
