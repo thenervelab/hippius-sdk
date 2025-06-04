@@ -1759,7 +1759,9 @@ class IPFSClient:
                     print(
                         f"Note: IPFS server reported content may already be unpinned: {cid}"
                     )
-                    result["unpin_result"] = {"Pins": [cid]}  # Simulate successful unpin
+                    result["unpin_result"] = {
+                        "Pins": [cid]
+                    }  # Simulate successful unpin
                     result["success"] = True
                 else:
                     print(
