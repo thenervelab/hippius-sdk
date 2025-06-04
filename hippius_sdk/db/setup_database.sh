@@ -39,6 +39,7 @@ echo "  SSL Mode: $DB_SSLMODE"
 
 # Construct DATABASE_URL for dbmate
 export DATABASE_URL="postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?sslmode=$DB_SSLMODE"
+echo $DATABASE_URL
 
 # Create database if it doesn't exist
 echo "📝 Creating database $DB_NAME..."
@@ -48,8 +49,8 @@ PGPASSWORD=$DB_PASSWORD createdb -h $DB_HOST -p $DB_PORT -U $DB_USER $DB_NAME 2>
 echo "🚀 Running database migrations..."
 if command -v dbmate &> /dev/null; then
     # Use explicit --migrations-dir flag to override any config
-    echo "📁 Using migrations from: $(pwd)/hippius_s3/sql/sdk_migrations"
-    dbmate --migrations-dir="hippius_s3/sql/sdk_migrations" up
+    echo "📁 Using migrations from: $(pwd)/hippius_sdk/db/migrations"
+    dbmate --migrations-dir="hippius_sdk/db/migrations" up
     echo "✅ Database migrations completed successfully!"
 else
     echo "❌ dbmate not found. Please install it first:"
@@ -80,7 +81,7 @@ echo "🎉 Setup complete! Key storage is ready to use."
 echo ""
 echo "📋 What was set up:"
 echo "   - Database: hippius_keys"
-echo "   - Tables: seed_phrases, encryption_keys"
+echo "   - Tables: encryption_keys"
 echo "   - SDK config: key_storage enabled"
 echo ""
 echo "🧪 Test with: python test_key_storage.py"

@@ -463,6 +463,7 @@ class HippiusClient:
         cid: str,
         cancel_from_blockchain: bool = True,
         seed_phrase: Optional[str] = None,
+        unpin: bool = True,
     ) -> Dict[str, Any]:
         """
         Delete a file from IPFS and optionally cancel its storage on the blockchain.
@@ -471,7 +472,7 @@ class HippiusClient:
             cid: Content Identifier (CID) of the file to delete
             cancel_from_blockchain: Whether to also cancel the storage request from the blockchain
             seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
-
+            unpin: whether to unpin or not.
         Returns:
             Dict containing the result of the operation
 
@@ -479,7 +480,7 @@ class HippiusClient:
             RuntimeError: If deletion fails completely
         """
         return await self.ipfs_client.delete_file(
-            cid, cancel_from_blockchain, seed_phrase=seed_phrase
+            cid, cancel_from_blockchain, seed_phrase=seed_phrase, unpin=unpin,
         )
 
     async def delete_ec_file(
