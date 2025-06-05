@@ -129,6 +129,11 @@ def create_client(args: Any) -> HippiusClient:
             hasattr(args, "no_publish") and args.no_publish
         ):
             needs_password = True
+        # Special case for pin - only needs password if we're publishing
+        elif command == "pin" and not (
+            hasattr(args, "no_publish") and args.no_publish
+        ):
+            needs_password = True
 
         # If this command doesn't need password access, set to empty string to skip prompting
         if not needs_password:
@@ -2933,9 +2938,9 @@ def handle_account_login() -> int:
     """Handle the account login command - prompts for account details and creates an account"""
     try:
         # Display the login banner
-        from hippius_sdk.cli_assets import LOGIN_ASSET
+        from hippius_sdk.cli_assets import HERO_TITLE
 
-        console.print(LOGIN_ASSET, style="bold cyan")
+        console.print(HERO_TITLE, style="bold cyan")
         console.print(
             "\n[bold blue]Welcome to Hippius![/bold blue] Let's set up your account.\n"
         )
