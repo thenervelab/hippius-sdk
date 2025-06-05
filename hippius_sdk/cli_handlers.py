@@ -130,9 +130,7 @@ def create_client(args: Any) -> HippiusClient:
         ):
             needs_password = True
         # Special case for pin - only needs password if we're publishing
-        elif command == "pin" and not (
-            hasattr(args, "no_publish") and args.no_publish
-        ):
+        elif command == "pin" and not (hasattr(args, "no_publish") and args.no_publish):
             needs_password = True
 
         # If this command doesn't need password access, set to empty string to skip prompting
