@@ -165,6 +165,17 @@ class SubstrateClient:
                 )
                 return False
 
+        # Check if we have a pre-stored seed phrase first
+        if self._seed_phrase:
+            try:
+                self._keypair = Keypair.create_from_mnemonic(self._seed_phrase)
+                self._account_address = self._keypair.ss58_address
+                self._read_only = False
+                return True
+            except Exception as e:
+                print(f"Warning: Could not create keypair from stored seed phrase: {e}")
+                # Fall through to try config
+
         # Otherwise, try to get the seed phrase from config
         config_seed = get_seed_phrase(self._seed_phrase_password, self._account_name)
         if config_seed:

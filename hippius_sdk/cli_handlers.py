@@ -130,9 +130,7 @@ def create_client(args: Any) -> HippiusClient:
         ):
             needs_password = True
         # Special case for pin - only needs password if we're publishing
-        elif command == "pin" and not (
-            hasattr(args, "no_publish") and args.no_publish
-        ):
+        elif command == "pin" and not (hasattr(args, "no_publish") and args.no_publish):
             needs_password = True
 
         # If this command doesn't need password access, set to empty string to skip prompting
@@ -1258,35 +1256,17 @@ async def handle_erasure_code(
         )
         return 1
 
-    # Request password early if we're going to publish to the blockchain
-    if publish and client.substrate_client._seed_phrase is None:
-        # First check if we have an encrypted seed phrase that will require a password
-        config = load_config()
-        account_name = client.substrate_client._account_name or get_active_account()
-
-        if account_name and account_name in config["substrate"].get("accounts", {}):
-            account_data = config["substrate"]["accounts"][account_name]
-            is_encoded = account_data.get("seed_phrase_encoded", False)
-
-            if is_encoded:
-                warning("Wallet password will be required for publishing to blockchain")
-                password = getpass.getpass(
-                    "Enter password to decrypt seed phrase: \n\n"
-                )
-
-                # Store the password in client for later use
-                client.substrate_client._seed_phrase_password = password
-
-                # Pre-authenticate to ensure the password is correct
-                try:
-                    seed_phrase = decrypt_seed_phrase(password, account_name)
-                    if not seed_phrase:
-                        error("Failed to decrypt seed phrase. Incorrect password?")
-                        return 1
-                    client.substrate_client._seed_phrase = seed_phrase
-                except Exception as e:
-                    error(f"Error decrypting seed phrase: {e}")
-                    return 1
+    # If publishing is enabled, ensure we have a valid substrate client by accessing it
+    # This will trigger password prompts if needed right at the beginning
+    if publish and hasattr(client, "substrate_client") and client.substrate_client:
+        try:
+            # Force keypair initialization - this will prompt for password if needed
+            _ = client.substrate_client._ensure_keypair()
+        except Exception as e:
+            warning(f"Failed to initialize blockchain client: {str(e)}")
+            warning(
+                "Will continue with erasure coding but blockchain publishing may fail"
+            )
 
     # Get file size
     file_size = os.path.getsize(file_path)
