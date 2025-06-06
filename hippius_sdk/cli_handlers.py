@@ -2106,7 +2106,7 @@ def handle_seed_phrase_set(
                 return 1
 
         # Set the seed phrase
-        set_seed_phrase(seed_phrase, password, account_name)
+        set_seed_phrase(seed_phrase, encode, password, account_name)
 
         # Gather information for the success panel
         status_info = []
