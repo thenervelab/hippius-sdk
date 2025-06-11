@@ -521,6 +521,7 @@ class HippiusClient:
         encrypt: bool,
         seed_phrase: str,
         subaccount_id: str,
+        bucket_name: str,
         store_node: str = "http://localhost:5001",
         pin_node: str = "https://store.hippius.network",
         substrate_url: str = "wss://rpc.hippius.network",
@@ -536,6 +537,8 @@ class HippiusClient:
             file_path: Path to the file to publish
             encrypt: Whether to encrypt the file before uploading
             seed_phrase: Seed phrase for blockchain transaction signing
+            subaccount_id: The subaccount/account identifier
+            bucket_name: The bucket name for key isolation
             store_node: IPFS node URL for initial upload (default: local node)
             pin_node: IPFS node URL for backup pinning (default: remote service)
             substrate_url: substrate url to use for the storage request.
@@ -554,6 +557,7 @@ class HippiusClient:
             encrypt,
             seed_phrase,
             subaccount_id,
+            bucket_name,
             store_node,
             pin_node,
             substrate_url,
@@ -564,6 +568,7 @@ class HippiusClient:
         cid: str,
         output_path: str,
         subaccount_id: str,
+        bucket_name: str,
         auto_decrypt: bool = True,
         download_node: str = "http://localhost:5001",
     ) -> S3DownloadResult:
@@ -571,16 +576,17 @@ class HippiusClient:
         Download a file from IPFS with automatic decryption.
 
         This method uses the download_node for immediate availability and automatically
-        manages decryption keys per seed phrase:
+        manages decryption keys per account+bucket combination:
         - Downloads the file from the specified download_node (local by default)
-        - If auto_decrypt=True, attempts to decrypt using stored keys for the seed phrase
+        - If auto_decrypt=True, attempts to decrypt using stored keys for the account+bucket
         - Falls back to client encryption key if key storage is not available
         - Returns the file in decrypted form if decryption succeeds
 
         Args:
             cid: Content Identifier (CID) of the file to download
             output_path: Path where the downloaded file will be saved
-            subaccount_id: The subaccount id as api key
+            subaccount_id: The subaccount/account identifier
+            bucket_name: The bucket name for key isolation
             auto_decrypt: Whether to attempt automatic decryption (default: True)
             download_node: IPFS node URL for download (default: local node)
 
@@ -593,5 +599,5 @@ class HippiusClient:
             ValueError: If decryption fails
         """
         return await self.ipfs_client.s3_download(
-            cid, output_path, subaccount_id, auto_decrypt, download_node
+            cid, output_path, subaccount_id, bucket_name, auto_decrypt, download_node
         )

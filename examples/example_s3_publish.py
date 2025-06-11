@@ -31,6 +31,7 @@ async def s3_encrypted():
 
     seed_phrase = input("Enter your raw seed phrase:\n").strip()
     subaccount_id = input("Enter your subaccount ID:\n").strip()
+    bucket_name = input("Enter your bucket name:\n").strip()
 
     try:
         print("🔐 Publishing with encryption...")
@@ -40,6 +41,7 @@ async def s3_encrypted():
             encrypt=True,
             seed_phrase=seed_phrase,
             subaccount_id=subaccount_id,
+            bucket_name=bucket_name,
         )
 
         print("✅ SUCCESS!")

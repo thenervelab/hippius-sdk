@@ -1954,6 +1954,7 @@ class IPFSClient:
         encrypt: bool,
         seed_phrase: str,
         subaccount_id: str,
+        bucket_name: str,
         store_node: str = "http://localhost:5001",
         pin_node: str = "https://store.hippius.network",
         substrate_url: str = "wss://rpc.hippius.network",
@@ -1966,15 +1967,17 @@ class IPFSClient:
         2. Pins to pin_node (remote) for persistence and backup
         3. Publishes to substrate marketplace
 
-        This method automatically manages encryption keys per seed phrase:
-        - If encrypt=True, it will get or generate an encryption key for the seed phrase
+        This method automatically manages encryption keys per account+bucket combination:
+        - If encrypt=True, it will get or generate an encryption key for the account+bucket
         - Keys are stored in PostgreSQL and versioned (never deleted)
-        - Always uses the most recent key for a seed phrase
+        - Always uses the most recent key for an account+bucket combination
 
         Args:
             file_path: Path to the file to publish
             encrypt: Whether to encrypt the file before uploading
             seed_phrase: Seed phrase for blockchain transaction signing
+            subaccount_id: The subaccount/account identifier
+            bucket_name: The bucket name for key isolation
             store_node: IPFS node URL for initial upload (default: local node)
             pin_node: IPFS node URL for backup pinning (default: remote service)
             substrate_url: the substrate url to connect to for the storage request.
@@ -2008,19 +2011,22 @@ class IPFSClient:
                 key_storage_available = False
 
             if key_storage_available:
-                # Try to get existing key for this seed phrase
-                existing_key_b64 = await get_key_for_subaccount(subaccount_id)
+                # Create combined key identifier from account+bucket
+                account_bucket_key = f"{subaccount_id}:{bucket_name}"
+                
+                # Try to get existing key for this account+bucket combination
+                existing_key_b64 = await get_key_for_subaccount(account_bucket_key)
 
                 if existing_key_b64:
                     # Use existing key
-                    logger.debug("Using existing encryption key for subaccount")
+                    logger.debug("Using existing encryption key for account+bucket combination")
                     encryption_key_bytes = base64.b64decode(existing_key_b64)
                     encryption_key_used = existing_key_b64
                 else:
-                    # Generate and store new key for this subaccount
-                    logger.info("Generating new encryption key for subaccount")
+                    # Generate and store new key for this account+bucket combination
+                    logger.info("Generating new encryption key for account+bucket combination")
                     new_key_b64 = await generate_and_store_key_for_subaccount(
-                        subaccount_id
+                        account_bucket_key
                     )
                     encryption_key_bytes = base64.b64decode(new_key_b64)
                     encryption_key_used = new_key_b64
@@ -2138,6 +2144,7 @@ class IPFSClient:
         cid: str,
         output_path: str,
         subaccount_id: str,
+        bucket_name: str,
         auto_decrypt: bool = True,
         download_node: str = "http://localhost:5001",
     ) -> S3DownloadResult:
@@ -2145,16 +2152,17 @@ class IPFSClient:
         Download a file from IPFS with automatic decryption.
 
         This method uses the download_node for immediate availability and automatically
-        manages decryption keys per seed phrase:
+        manages decryption keys per account+bucket combination:
         - Downloads the file from the specified download_node (local by default)
-        - If auto_decrypt=True, attempts to decrypt using stored keys for the seed phrase
+        - If auto_decrypt=True, attempts to decrypt using stored keys for the account+bucket
         - Falls back to client encryption key if key storage is not available
         - Returns the file in decrypted form if decryption succeeds
 
         Args:
             cid: Content Identifier (CID) of the file to download
             output_path: Path where the downloaded file will be saved
-            subaccount_id: The subaccount id as api key
+            subaccount_id: The subaccount/account identifier
+            bucket_name: The bucket name for key isolation
             auto_decrypt: Whether to attempt automatic decryption (default: True)
             download_node: IPFS node URL for download (default: local node)
 
@@ -2233,13 +2241,16 @@ class IPFSClient:
                 decryption_successful = False
 
                 if key_storage_available:
-                    # Try to get the encryption key for this seed phrase
+                    # Create combined key identifier from account+bucket
+                    account_bucket_key = f"{subaccount_id}:{bucket_name}"
+                    
+                    # Try to get the encryption key for this account+bucket combination
                     try:
-                        existing_key_b64 = await get_key_for_subaccount(subaccount_id)
+                        existing_key_b64 = await get_key_for_subaccount(account_bucket_key)
 
                         if existing_key_b64:
                             logger.debug(
-                                "Found encryption key for subaccount, attempting decryption"
+                                "Found encryption key for account+bucket combination, attempting decryption"
                             )
                             decryption_attempted = True
                             encryption_key_used = existing_key_b64
@@ -2273,7 +2284,7 @@ class IPFSClient:
                                 )
                                 # Continue to try fallback decryption
                         else:
-                            logger.debug("No encryption key found for seed phrase")
+                            logger.debug("No encryption key found for account+bucket combination")
 
                     except Exception as e:
                         logger.debug(f"Error retrieving key from storage: {e}")
