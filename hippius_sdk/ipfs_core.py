@@ -65,7 +65,8 @@ class AsyncIPFSClient:
             files = {"file": (filename, file_content, "application/octet-stream")}
             # Explicitly set wrap-with-directory=false to prevent wrapping in directory
             response = await self.client.post(
-                f"{self.api_url}/api/v0/add?wrap-with-directory=false", files=files
+                f"{self.api_url}/api/v0/add?wrap-with-directory=false&cid-version=1",
+                files=files,
             )
             response.raise_for_status()
             return response.json()
@@ -85,7 +86,8 @@ class AsyncIPFSClient:
         files = {"file": (filename, data, "application/octet-stream")}
         # Explicitly set wrap-with-directory=false to prevent wrapping in directory
         response = await self.client.post(
-            f"{self.api_url}/api/v0/add?wrap-with-directory=false", files=files
+            f"{self.api_url}/api/v0/add?wrap-with-directory=false&cid-version=1",
+            files=files,
         )
         response.raise_for_status()
         return response.json()
@@ -346,7 +348,7 @@ class AsyncIPFSClient:
 
         # Make the request with directory flags
         response = await self.client.post(
-            f"{self.api_url}/api/v0/add?recursive=true&wrap-with-directory=true",
+            f"{self.api_url}/api/v0/add?recursive=true&wrap-with-directory=true&cid-version=1",
             files=files,
             timeout=300.0,  # 5 minute timeout for directory uploads
         )
