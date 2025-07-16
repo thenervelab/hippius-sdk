@@ -2013,18 +2013,22 @@ class IPFSClient:
             if key_storage_available:
                 # Create combined key identifier from account+bucket
                 account_bucket_key = f"{subaccount_id}:{bucket_name}"
-                
+
                 # Try to get existing key for this account+bucket combination
                 existing_key_b64 = await get_key_for_subaccount(account_bucket_key)
 
                 if existing_key_b64:
                     # Use existing key
-                    logger.debug("Using existing encryption key for account+bucket combination")
+                    logger.debug(
+                        "Using existing encryption key for account+bucket combination"
+                    )
                     encryption_key_bytes = base64.b64decode(existing_key_b64)
                     encryption_key_used = existing_key_b64
                 else:
                     # Generate and store new key for this account+bucket combination
-                    logger.info("Generating new encryption key for account+bucket combination")
+                    logger.info(
+                        "Generating new encryption key for account+bucket combination"
+                    )
                     new_key_b64 = await generate_and_store_key_for_subaccount(
                         account_bucket_key
                     )
@@ -2243,10 +2247,12 @@ class IPFSClient:
                 if key_storage_available:
                     # Create combined key identifier from account+bucket
                     account_bucket_key = f"{subaccount_id}:{bucket_name}"
-                    
+
                     # Try to get the encryption key for this account+bucket combination
                     try:
-                        existing_key_b64 = await get_key_for_subaccount(account_bucket_key)
+                        existing_key_b64 = await get_key_for_subaccount(
+                            account_bucket_key
+                        )
 
                         if existing_key_b64:
                             logger.debug(
@@ -2284,7 +2290,9 @@ class IPFSClient:
                                 )
                                 # Continue to try fallback decryption
                         else:
-                            logger.debug("No encryption key found for account+bucket combination")
+                            logger.debug(
+                                "No encryption key found for account+bucket combination"
+                            )
 
                     except Exception as e:
                         logger.debug(f"Error retrieving key from storage: {e}")
