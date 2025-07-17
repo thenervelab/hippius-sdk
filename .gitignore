@@ -88,3 +88,6 @@ docs/_build/
 celerybeat-schedule
 celerybeat.pid 
 **/.claude/settings.local.json
+
+CLAUDE.md
+CLAUDE.local.md
