@@ -23,14 +23,15 @@ from hippius_sdk.config import (
     set_encryption_key,
     set_seed_phrase,
 )
-from hippius_sdk.ipfs import IPFSClient, S3PublishResult, S3DownloadResult
+from hippius_sdk.ipfs import IPFSClient, S3PublishResult, S3PublishPin, S3DownloadResult
 from hippius_sdk.utils import format_cid, format_size, hex_to_ipfs_cid
 
-__version__ = "0.2.37"
+__version__ = "0.2.38"
 __all__ = [
     "HippiusClient",
     "IPFSClient",
     "S3PublishResult",
+    "S3PublishPin",
     "S3DownloadResult",
     "get_config_value",
     "set_config_value",
