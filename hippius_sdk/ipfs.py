@@ -12,7 +12,7 @@ import shutil
 import tempfile
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import httpx
 from pydantic import BaseModel
@@ -60,6 +60,16 @@ class S3PublishResult(BaseModel):
     size_bytes: int
     encryption_key: Optional[str]
     tx_hash: str
+
+
+class S3PublishPin(BaseModel):
+    """Result model for s3_publish method when publish=False."""
+
+    cid: str
+    subaccount: str
+    file_path: str
+    pin_node: str
+    substrate_url: str
 
 
 class S3DownloadResult(BaseModel):
@@ -1958,7 +1968,8 @@ class IPFSClient:
         store_node: str = "http://localhost:5001",
         pin_node: str = "https://store.hippius.network",
         substrate_url: str = "wss://rpc.hippius.network",
-    ) -> S3PublishResult:
+        publish: bool = True,
+    ) -> Union[S3PublishResult, S3PublishPin]:
         """
         Publish a file to IPFS and the Hippius marketplace in one operation.
 
@@ -1980,10 +1991,12 @@ class IPFSClient:
             bucket_name: The bucket name for key isolation
             store_node: IPFS node URL for initial upload (default: local node)
             pin_node: IPFS node URL for backup pinning (default: remote service)
-            substrate_url: the substrate url to connect to for the storage request.
+            substrate_url: the substrate url to connect to for the storage request
+            publish: Whether to publish to blockchain (True) or just upload to IPFS (False)
 
         Returns:
-            S3PublishResult: Object containing CID, file info, and transaction hash
+            S3PublishResult: Object containing CID, file info, and transaction hash when publish=True
+            S3PublishPin: Object containing CID, subaccount, file_path, pin_node, substrate_url when publish=False
 
         Raises:
             HippiusIPFSError: If IPFS operations (add or pin) fail
@@ -2094,54 +2107,64 @@ class IPFSClient:
                 f"Failed to pin file to store node {store_node}: {str(e)}"
             )
 
-        # Publish to substrate marketplace
-        try:
-            # Pass the seed phrase directly to avoid password prompts for encrypted config
-            substrate_client = SubstrateClient(
-                seed_phrase=seed_phrase, url=substrate_url
-            )
-            logger.info(
-                f"Submitting storage request to substrate for file: {filename}, CID: {cid}"
-            )
-
-            tx_hash = await substrate_client.storage_request(
-                files=[
-                    FileInput(
-                        file_hash=cid,
-                        file_name=filename,
-                    )
-                ],
-                miner_ids=[],
-                seed_phrase=seed_phrase,
-            )
-
-            logger.debug(f"Substrate call result: {tx_hash}")
-
-            # Check if we got a valid transaction hash
-            if not tx_hash or tx_hash == "0x" or len(tx_hash) < 10:
-                logger.error(f"Invalid transaction hash received: {tx_hash}")
-                raise HippiusSubstrateError(
-                    f"Invalid transaction hash received: {tx_hash}. This might indicate insufficient credits or transaction failure."
+        # Conditionally publish to substrate marketplace based on publish flag
+        if publish:
+            try:
+                # Pass the seed phrase directly to avoid password prompts for encrypted config
+                substrate_client = SubstrateClient(
+                    seed_phrase=seed_phrase, url=substrate_url
+                )
+                logger.info(
+                    f"Submitting storage request to substrate for file: {filename}, CID: {cid}"
                 )
 
-            logger.info(
-                f"Successfully published to substrate with transaction: {tx_hash}"
-            )
+                tx_hash = await substrate_client.storage_request(
+                    files=[
+                        FileInput(
+                            file_hash=cid,
+                            file_name=filename,
+                        )
+                    ],
+                    miner_ids=[],
+                    seed_phrase=seed_phrase,
+                )
 
-        except Exception as e:
-            logger.error(f"Substrate call failed: {str(e)}")
-            logger.debug(
-                "Possible causes: insufficient credits, network issues, invalid seed phrase, or substrate node unavailability"
-            )
-            raise HippiusSubstrateError(f"Failed to publish to substrate: {str(e)}")
+                logger.debug(f"Substrate call result: {tx_hash}")
 
-        return S3PublishResult(
-            cid=cid,
-            file_name=filename,
-            size_bytes=size_bytes,
-            encryption_key=encryption_key_used,
-            tx_hash=tx_hash,
-        )
+                # Check if we got a valid transaction hash
+                if not tx_hash or tx_hash == "0x" or len(tx_hash) < 10:
+                    logger.error(f"Invalid transaction hash received: {tx_hash}")
+                    raise HippiusSubstrateError(
+                        f"Invalid transaction hash received: {tx_hash}. This might indicate insufficient credits or transaction failure."
+                    )
+
+                logger.info(
+                    f"Successfully published to substrate with transaction: {tx_hash}"
+                )
+
+            except Exception as e:
+                logger.error(f"Substrate call failed: {str(e)}")
+                logger.debug(
+                    "Possible causes: insufficient credits, network issues, invalid seed phrase, or substrate node unavailability"
+                )
+                raise HippiusSubstrateError(f"Failed to publish to substrate: {str(e)}")
+
+            return S3PublishResult(
+                cid=cid,
+                file_name=filename,
+                size_bytes=size_bytes,
+                encryption_key=encryption_key_used,
+                tx_hash=tx_hash,
+            )
+        else:
+            # Return S3PublishPin with required information when not publishing
+            return S3PublishPin(
+                cid=cid,
+                subaccount=subaccount_id,
+                file_path=file_path,
+                pin_node=pin_node,
+                substrate_url=substrate_url,
+            )
 
     async def s3_download(
         self,

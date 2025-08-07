@@ -3,13 +3,13 @@ Main client for the Hippius SDK.
 """
 
 import base64
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import nacl.secret
 import nacl.utils
 
 from hippius_sdk.config import get_config_value, get_encryption_key
-from hippius_sdk.ipfs import IPFSClient, S3PublishResult, S3DownloadResult
+from hippius_sdk.ipfs import IPFSClient, S3PublishResult, S3PublishPin, S3DownloadResult
 from hippius_sdk.substrate import SubstrateClient
 
 
@@ -525,7 +525,8 @@ class HippiusClient:
         store_node: str = "http://localhost:5001",
         pin_node: str = "https://store.hippius.network",
         substrate_url: str = "wss://rpc.hippius.network",
-    ) -> S3PublishResult:
+        publish: bool = True,
+    ) -> Union[S3PublishResult, S3PublishPin]:
         """
         Publish a file to IPFS and the Hippius marketplace in one operation.
 
@@ -541,10 +542,12 @@ class HippiusClient:
             bucket_name: The bucket name for key isolation
             store_node: IPFS node URL for initial upload (default: local node)
             pin_node: IPFS node URL for backup pinning (default: remote service)
-            substrate_url: substrate url to use for the storage request.
+            substrate_url: substrate url to use for the storage request
+            publish: Whether to publish to blockchain (True) or just upload to IPFS (False)
 
         Returns:
-            S3PublishResult: Object containing CID, file info, and transaction hash
+            S3PublishResult: Object containing CID, file info, and transaction hash when publish=True
+            S3PublishPin: Object containing CID, subaccount, file_path, pin_node, substrate_url when publish=False
 
         Raises:
             HippiusIPFSError: If IPFS operations (add or pin) fail
@@ -561,6 +564,7 @@ class HippiusClient:
             store_node,
             pin_node,
             substrate_url,
+            publish,
         )
 
     async def s3_download(
