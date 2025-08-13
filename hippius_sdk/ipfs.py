@@ -2211,7 +2211,7 @@ class IPFSClient:
             download_client = AsyncIPFSClient(api_url=download_node)
 
             download_url = f"{download_node.rstrip('/')}/api/v0/cat?arg={cid}"
-            
+
             # Download file into memory
             file_data = bytearray()
             async with download_client.client.stream("POST", download_url) as response:
@@ -2221,7 +2221,9 @@ class IPFSClient:
 
             # Convert to bytes for consistency
             file_data = bytes(file_data)
-            logger.info(f"File downloaded from {download_node} with CID: {cid} ({len(file_data)} bytes)")
+            logger.info(
+                f"File downloaded from {download_node} with CID: {cid} ({len(file_data)} bytes)"
+            )
 
         except Exception as e:
             raise HippiusIPFSError(
