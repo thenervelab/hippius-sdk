@@ -2203,7 +2203,7 @@ class IPFSClient:
         """
         start_time = time.time()
 
-        # Download the file directly from the specified download_node
+        # Download the file directly into memory from the specified download_node
         try:
             # Create parent directories if they don't exist
             os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
@@ -2211,41 +2211,29 @@ class IPFSClient:
             download_client = AsyncIPFSClient(api_url=download_node)
 
             download_url = f"{download_node.rstrip('/')}/api/v0/cat?arg={cid}"
+            
+            # Download file into memory
+            file_data = bytearray()
             async with download_client.client.stream("POST", download_url) as response:
                 response.raise_for_status()
+                async for chunk in response.aiter_bytes(chunk_size=8192):
+                    file_data.extend(chunk)
 
-                with open(output_path, "wb") as f:
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        f.write(chunk)
-
-            logger.info(f"File downloaded from {download_node} with CID: {cid}")
+            # Convert to bytes for consistency
+            file_data = bytes(file_data)
+            logger.info(f"File downloaded from {download_node} with CID: {cid} ({len(file_data)} bytes)")
 
         except Exception as e:
             raise HippiusIPFSError(
                 f"Failed to download file from {download_node}: {str(e)}"
             )
 
-        # Get file info after download
-        size_bytes = os.path.getsize(output_path)
-        elapsed_time = time.time() - start_time
-
         # Attempt automatic decryption if requested
         decrypted = False
         encryption_key_used = None
+        final_data = file_data  # This will hold either encrypted or decrypted data
 
         if auto_decrypt:
-            # Check if key storage is enabled and available
-            try:
-                key_storage_available = is_key_storage_enabled()
-                logger.debug(f"Key storage enabled: {key_storage_available}")
-            except ImportError:
-                logger.debug("Key storage module not available")
-                key_storage_available = False
-
-            # Read the downloaded file content
-            with open(output_path, "rb") as f:
-                file_data = f.read()
-
             # Check if file is empty - this indicates a problem
             if len(file_data) == 0:
                 logger.error(f"Downloaded file is empty (0 bytes) for CID: {cid}")
@@ -2263,6 +2251,14 @@ class IPFSClient:
                 decrypted = False
                 encryption_key_used = None
             else:
+                # Check if key storage is enabled and available
+                try:
+                    key_storage_available = is_key_storage_enabled()
+                    logger.debug(f"Key storage enabled: {key_storage_available}")
+                except ImportError:
+                    logger.debug("Key storage module not available")
+                    key_storage_available = False
+
                 # File has content, attempt decryption if requested
                 decryption_attempted = False
                 decryption_successful = False
@@ -2292,17 +2288,10 @@ class IPFSClient:
                                     existing_key_b64
                                 )
                                 box = nacl.secret.SecretBox(encryption_key_bytes)
-                                decrypted_data = box.decrypt(file_data)
-
-                                # Write the decrypted data back to the file
-                                with open(output_path, "wb") as f:
-                                    f.write(decrypted_data)
+                                final_data = box.decrypt(file_data)
 
                                 decryption_successful = True
                                 decrypted = True
-                                size_bytes = len(
-                                    decrypted_data
-                                )  # Update size to decrypted size
                                 logger.info(
                                     "Successfully decrypted file using stored key"
                                 )
@@ -2326,17 +2315,10 @@ class IPFSClient:
                     decryption_attempted = True
 
                     try:
-                        decrypted_data = self.decrypt_data(file_data)
-
-                        # Write the decrypted data back to the file
-                        with open(output_path, "wb") as f:
-                            f.write(decrypted_data)
+                        final_data = self.decrypt_data(file_data)
 
                         decryption_successful = True
                         decrypted = True
-                        size_bytes = len(
-                            decrypted_data
-                        )  # Update size to decrypted size
 
                         # Store the encryption key for the result
                         encryption_key_used = (
@@ -2360,6 +2342,14 @@ class IPFSClient:
                     )
                 elif not decryption_attempted:
                     logger.debug("No decryption attempted - no keys available")
+
+        # Write the final data (encrypted or decrypted) to disk once
+        with open(output_path, "wb") as f:
+            f.write(final_data)
+
+        # Get final file info
+        size_bytes = len(final_data)
+        elapsed_time = time.time() - start_time
 
         return S3DownloadResult(
             cid=cid,
