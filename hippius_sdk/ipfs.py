@@ -1,6 +1,7 @@
 """
 IPFS operations for the Hippius SDK.
 """
+
 import asyncio
 import base64
 import hashlib
@@ -129,7 +130,7 @@ class IPFSClient:
 
         try:
             self.client = AsyncIPFSClient(api_url=api_url, gateway=self.gateway)
-        except httpx.ConnectError as e:
+        except httpx.ConnectError:
             print(
                 f"Warning: Falling back to local IPFS daemon, but still using gateway={self.gateway}"
             )
@@ -241,6 +242,7 @@ class IPFSClient:
         encrypt: Optional[bool] = None,
         max_retries: int = 3,
         seed_phrase: Optional[str] = None,
+        file_name: str = None,
     ) -> Dict[str, Any]:
         """
         Upload a file to IPFS with optional encryption.
@@ -251,6 +253,7 @@ class IPFSClient:
             encrypt: Whether to encrypt the file (overrides default)
             max_retries: Maximum number of retry attempts (default: 3)
             seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
+            file_name: The original file name
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -278,7 +281,7 @@ class IPFSClient:
             )
 
         # Get file info before upload
-        filename = os.path.basename(file_path)
+        file_name = file_name if file_name else os.path.basename(file_path)
         size_bytes = os.path.getsize(file_path)
 
         # If encryption is requested, encrypt the file first
@@ -303,7 +306,10 @@ class IPFSClient:
                 # Use the original file for upload
                 upload_path = file_path
 
-            result = await self.client.add_file(upload_path)
+            result = await self.client.add_file(
+                upload_path,
+                file_name=file_name,
+            )
             cid = result["Hash"]
 
         finally:
@@ -314,7 +320,7 @@ class IPFSClient:
         # Format the result
         result = {
             "cid": cid,
-            "filename": filename,
+            "filename": file_name,
             "size_bytes": size_bytes,
             "encrypted": should_encrypt,
         }
@@ -1411,7 +1417,7 @@ class IPFSClient:
 
             for i, chunk in enumerate(reconstructed_chunks):
                 if verbose and i % 10 == 0:
-                    print(f"Processing chunk {i+1}/{len(reconstructed_chunks)}...")
+                    print(f"Processing chunk {i + 1}/{len(reconstructed_chunks)}...")
 
                 # For all chunks except the last one, use full chunk size
                 if i < len(reconstructed_chunks) - 1:
@@ -1750,8 +1756,9 @@ class IPFSClient:
                 # Record the child files that were processed
                 result["child_files"] = child_files
         except Exception as e:
-            print(f"Warning: Failed to check if CID is a directory: {e}")
-            # Continue with regular file unpin
+            print(
+                f"Warning: Failed to check if CID is a directory: {e}"
+            )  # Continue with regular file unpin
 
         # Now unpin the main file/directory
         if unpin:
@@ -1821,7 +1828,8 @@ class IPFSClient:
         cancel_from_blockchain: bool = True,
         parallel_limit: int = 20,
         seed_phrase: Optional[str] = None,
-        metadata_timeout: int = 30,  # Timeout in seconds for metadata fetch
+        metadata_timeout: int = 30,
+        # Timeout in seconds for metadata fetch
     ) -> bool:
         """
         Delete an erasure-coded file, including all its chunks in parallel.
@@ -1863,8 +1871,7 @@ class IPFSClient:
                 except asyncio.TimeoutError:
                     print(
                         f"Timed out after {metadata_timeout}s waiting for metadata download"
-                    )
-                    # We'll continue with blockchain cancellation even without metadata
+                    )  # We'll continue with blockchain cancellation even without metadata
             except json.JSONDecodeError as e:
                 # If we can't parse the metadata JSON, record the error but continue
                 print(f"Error parsing metadata JSON: {e}")
@@ -1969,6 +1976,7 @@ class IPFSClient:
         pin_node: str = "https://store.hippius.network",
         substrate_url: str = "wss://rpc.hippius.network",
         publish: bool = True,
+        file_name: str = None,
     ) -> Union[S3PublishResult, S3PublishPin]:
         """
         Publish a file to IPFS and the Hippius marketplace in one operation.
@@ -1993,6 +2001,7 @@ class IPFSClient:
             pin_node: IPFS node URL for backup pinning (default: remote service)
             substrate_url: the substrate url to connect to for the storage request
             publish: Whether to publish to blockchain (True) or just upload to IPFS (False)
+            file_name: The original file name.
 
         Returns:
             S3PublishResult: Object containing CID, file info, and transaction hash when publish=True
@@ -2089,7 +2098,10 @@ class IPFSClient:
         # Step 1: Upload to store_node (local) for immediate availability
         try:
             store_client = AsyncIPFSClient(api_url=store_node)
-            result = await store_client.add_file(file_path)
+            result = await store_client.add_file(
+                file_path,
+                file_name=file_name,
+            )
             cid = result["Hash"]
             logger.info(f"File uploaded to store node {store_node} with CID: {cid}")
         except Exception as e:
@@ -2112,7 +2124,8 @@ class IPFSClient:
             try:
                 # Pass the seed phrase directly to avoid password prompts for encrypted config
                 substrate_client = SubstrateClient(
-                    seed_phrase=seed_phrase, url=substrate_url
+                    seed_phrase=seed_phrase,
+                    url=substrate_url,
                 )
                 logger.info(
                     f"Submitting storage request to substrate for file: {filename}, CID: {cid}"
@@ -2211,7 +2224,7 @@ class IPFSClient:
             download_client = AsyncIPFSClient(api_url=download_node)
 
             download_url = f"{download_node.rstrip('/')}/api/v0/cat?arg={cid}"
-            
+
             # Download file into memory
             file_data = bytearray()
             async with download_client.client.stream("POST", download_url) as response:
@@ -2221,7 +2234,9 @@ class IPFSClient:
 
             # Convert to bytes for consistency
             file_data = bytes(file_data)
-            logger.info(f"File downloaded from {download_node} with CID: {cid} ({len(file_data)} bytes)")
+            logger.info(
+                f"File downloaded from {download_node} with CID: {cid} ({len(file_data)} bytes)"
+            )
 
         except Exception as e:
             raise HippiusIPFSError(
@@ -2299,8 +2314,7 @@ class IPFSClient:
                             except Exception as decrypt_error:
                                 logger.debug(
                                     f"Decryption failed with stored key: {decrypt_error}"
-                                )
-                                # Continue to try fallback decryption
+                                )  # Continue to try fallback decryption
                         else:
                             logger.debug(
                                 "No encryption key found for account+bucket combination"

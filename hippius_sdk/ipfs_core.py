@@ -48,11 +48,16 @@ class AsyncIPFSClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
 
-    async def add_file(self, file_path: str) -> Dict[str, Any]:
+    async def add_file(
+        self,
+        file_path: str,
+        file_name: str = None,
+    ) -> Dict[str, Any]:
         """
         Add a file to IPFS.
 
         Args:
+            file_name: Name of the file
             file_path: Path to the file to add
 
         Returns:
@@ -60,9 +65,9 @@ class AsyncIPFSClient:
         """
         with open(file_path, "rb") as f:
             file_content = f.read()
-            filename = os.path.basename(file_path)
-            # Specify file with name and content type to ensure consistent handling
-            files = {"file": (filename, file_content, "application/octet-stream")}
+            file_name = file_name if file_name else os.path.basename(file_path)
+            files = {"file": (file_name, file_content, "application/octet-stream")}
+
             # Explicitly set wrap-with-directory=false to prevent wrapping in directory
             response = await self.client.post(
                 f"{self.api_url}/api/v0/add?wrap-with-directory=false&cid-version=1",

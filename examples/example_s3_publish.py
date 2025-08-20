@@ -82,6 +82,8 @@ async def s3_publish_download_test():
             seed_phrase=seed_phrase,
             subaccount_id=subaccount_id,
             bucket_name=bucket_name,
+            file_name="example_s3_publish",
+            publish=False,
         )
 
         upload_time = time.time() - upload_start

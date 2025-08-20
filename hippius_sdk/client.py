@@ -118,7 +118,9 @@ class HippiusClient:
         """
         # Use the enhanced IPFSClient method directly with encryption parameter
         return await self.ipfs_client.upload_file(
-            file_path, encrypt=encrypt, seed_phrase=seed_phrase
+            file_path,
+            encrypt=encrypt,
+            seed_phrase=seed_phrase,
         )
 
     async def upload_directory(
@@ -522,6 +524,7 @@ class HippiusClient:
         seed_phrase: str,
         subaccount_id: str,
         bucket_name: str,
+        file_name: str = None,
         store_node: str = "http://localhost:5001",
         pin_node: str = "https://store.hippius.network",
         substrate_url: str = "wss://rpc.hippius.network",
@@ -535,6 +538,7 @@ class HippiusClient:
         2. Pins to pin_node (remote) for persistence and backup
 
         Args:
+            file_name: The original file name.
             file_path: Path to the file to publish
             encrypt: Whether to encrypt the file before uploading
             seed_phrase: Seed phrase for blockchain transaction signing
@@ -565,6 +569,7 @@ class HippiusClient:
             pin_node,
             substrate_url,
             publish,
+            file_name=file_name,
         )
 
     async def s3_download(
