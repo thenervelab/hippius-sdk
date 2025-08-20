@@ -122,7 +122,9 @@ async def s3_publish_download_test():
         print(f"   📏 Size: {download_result.size_bytes} bytes")
         print(f"   📏 Formatted Size: {download_result.size_formatted}")
         print(f"   ⏱️  Download Time: {download_time:.2f} seconds")
-        print(f"   ⏱️  SDK Reported Time: {download_result.elapsed_seconds:.2f} seconds")
+        print(
+            f"   ⏱️  SDK Reported Time: {download_result.elapsed_seconds:.2f} seconds"
+        )
         print(f"   🔓 Decrypted: {download_result.decrypted}")
 
         # Performance comparison
