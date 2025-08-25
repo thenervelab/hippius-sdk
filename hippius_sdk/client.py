@@ -3,7 +3,8 @@ Main client for the Hippius SDK.
 """
 
 import base64
-from typing import Any, Callable, Dict, List, Optional, Union
+import os
+from typing import Any, Callable, Dict, List, Optional, Union, AsyncIterator
 
 import nacl.secret
 import nacl.utils
@@ -519,7 +520,7 @@ class HippiusClient:
 
     async def s3_publish(
         self,
-        file_path: str,
+        content: Union[str, bytes, os.PathLike],
         encrypt: bool,
         seed_phrase: str,
         subaccount_id: str,
@@ -531,15 +532,15 @@ class HippiusClient:
         publish: bool = True,
     ) -> Union[S3PublishResult, S3PublishPin]:
         """
-        Publish a file to IPFS and the Hippius marketplace in one operation.
+        Publish content to IPFS and the Hippius marketplace in one operation.
 
         Uses a two-node architecture for optimal performance:
         1. Uploads to store_node (local) for immediate availability
         2. Pins to pin_node (remote) for persistence and backup
 
         Args:
-            file_name: The original file name.
-            file_path: Path to the file to publish
+            content: Either a file path (str/PathLike) or bytes content to publish
+            file_name: The original file name (required if content is bytes)
             encrypt: Whether to encrypt the file before uploading
             seed_phrase: Seed phrase for blockchain transaction signing
             subaccount_id: The subaccount/account identifier
@@ -560,47 +561,51 @@ class HippiusClient:
             ValueError: If encryption is requested but not available
         """
         return await self.ipfs_client.s3_publish(
-            file_path,
-            encrypt,
-            seed_phrase,
-            subaccount_id,
-            bucket_name,
-            store_node,
-            pin_node,
-            substrate_url,
-            publish,
+            content=content,
+            encrypt=encrypt,
+            seed_phrase=seed_phrase,
+            subaccount_id=subaccount_id,
+            bucket_name=bucket_name,
+            store_node=store_node,
+            pin_node=pin_node,
+            substrate_url=substrate_url,
+            publish=publish,
             file_name=file_name,
         )
 
     async def s3_download(
         self,
         cid: str,
-        output_path: str,
-        subaccount_id: str,
-        bucket_name: str,
+        output_path: Optional[str] = None,
+        subaccount_id: Optional[str] = None,
+        bucket_name: Optional[str] = None,
         auto_decrypt: bool = True,
         download_node: str = "http://localhost:5001",
-    ) -> S3DownloadResult:
+        return_bytes: bool = False,
+        streaming: bool = False,
+    ) -> Union[S3DownloadResult, bytes, AsyncIterator[bytes]]:
         """
-        Download a file from IPFS with automatic decryption.
+        Download content from IPFS with flexible output options and automatic decryption.
 
-        This method uses the download_node for immediate availability and automatically
-        manages decryption keys per account+bucket combination:
-        - Downloads the file from the specified download_node (local by default)
-        - If auto_decrypt=True, attempts to decrypt using stored keys for the account+bucket
-        - Falls back to client encryption key if key storage is not available
-        - Returns the file in decrypted form if decryption succeeds
+        This method provides multiple output modes:
+        1. File output: Downloads to specified path (default mode)
+        2. Bytes output: Returns decrypted bytes in memory (return_bytes=True)
+        3. Streaming output: Returns raw streaming iterator from IPFS node (streaming=True)
 
         Args:
             cid: Content Identifier (CID) of the file to download
-            output_path: Path where the downloaded file will be saved
-            subaccount_id: The subaccount/account identifier
-            bucket_name: The bucket name for key isolation
+            output_path: Path where the downloaded file will be saved (None for bytes/streaming)
+            subaccount_id: The subaccount/account identifier (required for decryption)
+            bucket_name: The bucket name for key isolation (required for decryption)
             auto_decrypt: Whether to attempt automatic decryption (default: True)
             download_node: IPFS node URL for download (default: local node)
+            return_bytes: If True, return bytes instead of saving to file
+            streaming: If True, return raw streaming iterator from IPFS (no decryption)
 
         Returns:
-            S3DownloadResult: Object containing download info and decryption status
+            S3DownloadResult: Download info and decryption status (default)
+            bytes: Raw decrypted content when return_bytes=True
+            AsyncIterator[bytes]: Raw streaming iterator when streaming=True
 
         Raises:
             HippiusIPFSError: If IPFS download fails
@@ -608,5 +613,12 @@ class HippiusClient:
             ValueError: If decryption fails
         """
         return await self.ipfs_client.s3_download(
-            cid, output_path, subaccount_id, bucket_name, auto_decrypt, download_node
+            cid=cid,
+            output_path=output_path,
+            subaccount_id=subaccount_id,
+            bucket_name=bucket_name,
+            auto_decrypt=auto_decrypt,
+            download_node=download_node,
+            return_bytes=return_bytes,
+            streaming=streaming,
         )

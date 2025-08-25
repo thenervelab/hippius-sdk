@@ -4,6 +4,7 @@ Test script for s3_publish and s3_download methods with timing
 """
 
 import asyncio
+import hashlib
 import os
 import subprocess
 import time
@@ -15,6 +16,16 @@ from hippius_sdk.ipfs import S3PublishResult, S3DownloadResult
 import dotenv
 
 dotenv.load_dotenv("../.env")
+
+
+def calculate_file_hash(file_path: str) -> str:
+    """Calculate SHA-256 hash of a file"""
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        # Read in chunks to handle large files
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha256_hash.update(chunk)
+    return sha256_hash.hexdigest()
 
 
 def generate_test_file(size_mb=2000):
@@ -77,7 +88,7 @@ async def s3_publish_download_test():
         upload_start = time.time()
 
         result: S3PublishResult = await client.s3_publish(
-            file_path=encrypted_file,
+            content=encrypted_file,
             encrypt=True,
             seed_phrase=seed_phrase,
             subaccount_id=subaccount_id,
@@ -126,6 +137,20 @@ async def s3_publish_download_test():
             f"   ⏱️  SDK Reported Time: {download_result.elapsed_seconds:.2f} seconds"
         )
         print(f"   🔓 Decrypted: {download_result.decrypted}")
+        
+        # Hash verification
+        print("\n🔍 Performing hash verification...")
+        original_hash = calculate_file_hash(test_file)
+        downloaded_hash = calculate_file_hash(downloaded_file)
+        
+        print(f"   📋 Original hash:   {original_hash}")
+        print(f"   📋 Downloaded hash: {downloaded_hash}")
+        
+        if original_hash == downloaded_hash:
+            print("   ✅ HASH VERIFICATION SUCCESS! Files are identical.")
+        else:
+            print("   ❌ HASH VERIFICATION FAILED! Files differ.")
+            return
 
         # Performance comparison
         print("\n⚡ PERFORMANCE COMPARISON:")

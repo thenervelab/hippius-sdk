@@ -13,7 +13,7 @@ import shutil
 import tempfile
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union, AsyncIterator
 
 import httpx
 from pydantic import BaseModel
@@ -1967,7 +1967,7 @@ class IPFSClient:
 
     async def s3_publish(
         self,
-        file_path: str,
+        content: Union[str, bytes, os.PathLike],
         encrypt: bool,
         seed_phrase: str,
         subaccount_id: str,
@@ -1979,7 +1979,7 @@ class IPFSClient:
         file_name: str = None,
     ) -> Union[S3PublishResult, S3PublishPin]:
         """
-        Publish a file to IPFS and the Hippius marketplace in one operation.
+        Publish content to IPFS and the Hippius marketplace in one operation.
 
         This method uses a two-node architecture for optimal performance:
         1. Uploads to store_node (local) for immediate availability
@@ -1992,8 +1992,8 @@ class IPFSClient:
         - Always uses the most recent key for an account+bucket combination
 
         Args:
-            file_path: Path to the file to publish
-            encrypt: Whether to encrypt the file before uploading
+            content: Either a file path (str/PathLike) or bytes content to publish
+            encrypt: Whether to encrypt the content before uploading
             seed_phrase: Seed phrase for blockchain transaction signing
             subaccount_id: The subaccount/account identifier
             bucket_name: The bucket name for key isolation
@@ -2001,25 +2001,47 @@ class IPFSClient:
             pin_node: IPFS node URL for backup pinning (default: remote service)
             substrate_url: the substrate url to connect to for the storage request
             publish: Whether to publish to blockchain (True) or just upload to IPFS (False)
-            file_name: The original file name.
+            file_name: The original file name (required if content is bytes)
 
         Returns:
             S3PublishResult: Object containing CID, file info, and transaction hash when publish=True
-            S3PublishPin: Object containing CID, subaccount, file_path, pin_node, substrate_url when publish=False
+            S3PublishPin: Object containing CID, subaccount, content info, pin_node, substrate_url when publish=False
 
         Raises:
             HippiusIPFSError: If IPFS operations (add or pin) fail
             HippiusSubstrateError: If substrate call fails
-            FileNotFoundError: If the file doesn't exist
-            ValueError: If encryption is requested but not available
+            FileNotFoundError: If the file doesn't exist (when content is a path)
+            ValueError: If encryption is requested but not available, or if file_name is missing for bytes content
         """
-        # Check if file exists and get initial info
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File {file_path} not found")
+        # Determine if content is a file path or bytes
+        is_file_path = isinstance(content, (str, os.PathLike))
 
-        # Get file info
-        filename = os.path.basename(file_path)
-        size_bytes = os.path.getsize(file_path)
+        if is_file_path:
+            # Handle file path input
+            file_path = str(content)
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"File {file_path} not found")
+
+            # Get file info
+            filename = file_name or os.path.basename(file_path)
+            size_bytes = os.path.getsize(file_path)
+
+            # Read file content into memory
+            with open(file_path, "rb") as f:
+                content_bytes = f.read()
+        else:
+            # Handle bytes input
+            if not isinstance(content, bytes):
+                raise ValueError(
+                    f"Content must be str, PathLike, or bytes, got {type(content)}"
+                )
+
+            if not file_name:
+                raise ValueError("file_name is required when content is bytes")
+
+            filename = file_name
+            content_bytes = content
+            size_bytes = len(content_bytes)
 
         # Handle encryption if requested with automatic key management
         encryption_key_used = None
@@ -2057,19 +2079,11 @@ class IPFSClient:
                     encryption_key_bytes = base64.b64decode(new_key_b64)
                     encryption_key_used = new_key_b64
 
-                # Read file content into memory
-                with open(file_path, "rb") as f:
-                    file_data = f.read()
-
                 # Encrypt the data using the key from key storage
                 import nacl.secret
 
                 box = nacl.secret.SecretBox(encryption_key_bytes)
-                encrypted_data = box.encrypt(file_data)
-
-                # Overwrite the original file with encrypted data
-                with open(file_path, "wb") as f:
-                    f.write(encrypted_data)
+                content_bytes = box.encrypt(content_bytes)
             else:
                 # Fallback to the original encryption system if key_storage is not available
                 if not self.encryption_available:
@@ -2077,16 +2091,8 @@ class IPFSClient:
                         "Encryption requested but not available. Either install key storage with 'pip install hippius_sdk[key_storage]' or configure an encryption key with 'hippius keygen --save'"
                     )
 
-                # Read file content into memory
-                with open(file_path, "rb") as f:
-                    file_data = f.read()
-
                 # Encrypt the data using the client's encryption key
-                encrypted_data = self.encrypt_data(file_data)
-
-                # Overwrite the original file with encrypted data
-                with open(file_path, "wb") as f:
-                    f.write(encrypted_data)
+                content_bytes = self.encrypt_data(content_bytes)
 
                 # Store the encryption key for the result
                 encryption_key_used = (
@@ -2098,15 +2104,15 @@ class IPFSClient:
         # Step 1: Upload to store_node (local) for immediate availability
         try:
             store_client = AsyncIPFSClient(api_url=store_node)
-            result = await store_client.add_file(
-                file_path,
-                file_name=file_name,
+            result = await store_client.add_bytes(
+                content_bytes,
+                filename=filename,
             )
             cid = result["Hash"]
-            logger.info(f"File uploaded to store node {store_node} with CID: {cid}")
+            logger.info(f"Content uploaded to store node {store_node} with CID: {cid}")
         except Exception as e:
             raise HippiusIPFSError(
-                f"Failed to upload file to store node {store_node}: {str(e)}"
+                f"Failed to upload content to store node {store_node}: {str(e)}"
             )
 
         # Step 2: Pin to pin_node (remote) for persistence and backup
@@ -2116,7 +2122,7 @@ class IPFSClient:
             logger.info(f"File pinned to backup node {pin_node}")
         except Exception as e:
             raise HippiusIPFSError(
-                f"Failed to pin file to store node {store_node}: {str(e)}"
+                f"Failed to pin content to pin node {pin_node}: {str(e)}"
             )
 
         # Conditionally publish to substrate marketplace based on publish flag
@@ -2174,7 +2180,7 @@ class IPFSClient:
             return S3PublishPin(
                 cid=cid,
                 subaccount=subaccount_id,
-                file_path=file_path,
+                file_path=filename,
                 pin_node=pin_node,
                 substrate_url=substrate_url,
             )
@@ -2182,44 +2188,75 @@ class IPFSClient:
     async def s3_download(
         self,
         cid: str,
-        output_path: str,
-        subaccount_id: str,
-        bucket_name: str,
+        output_path: Optional[str] = None,
+        subaccount_id: Optional[str] = None,
+        bucket_name: Optional[str] = None,
         auto_decrypt: bool = True,
         download_node: str = "http://localhost:5001",
-    ) -> S3DownloadResult:
+        return_bytes: bool = False,
+        streaming: bool = False,
+    ) -> Union[S3DownloadResult, bytes, AsyncIterator[bytes]]:
         """
-        Download a file from IPFS with automatic decryption.
+        Download content from IPFS with flexible output options and automatic decryption.
 
-        This method uses the download_node for immediate availability and automatically
-        manages decryption keys per account+bucket combination:
-        - Downloads the file from the specified download_node (local by default)
-        - If auto_decrypt=True, attempts to decrypt using stored keys for the account+bucket
-        - Falls back to client encryption key if key storage is not available
-        - Returns the file in decrypted form if decryption succeeds
+        This method provides multiple output modes:
+        1. File output: Downloads to specified path (default mode)
+        2. Bytes output: Returns decrypted bytes in memory (return_bytes=True)
+        3. Streaming output: Returns raw streaming iterator from IPFS node (streaming=True)
 
         Args:
             cid: Content Identifier (CID) of the file to download
-            output_path: Path where the downloaded file will be saved
-            subaccount_id: The subaccount/account identifier
-            bucket_name: The bucket name for key isolation
+            output_path: Path where the downloaded file will be saved (None for bytes/streaming)
+            subaccount_id: The subaccount/account identifier (required for decryption)
+            bucket_name: The bucket name for key isolation (required for decryption)
             auto_decrypt: Whether to attempt automatic decryption (default: True)
             download_node: IPFS node URL for download (default: local node)
+            return_bytes: If True, return bytes instead of saving to file
+            streaming: If True, return raw streaming iterator from IPFS (no decryption)
 
         Returns:
-            S3DownloadResult: Object containing download info and decryption status
+            S3DownloadResult: Download info and decryption status (default)
+            bytes: Raw decrypted content when return_bytes=True
+            AsyncIterator[bytes]: Raw streaming iterator when streaming=True
 
         Raises:
             HippiusIPFSError: If IPFS download fails
             FileNotFoundError: If the output directory doesn't exist
-            ValueError: If decryption fails
+            ValueError: If decryption fails or invalid parameter combinations
         """
+        # Validate parameter combinations
+        if streaming and return_bytes:
+            raise ValueError("Cannot specify both streaming and return_bytes")
+
+        if streaming and (auto_decrypt or subaccount_id or bucket_name):
+            logger.warning(
+                "streaming=True ignores decryption parameters - returns raw encrypted stream"
+            )
+
+        if streaming:
+            # Return raw streaming iterator from IPFS node - no processing
+            # _get_ipfs_stream is an async generator, return it directly
+            async def streaming_wrapper():
+                async for chunk in self._get_ipfs_stream(cid, download_node):
+                    yield chunk
+            return streaming_wrapper()
+
         start_time = time.time()
+
+        # Validate required parameters for decryption
+        if auto_decrypt and (not subaccount_id or not bucket_name):
+            raise ValueError(
+                "subaccount_id and bucket_name are required when auto_decrypt=True"
+            )
+
+        if not return_bytes and not output_path:
+            raise ValueError("output_path is required when not using return_bytes mode")
 
         # Download the file directly into memory from the specified download_node
         try:
-            # Create parent directories if they don't exist
-            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            # Create parent directories if they don't exist (only for file output mode)
+            if not return_bytes:
+                os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
             download_client = AsyncIPFSClient(api_url=download_node)
 
@@ -2357,20 +2394,58 @@ class IPFSClient:
                 elif not decryption_attempted:
                     logger.debug("No decryption attempted - no keys available")
 
-        # Write the final data (encrypted or decrypted) to disk once
-        with open(output_path, "wb") as f:
-            f.write(final_data)
+        # Handle output based on mode
+        if return_bytes:
+            # Return bytes directly
+            return final_data
+        else:
+            # Write the final data (encrypted or decrypted) to disk once
+            with open(output_path, "wb") as f:
+                f.write(final_data)
 
-        # Get final file info
-        size_bytes = len(final_data)
-        elapsed_time = time.time() - start_time
+            # Get final file info
+            size_bytes = len(final_data)
+            elapsed_time = time.time() - start_time
 
-        return S3DownloadResult(
-            cid=cid,
-            output_path=output_path,
-            size_bytes=size_bytes,
-            size_formatted=self.format_size(size_bytes),
-            elapsed_seconds=round(elapsed_time, 2),
-            decrypted=decrypted,
-            encryption_key=encryption_key_used,
-        )
+            return S3DownloadResult(
+                cid=cid,
+                output_path=output_path,
+                size_bytes=size_bytes,
+                size_formatted=self.format_size(size_bytes),
+                elapsed_seconds=round(elapsed_time, 2),
+                decrypted=decrypted,
+                encryption_key=encryption_key_used,
+            )
+
+    async def _get_ipfs_stream(
+        self, cid: str, download_node: str
+    ) -> AsyncIterator[bytes]:
+        """
+        Get a raw streaming iterator from IPFS node.
+
+        This method returns the raw encrypted stream directly from the IPFS node
+        without any processing, decryption, or temporary file operations.
+
+        Args:
+            cid: Content Identifier (CID) of the file to stream
+            download_node: IPFS node URL for download
+
+        Returns:
+            AsyncIterator[bytes]: Raw streaming iterator from IPFS
+
+        Raises:
+            HippiusIPFSError: If IPFS stream fails
+        """
+        try:
+            download_client = AsyncIPFSClient(api_url=download_node)
+            download_url = f"{download_node.rstrip('/')}/api/v0/cat?arg={cid}"
+
+            async with download_client.client.stream("POST", download_url) as response:
+                response.raise_for_status()
+                logger.info(f"Started streaming from {download_node} for CID: {cid}")
+
+                async for chunk in response.aiter_bytes(chunk_size=8192):
+                    yield chunk
+
+        except Exception as e:
+            raise HippiusIPFSError(f"Failed to stream from {download_node}: {str(e)}")
