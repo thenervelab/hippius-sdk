@@ -137,15 +137,15 @@ async def s3_publish_download_test():
             f"   ⏱️  SDK Reported Time: {download_result.elapsed_seconds:.2f} seconds"
         )
         print(f"   🔓 Decrypted: {download_result.decrypted}")
-        
+
         # Hash verification
         print("\n🔍 Performing hash verification...")
         original_hash = calculate_file_hash(test_file)
         downloaded_hash = calculate_file_hash(downloaded_file)
-        
+
         print(f"   📋 Original hash:   {original_hash}")
         print(f"   📋 Downloaded hash: {downloaded_hash}")
-        
+
         if original_hash == downloaded_hash:
             print("   ✅ HASH VERIFICATION SUCCESS! Files are identical.")
         else:
