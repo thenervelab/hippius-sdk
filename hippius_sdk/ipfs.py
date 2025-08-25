@@ -69,6 +69,7 @@ class S3PublishPin(BaseModel):
     cid: str
     subaccount: str
     file_path: str
+    file_name: str
     pin_node: str
     substrate_url: str
 
@@ -2181,6 +2182,7 @@ class IPFSClient:
                 cid=cid,
                 subaccount=subaccount_id,
                 file_path=filename,
+                file_name=filename,
                 pin_node=pin_node,
                 substrate_url=substrate_url,
             )
@@ -2202,7 +2204,7 @@ class IPFSClient:
         This method provides multiple output modes:
         1. File output: Downloads to specified path (default mode)
         2. Bytes output: Returns decrypted bytes in memory (return_bytes=True)
-        3. Streaming output: Returns raw streaming iterator from IPFS node (streaming=True)
+        3. Streaming output: Returns decrypted bytes or raw iterator based on auto_decrypt (streaming=True)
 
         Args:
             cid: Content Identifier (CID) of the file to download
@@ -2212,12 +2214,12 @@ class IPFSClient:
             auto_decrypt: Whether to attempt automatic decryption (default: True)
             download_node: IPFS node URL for download (default: local node)
             return_bytes: If True, return bytes instead of saving to file
-            streaming: If True, return raw streaming iterator from IPFS (no decryption)
+            streaming: If True, return decrypted bytes when auto_decrypt=True, or raw streaming iterator when auto_decrypt=False
 
         Returns:
             S3DownloadResult: Download info and decryption status (default)
-            bytes: Raw decrypted content when return_bytes=True
-            AsyncIterator[bytes]: Raw streaming iterator when streaming=True
+            bytes: Raw decrypted content when return_bytes=True or streaming=True with auto_decrypt=True
+            AsyncIterator[bytes]: Raw streaming iterator when streaming=True and auto_decrypt=False
 
         Raises:
             HippiusIPFSError: If IPFS download fails
@@ -2228,19 +2230,80 @@ class IPFSClient:
         if streaming and return_bytes:
             raise ValueError("Cannot specify both streaming and return_bytes")
 
-        if streaming and (auto_decrypt or subaccount_id or bucket_name):
-            logger.warning(
-                "streaming=True ignores decryption parameters - returns raw encrypted stream"
-            )
-
         if streaming:
-            # Return raw streaming iterator from IPFS node - no processing
-            # _get_ipfs_stream is an async generator, return it directly
-            async def streaming_wrapper():
-                async for chunk in self._get_ipfs_stream(cid, download_node):
-                    yield chunk
+            # Validate required parameters for decryption if auto_decrypt is True
+            if auto_decrypt and (not subaccount_id or not bucket_name):
+                raise ValueError(
+                    "subaccount_id and bucket_name are required for streaming decryption"
+                )
 
-            return streaming_wrapper()
+            if auto_decrypt:
+                # Return decrypted bytes directly (not streaming)
+                try:
+                    key_storage_available = is_key_storage_enabled()
+                except ImportError:
+                    key_storage_available = False
+
+                encryption_key_bytes = None
+
+                if key_storage_available:
+                    # Create combined key identifier from account+bucket
+                    account_bucket_key = f"{subaccount_id}:{bucket_name}"
+
+                    try:
+                        existing_key_b64 = await get_key_for_subaccount(
+                            account_bucket_key
+                        )
+                        if existing_key_b64:
+                            encryption_key_bytes = base64.b64decode(existing_key_b64)
+                    except Exception as e:
+                        logger.debug(f"Failed to get encryption key: {e}")
+
+                # If key storage decryption failed or wasn't available, try client encryption key
+                if not encryption_key_bytes and self.encryption_available:
+                    logger.debug("Using client encryption key for streaming decryption")
+                    encryption_key_bytes = self.encryption_key
+
+                if not encryption_key_bytes:
+                    logger.warning(
+                        "No encryption key found - downloading raw encrypted data as bytes"
+                    )
+                    # Return raw encrypted data as bytes
+                    encrypted_data = b""
+                    async for chunk in self._get_ipfs_stream(cid, download_node):
+                        encrypted_data += chunk
+                    return encrypted_data
+
+                # Stream and decrypt the content using hybrid buffered approach
+                import nacl.secret
+
+                # Collect all encrypted data first
+                logger.debug("Buffering encrypted content for decryption")
+                encrypted_data = b""
+                async for chunk in self._get_ipfs_stream(cid, download_node):
+                    encrypted_data += chunk
+
+                # Decrypt the complete buffered content and return as bytes
+                try:
+                    box = nacl.secret.SecretBox(encryption_key_bytes)
+                    decrypted_data = box.decrypt(encrypted_data)
+                    logger.info(f"Successfully decrypted {len(decrypted_data)} bytes")
+
+                    # Return all decrypted data as bytes
+                    return decrypted_data
+
+                except Exception as decrypt_error:
+                    logger.error(f"Streaming decryption failed: {decrypt_error}")
+                    raise ValueError(
+                        f"Failed to decrypt streaming content: {decrypt_error}"
+                    )
+            else:
+                # Return raw streaming iterator from IPFS node - no processing
+                async def streaming_wrapper():
+                    async for chunk in self._get_ipfs_stream(cid, download_node):
+                        yield chunk
+
+                return streaming_wrapper()
 
         start_time = time.time()
 

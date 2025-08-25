@@ -19,13 +19,13 @@ dotenv.load_dotenv("../.env")
 
 
 def calculate_file_hash(file_path: str) -> str:
-    """Calculate SHA-256 hash of a file"""
-    sha256_hash = hashlib.sha256()
+    """Calculate MD5 hash of a file"""
+    md5_hash = hashlib.md5()
     with open(file_path, "rb") as f:
         # Read in chunks to handle large files
         for chunk in iter(lambda: f.read(8192), b""):
-            sha256_hash.update(chunk)
-    return sha256_hash.hexdigest()
+            md5_hash.update(chunk)
+    return md5_hash.hexdigest()
 
 
 def generate_test_file(size_mb=2000):
@@ -59,10 +59,10 @@ def generate_test_file(size_mb=2000):
 
 async def s3_publish_download_test():
     print("\n🔒 Testing s3_publish with encryption and s3_download with timing")
-    print("📊 Using 2GB test file for realistic performance testing")
+    print("📊 Using 10MB test file for faster testing")
 
     # Generate test file
-    test_file = generate_test_file(2000)  # 2000 MB = ~2GB
+    test_file = generate_test_file(10)  # 10 MB for faster testing
     if not test_file:
         print("❌ Failed to generate test file, aborting")
         return
@@ -95,6 +95,8 @@ async def s3_publish_download_test():
             bucket_name=bucket_name,
             file_name="example_s3_publish",
             publish=False,
+            store_node="https://store.hippius.network",
+            pin_node="https://store.hippius.network",
         )
 
         upload_time = time.time() - upload_start
@@ -102,12 +104,15 @@ async def s3_publish_download_test():
         print("✅ UPLOAD SUCCESS!")
         print(f"   📦 CID: {result.cid}")
         print(f"   📄 File: {result.file_name}")
-        print(f"   📏 Size: {result.size_bytes} bytes")
+        if hasattr(result, "size_bytes"):
+            print(f"   📏 Size: {result.size_bytes} bytes")
         print(f"   ⏱️  Upload Time: {upload_time:.2f} seconds")
-        print(
-            f"   🔐 Encryption Key: {result.encryption_key[:16] if result.encryption_key else None}..."
-        )
-        print(f"   🧾 Transaction: {result.tx_hash}")
+        if hasattr(result, "encryption_key") and result.encryption_key:
+            print(f"   🔐 Encryption Key: {result.encryption_key[:16]}...")
+        if hasattr(result, "tx_hash"):
+            print(f"   🧾 Transaction: {result.tx_hash}")
+        else:
+            print("   ℹ️  Pin-only mode - no blockchain transaction")
 
         # Clean up downloaded file if it exists
         if os.path.exists(downloaded_file):
@@ -123,6 +128,7 @@ async def s3_publish_download_test():
             subaccount_id=subaccount_id,
             bucket_name=bucket_name,
             auto_decrypt=True,
+            download_node="https://store.hippius.network",
         )
 
         download_time = time.time() - download_start
@@ -154,8 +160,9 @@ async def s3_publish_download_test():
 
         # Performance comparison
         print("\n⚡ PERFORMANCE COMPARISON:")
+        upload_size = getattr(result, "size_bytes", download_result.size_bytes)
         print(
-            f"   📤 Upload: {upload_time:.2f}s ({result.size_bytes / 1024 / upload_time:.1f} KB/s)"
+            f"   📤 Upload: {upload_time:.2f}s ({upload_size / 1024 / upload_time:.1f} KB/s)"
         )
         print(
             f"   📥 Download: {download_time:.2f}s ({download_result.size_bytes / 1024 / download_time:.1f} KB/s)"
@@ -174,11 +181,11 @@ async def s3_publish_download_test():
             import hashlib
 
             def file_hash(filepath):
-                hash_sha256 = hashlib.sha256()
+                hash_md5 = hashlib.md5()
                 with open(filepath, "rb") as f:
                     for chunk in iter(lambda: f.read(8192), b""):
-                        hash_sha256.update(chunk)
-                return hash_sha256.hexdigest()
+                        hash_md5.update(chunk)
+                return hash_md5.hexdigest()
 
             original_hash = file_hash(test_file)
             downloaded_hash = file_hash(downloaded_file)

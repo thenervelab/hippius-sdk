@@ -600,12 +600,12 @@ class HippiusClient:
             auto_decrypt: Whether to attempt automatic decryption (default: True)
             download_node: IPFS node URL for download (default: local node)
             return_bytes: If True, return bytes instead of saving to file
-            streaming: If True, return raw streaming iterator from IPFS (no decryption)
+            streaming: If True, return decrypted bytes when auto_decrypt=True, or raw streaming iterator when auto_decrypt=False
 
         Returns:
             S3DownloadResult: Download info and decryption status (default)
-            bytes: Raw decrypted content when return_bytes=True
-            AsyncIterator[bytes]: Raw streaming iterator when streaming=True
+            bytes: Raw decrypted content when return_bytes=True or streaming=True with auto_decrypt=True
+            AsyncIterator[bytes]: Raw streaming iterator when streaming=True and auto_decrypt=False
 
         Raises:
             HippiusIPFSError: If IPFS download fails
