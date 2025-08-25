@@ -105,7 +105,10 @@ async def test_add_file(async_ipfs_client, temp_file, mock_httpx_client):
     # Verify the correct endpoint was called
     mock_httpx_client.post.assert_called_once()
     args, kwargs = mock_httpx_client.post.call_args
-    assert args[0] == "http://localhost:5001/api/v0/add?wrap-with-directory=false&cid-version=1"
+    assert (
+        args[0]
+        == "http://localhost:5001/api/v0/add?wrap-with-directory=false&cid-version=1"
+    )
     assert "files" in kwargs
 
     # Check the result
@@ -123,7 +126,10 @@ async def test_add_bytes(async_ipfs_client, mock_httpx_client):
     # Verify the correct endpoint was called
     mock_httpx_client.post.assert_called_once()
     args, kwargs = mock_httpx_client.post.call_args
-    assert args[0] == "http://localhost:5001/api/v0/add?wrap-with-directory=false&cid-version=1"
+    assert (
+        args[0]
+        == "http://localhost:5001/api/v0/add?wrap-with-directory=false&cid-version=1"
+    )
     assert "files" in kwargs
     assert kwargs["files"]["file"][0] == filename
 
@@ -142,7 +148,10 @@ async def test_add_str(async_ipfs_client, mock_httpx_client):
     # Verify the correct endpoint was called
     mock_httpx_client.post.assert_called_once()
     args, kwargs = mock_httpx_client.post.call_args
-    assert args[0] == "http://localhost:5001/api/v0/add?wrap-with-directory=false&cid-version=1"
+    assert (
+        args[0]
+        == "http://localhost:5001/api/v0/add?wrap-with-directory=false&cid-version=1"
+    )
     assert "files" in kwargs
     assert kwargs["files"]["file"][0] == filename
 
@@ -361,7 +370,9 @@ async def test_ipfs_client_upload_file(temp_file):
         result = await client.upload_file(temp_file)
 
         # Verify AsyncIPFSClient.add_file was called
-        mock_client.add_file.assert_called_once_with(temp_file, file_name=os.path.basename(temp_file))
+        mock_client.add_file.assert_called_once_with(
+            temp_file, file_name=os.path.basename(temp_file)
+        )
 
         # Check the result
         assert result["cid"] == "QmTest123"

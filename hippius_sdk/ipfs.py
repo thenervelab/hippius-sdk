@@ -2239,6 +2239,7 @@ class IPFSClient:
             async def streaming_wrapper():
                 async for chunk in self._get_ipfs_stream(cid, download_node):
                     yield chunk
+
             return streaming_wrapper()
 
         start_time = time.time()
@@ -2256,7 +2257,9 @@ class IPFSClient:
         try:
             # Create parent directories if they don't exist (only for file output mode)
             if not return_bytes:
-                os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                os.makedirs(
+                    os.path.dirname(os.path.abspath(output_path)), exist_ok=True
+                )
 
             download_client = AsyncIPFSClient(api_url=download_node)
 
