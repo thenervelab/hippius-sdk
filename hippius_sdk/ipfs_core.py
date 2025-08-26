@@ -1,8 +1,12 @@
 import json
+import logging
 import os
+from json import JSONDecodeError
 from typing import Any, Dict
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class AsyncIPFSClient:
@@ -89,13 +93,20 @@ class AsyncIPFSClient:
         """
         # Specify file with name and content type to ensure consistent handling
         files = {"file": (filename, data, "application/octet-stream")}
+        url = f"{self.api_url}/api/v0/add?wrap-with-directory=false&cid-version=1"
         # Explicitly set wrap-with-directory=false to prevent wrapping in directory
         response = await self.client.post(
-            f"{self.api_url}/api/v0/add?wrap-with-directory=false&cid-version=1",
+            url,
             files=files,
         )
         response.raise_for_status()
-        return response.json()
+        try:
+            return response.json()
+        except JSONDecodeError:
+            logger.warning(
+                f"Corrupted response returned from {url=} {filename=} ({len(data)=}) {response.content=}"
+            )
+            raise
 
     async def add_str(self, content: str, filename: str = "file") -> Dict[str, Any]:
         """
