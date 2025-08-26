@@ -2114,7 +2114,7 @@ class IPFSClient:
         except Exception as e:
             raise HippiusIPFSError(
                 f"Failed to upload content to store node {store_node}: {str(e)}"
-            )
+            ) from e
 
         # Step 2: Pin to pin_node (remote) for persistence and backup
         try:
@@ -2124,7 +2124,7 @@ class IPFSClient:
         except Exception as e:
             raise HippiusIPFSError(
                 f"Failed to pin content to pin node {pin_node}: {str(e)}"
-            )
+            ) from e
 
         # Conditionally publish to substrate marketplace based on publish flag
         if publish:
@@ -2167,7 +2167,9 @@ class IPFSClient:
                 logger.debug(
                     "Possible causes: insufficient credits, network issues, invalid seed phrase, or substrate node unavailability"
                 )
-                raise HippiusSubstrateError(f"Failed to publish to substrate: {str(e)}")
+                raise HippiusSubstrateError(
+                    f"Failed to publish to substrate: {str(e)}"
+                ) from e
 
             return S3PublishResult(
                 cid=cid,
