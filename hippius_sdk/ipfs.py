@@ -2109,7 +2109,23 @@ class IPFSClient:
                 content_bytes,
                 filename=filename,
             )
-            cid = result["Hash"]
+            if isinstance(result, bytes):  # must be multiple json lines
+                lines = result.decode("utf-8").strip().split("\n")
+                objects = [json.loads(line) for line in lines if line.strip()]
+
+                logger.info(f"Got {len(objects)=} from {store_node=}")
+                # filter out just the one file cid, ignore dirs, it's usually the first item,
+                # but hey let's not risk it
+                for o in objects:
+                    if o["Name"] == file_name:
+                        cid = o[0]["Hash"]
+                        break
+                else:
+                    raise KeyError(
+                        f"Store call failed, {file_name=} not found in {objects=}"
+                    )
+            else:
+                cid = result["Hash"]
             logger.info(f"Content uploaded to store node {store_node} with CID: {cid}")
         except Exception as e:
             raise HippiusIPFSError(
@@ -2120,10 +2136,10 @@ class IPFSClient:
         try:
             pin_client = AsyncIPFSClient(api_url=pin_node)
             await pin_client.pin(cid)
-            logger.info(f"File pinned to backup node {pin_node}")
+            logger.info(f"File pinned to {pin_node=}")
         except Exception as e:
             raise HippiusIPFSError(
-                f"Failed to pin content to pin node {pin_node}: {str(e)}"
+                f"Failed to pin content to {pin_node=}: {str(e)}"
             ) from e
 
         # Conditionally publish to substrate marketplace based on publish flag
@@ -2135,7 +2151,7 @@ class IPFSClient:
                     url=substrate_url,
                 )
                 logger.info(
-                    f"Submitting storage request to substrate for file: {filename}, CID: {cid}"
+                    f"Submitting storage request to substrate for file: {file_name}, CID: {cid}"
                 )
 
                 tx_hash = await substrate_client.storage_request(

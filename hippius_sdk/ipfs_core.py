@@ -80,7 +80,9 @@ class AsyncIPFSClient:
             response.raise_for_status()
             return response.json()
 
-    async def add_bytes(self, data: bytes, filename: str = "file") -> Dict[str, Any]:
+    async def add_bytes(
+        self, data: bytes, filename: str = "file"
+    ) -> Dict[str, Any] | bytes:
         """
         Add bytes to IPFS.
 
@@ -106,7 +108,7 @@ class AsyncIPFSClient:
             logger.warning(
                 f"Corrupted response returned from {url=} {filename=} ({len(data)=}) {response.content=}"
             )
-            raise
+            return response.content
 
     async def add_str(self, content: str, filename: str = "file") -> Dict[str, Any]:
         """
