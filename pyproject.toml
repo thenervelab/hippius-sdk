@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "hippius"
-version = "0.2.37"
+version = "0.2.44"
 description = "Python SDK and CLI for Hippius blockchain storage"
 authors = ["Dubs <dubs@dubs.rs>"]
 readme = "README.md"
