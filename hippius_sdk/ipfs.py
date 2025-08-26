@@ -2118,7 +2118,7 @@ class IPFSClient:
                 # but hey let's not risk it
                 for o in objects:
                     if o["Name"] == file_name:
-                        cid = o[0]["Hash"]
+                        cid = o["Hash"]
                         break
                 else:
                     raise KeyError(
