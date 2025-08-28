@@ -2064,7 +2064,7 @@ class IPFSClient:
 
                 if existing_key_b64:
                     # Use existing key
-                    logger.debug(
+                    logger.info(
                         "Using existing encryption key for account+bucket combination"
                     )
                     encryption_key_bytes = base64.b64decode(existing_key_b64)
@@ -2084,7 +2084,9 @@ class IPFSClient:
                 import nacl.secret
 
                 box = nacl.secret.SecretBox(encryption_key_bytes)
+                logger.info("encrypting...")
                 content_bytes = box.encrypt(content_bytes)
+                logger.info("finished encryption!")
             else:
                 # Fallback to the original encryption system if key_storage is not available
                 if not self.encryption_available:
