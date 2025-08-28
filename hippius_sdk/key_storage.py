@@ -19,6 +19,10 @@ try:
 except ImportError:
     ASYNCPG_AVAILABLE = False
 
+import logging
+
+logger = logging.getLogger()
+
 
 class KeyStorageError(Exception):
     """Base exception for key storage operations."""
@@ -202,7 +206,9 @@ def is_key_storage_enabled() -> bool:
     """
     # Check if explicitly disabled
     config_value = get_config_value("key_storage", "enabled", None)
-    if config_value is False:
+
+    logger.info(f"encryption config.key_storage {config_value=}")
+    if not config_value:
         return False
 
     # If explicitly enabled, return True
@@ -211,6 +217,8 @@ def is_key_storage_enabled() -> bool:
 
     # If not set in config, auto-detect based on asyncpg availability
     # This allows users who install [key_storage] extra to use it without manual config
+    logger.info(f"db orm available {ASYNCPG_AVAILABLE=}")
+
     return ASYNCPG_AVAILABLE
 
 
