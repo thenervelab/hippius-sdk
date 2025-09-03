@@ -667,64 +667,75 @@ def add_miner_commands(subparsers):
 
     # Register coldkey command
     register_coldkey_parser = miner_subparsers.add_parser(
-        "register-coldkey", help="Register a node with coldkey (current account becomes coldkey)"
+        "register-coldkey",
+        help="Register a node with coldkey (current account becomes coldkey)",
     )
-    
+
     # Required arguments for register-coldkey
     register_coldkey_parser.add_argument(
         "--node-id", required=True, help="Your main node_id (libp2p peer ID)"
     )
     register_coldkey_parser.add_argument(
-        "--node-priv-hex", required=True, help="Main libp2p ed25519 private key hex (32/64B)"
+        "--node-priv-hex",
+        required=True,
+        help="Main libp2p ed25519 private key hex (32/64B)",
     )
     register_coldkey_parser.add_argument(
-        "--node-type", required=True,
+        "--node-type",
+        required=True,
         choices=["StorageMiner", "Validator", "ComputeMiner", "StorageS3", "GpuMiner"],
-        help="Type of miner node"
+        help="Type of miner node",
     )
-    
+
     # IPFS configuration (one required)
     ipfs_group = register_coldkey_parser.add_mutually_exclusive_group(required=True)
     ipfs_group.add_argument(
         "--ipfs-config", help="Path to IPFS config file (e.g. ~/.ipfs/config)"
     )
     ipfs_group.add_argument(
-        "--ipfs-priv-b64", help="IPFS Identity.PrivKey base64 if not using --ipfs-config"
+        "--ipfs-priv-b64",
+        help="IPFS Identity.PrivKey base64 if not using --ipfs-config",
     )
-    
+
     # Optional arguments
     register_coldkey_parser.add_argument(
         "--ipfs-peer-id", help="Optional override IPFS PeerID"
     )
     register_coldkey_parser.add_argument(
-        "--pay-in-credits", action="store_true", 
-        help="Pay in credits for registration"
+        "--pay-in-credits", action="store_true", help="Pay in credits for registration"
     )
     register_coldkey_parser.add_argument(
-        "--expires-in", type=int, default=10,
-        help="Challenge expiration in blocks (default: 10)"
+        "--expires-in",
+        type=int,
+        default=10,
+        help="Challenge expiration in blocks (default: 10)",
     )
     register_coldkey_parser.add_argument(
-        "--block-width", choices=["u32", "u64"], default="u32",
-        help="Block number width (default: u32)"
+        "--block-width",
+        choices=["u32", "u64"],
+        default="u32",
+        help="Block number width (default: u32)",
     )
     register_coldkey_parser.add_argument(
-        "--domain", default="HIPPIUS::REGISTER::v1",
-        help="Domain for challenge (default: HIPPIUS::REGISTER::v1)"
+        "--domain",
+        default="HIPPIUS::REGISTER::v1",
+        help="Domain for challenge (default: HIPPIUS::REGISTER::v1)",
     )
     register_coldkey_parser.add_argument(
         "--nonce-hex", help="32-byte hex nonce (optional, random if not provided)"
     )
     register_coldkey_parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Do not submit extrinsic; just print payload"
+        "--dry-run",
+        action="store_true",
+        help="Do not submit extrinsic; just print payload",
     )
 
     # Register hotkey command
     register_hotkey_parser = miner_subparsers.add_parser(
-        "register-hotkey", help="Register a node with hotkey (current account becomes hotkey)"
+        "register-hotkey",
+        help="Register a node with hotkey (current account becomes hotkey)",
     )
-    
+
     # Required arguments for register-hotkey
     register_hotkey_parser.add_argument(
         "--coldkey", required=True, help="Coldkey SS58 address"
@@ -733,49 +744,60 @@ def add_miner_commands(subparsers):
         "--node-id", required=True, help="Your main node_id (libp2p peer ID)"
     )
     register_hotkey_parser.add_argument(
-        "--node-priv-hex", required=True, help="Main libp2p ed25519 private key hex (32/64B)"
+        "--node-priv-hex",
+        required=True,
+        help="Main libp2p ed25519 private key hex (32/64B)",
     )
     register_hotkey_parser.add_argument(
-        "--node-type", required=True,
+        "--node-type",
+        required=True,
         choices=["StorageMiner", "Validator", "ComputeMiner", "StorageS3", "GpuMiner"],
-        help="Type of miner node"
+        help="Type of miner node",
     )
-    
+
     # IPFS configuration (one required)
-    ipfs_group_hotkey = register_hotkey_parser.add_mutually_exclusive_group(required=True)
+    ipfs_group_hotkey = register_hotkey_parser.add_mutually_exclusive_group(
+        required=True
+    )
     ipfs_group_hotkey.add_argument(
         "--ipfs-config", help="Path to IPFS config file (e.g. ~/.ipfs/config)"
     )
     ipfs_group_hotkey.add_argument(
-        "--ipfs-priv-b64", help="IPFS Identity.PrivKey base64 if not using --ipfs-config"
+        "--ipfs-priv-b64",
+        help="IPFS Identity.PrivKey base64 if not using --ipfs-config",
     )
-    
+
     # Optional arguments
     register_hotkey_parser.add_argument(
         "--ipfs-peer-id", help="Optional override IPFS PeerID"
     )
     register_hotkey_parser.add_argument(
-        "--pay-in-credits", action="store_true",
-        help="Pay in credits for registration"
+        "--pay-in-credits", action="store_true", help="Pay in credits for registration"
     )
     register_hotkey_parser.add_argument(
-        "--expires-in", type=int, default=10,
-        help="Challenge expiration in blocks (default: 10)"
+        "--expires-in",
+        type=int,
+        default=10,
+        help="Challenge expiration in blocks (default: 10)",
     )
     register_hotkey_parser.add_argument(
-        "--block-width", choices=["u32", "u64"], default="u32",
-        help="Block number width (default: u32)"
+        "--block-width",
+        choices=["u32", "u64"],
+        default="u32",
+        help="Block number width (default: u32)",
     )
     register_hotkey_parser.add_argument(
-        "--domain", default="HIPPIUS::REGISTER::v1",
-        help="Domain for challenge (default: HIPPIUS::REGISTER::v1)"
+        "--domain",
+        default="HIPPIUS::REGISTER::v1",
+        help="Domain for challenge (default: HIPPIUS::REGISTER::v1)",
     )
     register_hotkey_parser.add_argument(
         "--nonce-hex", help="32-byte hex nonce (optional, random if not provided)"
     )
     register_hotkey_parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Do not submit extrinsic; just print payload"
+        "--dry-run",
+        action="store_true",
+        help="Do not submit extrinsic; just print payload",
     )
 
 
