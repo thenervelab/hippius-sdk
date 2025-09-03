@@ -58,6 +58,8 @@ run_test "Erasure-code help" "$PYTHON -m hippius_sdk.cli erasure-code -h"
 run_test "Miner help" "$PYTHON -m hippius_sdk.cli miner -h"
 run_test "Miner register-coldkey help" "$PYTHON -m hippius_sdk.cli miner register-coldkey -h"
 run_test "Miner register-hotkey help" "$PYTHON -m hippius_sdk.cli miner register-hotkey -h"
+run_test "Miner verify-node help" "$PYTHON -m hippius_sdk.cli miner verify-node -h"
+run_test "Miner verify-coldkey-node help" "$PYTHON -m hippius_sdk.cli miner verify-coldkey-node -h"
 
 # Test configuration commands
 run_test "Config list" "$PYTHON -m hippius_sdk.cli config list"

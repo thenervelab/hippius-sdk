@@ -272,11 +272,85 @@ run_failure_test "Conflicting IPFS parameters for register-hotkey" \
     --ipfs-priv-b64 $TEST_IPFS_PRIV_B64 \
     --dry-run"
 
+# Test verification commands
+echo -e "\n\033[1;33m==== Testing Node Verification Commands ====\033[0m"
+
+run_test "Basic verify-node with ipfs-priv-b64" \
+    "$PYTHON -m hippius_sdk.cli miner verify-node \
+    --node-id $TEST_NODE_ID \
+    --node-priv-hex $TEST_NODE_PRIV_HEX \
+    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64 \
+    --dry-run"
+
+run_test "Verify-node with all optional parameters" \
+    "$PYTHON -m hippius_sdk.cli miner verify-node \
+    --node-id $TEST_NODE_ID \
+    --node-priv-hex $TEST_NODE_PRIV_HEX \
+    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64 \
+    --ipfs-peer-id $TEST_IPFS_PEER_ID \
+    --expires-in $TEST_EXPIRES_IN \
+    --block-width u64 \
+    --domain '$TEST_CUSTOM_DOMAIN' \
+    --nonce-hex $TEST_CUSTOM_NONCE \
+    --dry-run"
+
+run_test "Basic verify-coldkey-node with ipfs-priv-b64" \
+    "$PYTHON -m hippius_sdk.cli miner verify-coldkey-node \
+    --node-id $TEST_NODE_ID \
+    --node-priv-hex $TEST_NODE_PRIV_HEX \
+    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64 \
+    --dry-run"
+
+run_test "Verify-coldkey-node with all optional parameters" \
+    "$PYTHON -m hippius_sdk.cli miner verify-coldkey-node \
+    --node-id $TEST_NODE_ID \
+    --node-priv-hex $TEST_NODE_PRIV_HEX \
+    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64 \
+    --ipfs-peer-id $TEST_IPFS_PEER_ID \
+    --expires-in $TEST_ALTERNATE_EXPIRES_IN \
+    --block-width u32 \
+    --domain '$TEST_CUSTOM_DOMAIN' \
+    --nonce-hex $TEST_ALTERNATE_NONCE \
+    --dry-run"
+
+# Test verification command error handling
+echo -e "\n\033[1;33m==== Testing Verification Command Error Handling ====\033[0m"
+
+run_failure_test "Verify-node missing node-id" \
+    "$PYTHON -m hippius_sdk.cli miner verify-node \
+    --node-priv-hex $TEST_NODE_PRIV_HEX \
+    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64"
+
+run_failure_test "Verify-node missing node-priv-hex" \
+    "$PYTHON -m hippius_sdk.cli miner verify-node \
+    --node-id $TEST_NODE_ID \
+    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64"
+
+run_failure_test "Verify-node missing IPFS config" \
+    "$PYTHON -m hippius_sdk.cli miner verify-node \
+    --node-id $TEST_NODE_ID \
+    --node-priv-hex $TEST_NODE_PRIV_HEX"
+
+run_failure_test "Verify-coldkey-node missing node-id" \
+    "$PYTHON -m hippius_sdk.cli miner verify-coldkey-node \
+    --node-priv-hex $TEST_NODE_PRIV_HEX \
+    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64"
+
+run_failure_test "Verify-coldkey-node conflicting IPFS parameters" \
+    "$PYTHON -m hippius_sdk.cli miner verify-coldkey-node \
+    --node-id $TEST_NODE_ID \
+    --node-priv-hex $TEST_NODE_PRIV_HEX \
+    --ipfs-config ~/.ipfs/config \
+    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64 \
+    --dry-run"
+
 echo -e "\n\033[1;32m==== All Miner Command Tests Completed Successfully! ====\033[0m"
 echo -e "\033[1;32mTests covered:\033[0m"
 echo -e "\033[1;32m  ✓ Help command functionality\033[0m"
 echo -e "\033[1;32m  ✓ Register-coldkey with all node types\033[0m"
 echo -e "\033[1;32m  ✓ Register-hotkey with all node types\033[0m"
+echo -e "\033[1;32m  ✓ Verify-node command functionality\033[0m"
+echo -e "\033[1;32m  ✓ Verify-coldkey-node command functionality\033[0m"
 echo -e "\033[1;32m  ✓ All optional parameter combinations\033[0m"
 echo -e "\033[1;32m  ✓ Error handling for missing required parameters\033[0m"
 echo -e "\033[1;32m  ✓ Error handling for invalid parameter values\033[0m"

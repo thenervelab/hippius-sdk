@@ -446,6 +446,36 @@ def main():
                     nonce_hex=getattr(args, "nonce_hex", None),
                     dry_run=getattr(args, "dry_run", False),
                 )
+            elif args.miner_action == "verify-node":
+                return run_async_handler(
+                    cli_handlers.handle_verify_node,
+                    client,
+                    args.node_id,
+                    args.node_priv_hex,
+                    ipfs_config=getattr(args, "ipfs_config", None),
+                    ipfs_priv_b64=getattr(args, "ipfs_priv_b64", None),
+                    ipfs_peer_id=getattr(args, "ipfs_peer_id", None),
+                    expires_in=getattr(args, "expires_in", 10),
+                    block_width=getattr(args, "block_width", "u32"),
+                    domain=getattr(args, "domain", "HIPPIUS::REGISTER::v1"),
+                    nonce_hex=getattr(args, "nonce_hex", None),
+                    dry_run=getattr(args, "dry_run", False),
+                )
+            elif args.miner_action == "verify-coldkey-node":
+                return run_async_handler(
+                    cli_handlers.handle_verify_coldkey_node,
+                    client,
+                    args.node_id,
+                    args.node_priv_hex,
+                    ipfs_config=getattr(args, "ipfs_config", None),
+                    ipfs_priv_b64=getattr(args, "ipfs_priv_b64", None),
+                    ipfs_peer_id=getattr(args, "ipfs_peer_id", None),
+                    expires_in=getattr(args, "expires_in", 10),
+                    block_width=getattr(args, "block_width", "u32"),
+                    domain=getattr(args, "domain", "HIPPIUS::REGISTER::v1"),
+                    nonce_hex=getattr(args, "nonce_hex", None),
+                    dry_run=getattr(args, "dry_run", False),
+                )
             else:
                 # Display the Hippius logo banner with Rich formatting
                 console.print(HERO_TITLE, style="bold cyan")
