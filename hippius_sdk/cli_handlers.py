@@ -3462,6 +3462,7 @@ def handle_register_coldkey(
 
         # Get keypair for signing
         from hippius_sdk.config import get_seed_phrase
+
         seed_phrase = get_seed_phrase()
         if not seed_phrase:
             error("No seed phrase available for signing transaction")
@@ -3678,6 +3679,7 @@ def handle_register_hotkey(
 
         # Get keypair for signing
         from hippius_sdk.config import get_seed_phrase
+
         seed_phrase = get_seed_phrase()
         if not seed_phrase:
             error("No seed phrase available for signing transaction")
