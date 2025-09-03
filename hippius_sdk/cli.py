@@ -409,6 +409,53 @@ def main():
                 print_help_text(address_parser)
                 return 1
 
+        # Handle miner commands
+        elif args.command == "miner":
+            if args.miner_action == "register-coldkey":
+                return run_async_handler(
+                    cli_handlers.handle_register_coldkey,
+                    client,
+                    args.node_id,
+                    args.node_priv_hex,
+                    args.node_type,
+                    ipfs_config=getattr(args, 'ipfs_config', None),
+                    ipfs_priv_b64=getattr(args, 'ipfs_priv_b64', None),
+                    ipfs_peer_id=getattr(args, 'ipfs_peer_id', None),
+                    pay_in_credits=getattr(args, 'pay_in_credits', False),
+                    expires_in=getattr(args, 'expires_in', 10),
+                    block_width=getattr(args, 'block_width', "u32"),
+                    domain=getattr(args, 'domain', "HIPPIUS::REGISTER::v1"),
+                    nonce_hex=getattr(args, 'nonce_hex', None),
+                    dry_run=getattr(args, 'dry_run', False),
+                )
+            elif args.miner_action == "register-hotkey":
+                return run_async_handler(
+                    cli_handlers.handle_register_hotkey,
+                    client,
+                    args.coldkey,
+                    args.node_id,
+                    args.node_priv_hex,
+                    args.node_type,
+                    ipfs_config=getattr(args, 'ipfs_config', None),
+                    ipfs_priv_b64=getattr(args, 'ipfs_priv_b64', None),
+                    ipfs_peer_id=getattr(args, 'ipfs_peer_id', None),
+                    pay_in_credits=getattr(args, 'pay_in_credits', False),
+                    expires_in=getattr(args, 'expires_in', 10),
+                    block_width=getattr(args, 'block_width', "u32"),
+                    domain=getattr(args, 'domain', "HIPPIUS::REGISTER::v1"),
+                    nonce_hex=getattr(args, 'nonce_hex', None),
+                    dry_run=getattr(args, 'dry_run', False),
+                )
+            else:
+                # Display the Hippius logo banner with Rich formatting
+                console.print(HERO_TITLE, style="bold cyan")
+
+                miner_parser = get_subparser("miner")
+                from hippius_sdk.cli_rich import print_help_text
+
+                print_help_text(miner_parser)
+                return 1
+
         else:
             # Command not recognized
             error(f"Unknown command: [bold]{args.command}[/bold]")
