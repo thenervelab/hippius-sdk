@@ -2526,7 +2526,9 @@ class IPFSClient:
             async with httpx.AsyncClient() as client:
                 async with client.stream("GET", download_url) as response:
                     response.raise_for_status()
-                    logger.info(f"Started streaming from {download_node} for CID: {cid}")
+                    logger.info(
+                        f"Started streaming from {download_node} for CID: {cid}"
+                    )
 
                     async for chunk in response.aiter_bytes(chunk_size=8192):
                         yield chunk
