@@ -2294,9 +2294,6 @@ class IPFSClient:
                         encrypted_data += chunk
                     return encrypted_data
 
-                # Stream and decrypt the content using hybrid buffered approach
-                import nacl.secret
-
                 # Collect all encrypted data first
                 logger.debug("Buffering encrypted content for decryption")
                 encrypted_data = b""
@@ -2344,16 +2341,16 @@ class IPFSClient:
                     os.path.dirname(os.path.abspath(output_path)), exist_ok=True
                 )
 
-            download_client = AsyncIPFSClient(api_url=download_node)
-
-            download_url = f"{download_node.rstrip('/')}/api/v0/cat?arg={cid}"
+            # Use gateway style instead of cat API for better HTTP semantics
+            download_url = f"{download_node.rstrip('/')}/ipfs/{cid}"
 
             # Download file into memory
             file_data = bytearray()
-            async with download_client.client.stream("POST", download_url) as response:
-                response.raise_for_status()
-                async for chunk in response.aiter_bytes(chunk_size=8192):
-                    file_data.extend(chunk)
+            async with httpx.AsyncClient() as client:
+                async with client.stream("GET", download_url) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        file_data.extend(chunk)
 
             # Convert to bytes for consistency
             file_data = bytes(file_data)
@@ -2523,15 +2520,16 @@ class IPFSClient:
             HippiusIPFSError: If IPFS stream fails
         """
         try:
-            download_client = AsyncIPFSClient(api_url=download_node)
-            download_url = f"{download_node.rstrip('/')}/api/v0/cat?arg={cid}"
+            # Use gateway style instead of cat API for better HTTP semantics
+            download_url = f"{download_node.rstrip('/')}/ipfs/{cid}"
 
-            async with download_client.client.stream("POST", download_url) as response:
-                response.raise_for_status()
-                logger.info(f"Started streaming from {download_node} for CID: {cid}")
+            async with httpx.AsyncClient() as client:
+                async with client.stream("GET", download_url) as response:
+                    response.raise_for_status()
+                    logger.info(f"Started streaming from {download_node} for CID: {cid}")
 
-                async for chunk in response.aiter_bytes(chunk_size=8192):
-                    yield chunk
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        yield chunk
 
         except Exception as e:
             raise HippiusIPFSError(f"Failed to stream from {download_node}: {str(e)}")
