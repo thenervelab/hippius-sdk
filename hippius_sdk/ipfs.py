@@ -2117,15 +2117,26 @@ class IPFSClient:
 
                 logger.info(f"Got {len(objects)=} from {store_node=}")
                 # filter out just the one file cid, ignore dirs, it's usually the first item,
-                # but hey let's not risk it
+                # but hey let's not risk it. IPFS may convert + to spaces in filenames.
                 for o in objects:
                     if o["Name"] == file_name:
                         cid = o["Hash"]
                         break
                 else:
-                    raise KeyError(
-                        f"Store call failed, {file_name=} not found in {objects=}"
-                    )
+                    # If exact match fails, try to find by matching the basename only
+                    # This handles cases where IPFS modifies the filename (e.g., + to space)
+                    target_basename = os.path.basename(file_name)
+                    for o in objects:
+                        if os.path.basename(o["Name"]) == target_basename:
+                            cid = o["Hash"]
+                            logger.info(
+                                f"Found file by basename match: {o['Name']} (original: {file_name})"
+                            )
+                            break
+                    else:
+                        raise KeyError(
+                            f"Store call failed, {file_name=} not found in {objects=}"
+                        )
             else:
                 cid = result["Hash"]
             logger.info(f"Content uploaded to store node {store_node} with CID: {cid}")
@@ -2526,7 +2537,9 @@ class IPFSClient:
             async with httpx.AsyncClient() as client:
                 async with client.stream("GET", download_url) as response:
                     response.raise_for_status()
-                    logger.info(f"Started streaming from {download_node} for CID: {cid}")
+                    logger.info(
+                        f"Started streaming from {download_node} for CID: {cid}"
+                    )
 
                     async for chunk in response.aiter_bytes(chunk_size=8192):
                         yield chunk
