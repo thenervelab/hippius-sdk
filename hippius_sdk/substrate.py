@@ -644,6 +644,7 @@ class SubstrateClient:
             extrinsic=extrinsic, wait_for_inclusion=True
         )
 
+        print(f"Result: {json.dumps(response, indent=2)}")
         # Get the transaction hash
         tx_hash = response.extrinsic_hash
 
