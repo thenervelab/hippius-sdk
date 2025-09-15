@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional, Union
 
 from dotenv import load_dotenv
 from mnemonic import Mnemonic
-from scalecodec.exceptions import RemainingScaleBytesNotEmptyException
 from substrateinterface import Keypair, SubstrateInterface
 
 from hippius_sdk.config import (
@@ -506,6 +505,7 @@ class SubstrateClient:
         files: List[Union[FileInput, Dict[str, str]]],
         miner_ids: List[str] = None,
         seed_phrase: Optional[str] = None,
+        fn_name: Optional[str] = "storage_request",
     ) -> str:
         """
         Submit a storage request for IPFS files to the marketplace.
@@ -605,7 +605,7 @@ class SubstrateClient:
         # Create the call to the marketplace
         call = self._substrate.compose_call(
             call_module="Marketplace",
-            call_function="storage_request",
+            call_function=fn_name,
             call_params=call_params,
         )
 
