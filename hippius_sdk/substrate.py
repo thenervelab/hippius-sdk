@@ -507,6 +507,7 @@ class SubstrateClient:
         seed_phrase: Optional[str] = None,
         fn_name: Optional[str] = "storage_request",
         pallet_name: Optional[str] = "Marketplace",
+        extra_params: Optional[Dict[str, str]] = None,
     ) -> str:
         """
         Submit a storage request for IPFS files to the marketplace.
@@ -602,6 +603,8 @@ class SubstrateClient:
             ],
             "miner_ids": miner_ids if miner_ids else [],
         }
+        if extra_params:
+            call_params.update(**extra_params)
 
         # Create the call to the marketplace
         call = self._substrate.compose_call(
