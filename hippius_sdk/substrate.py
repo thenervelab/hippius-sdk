@@ -594,8 +594,13 @@ class SubstrateClient:
 
         # Step 3: Submit the CID of the JSON file to the chain
         # Create call parameters with the CID of the JSON file
+        if fn_name == "submit_storage_request_for_user":
+            files_key_name = "file_inputs"
+        else:
+            files_key_name = "files_input"
+
         call_params = {
-            "files_input": [
+            files_key_name: [
                 {
                     "file_hash": files_list_cid,
                     "file_name": f"files_list_{uuid.uuid4()}",  # Generate a unique ID
