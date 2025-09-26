@@ -123,14 +123,15 @@ class IPFSClient:
             if get_config_value("ipfs", "local_ipfs", False):
                 api_url = "http://localhost:5001"
 
+        # Normalize to avoid double slashes when joining paths
         self.gateway = gateway.rstrip("/")
-        self.api_url = api_url
+        self.api_url = (api_url or "").rstrip("/")
 
         # Extract base URL from API URL for HTTP fallback
-        self.base_url = api_url
+        self.base_url = self.api_url
 
         try:
-            self.client = AsyncIPFSClient(api_url=api_url, gateway=self.gateway)
+            self.client = AsyncIPFSClient(api_url=self.api_url, gateway=self.gateway)
         except httpx.ConnectError:
             print(
                 f"Warning: Falling back to local IPFS daemon, but still using gateway={self.gateway}"
