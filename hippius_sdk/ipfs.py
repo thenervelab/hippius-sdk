@@ -2357,7 +2357,8 @@ class IPFSClient:
 
             # Download file into memory
             file_data = bytearray()
-            async with httpx.AsyncClient() as client:
+            timeout = httpx.Timeout(10.0, read=300.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 async with client.stream("GET", download_url) as response:
                     response.raise_for_status()
                     async for chunk in response.aiter_bytes(chunk_size=8192):
