@@ -38,9 +38,11 @@ class AsyncIPFSClient:
                 print(f"Error parsing multiaddr: {e}")
                 print("Falling back to default: http://localhost:5001")
                 api_url = "http://localhost:5001"
-        self.api_url = api_url
-        self.gateway = gateway
-        self.client = httpx.AsyncClient(timeout=300, follow_redirects=True)
+        # Normalize URLs and avoid trailing slash to prevent "//" when joining paths
+        self.api_url = api_url.rstrip("/")
+        self.gateway = gateway.rstrip("/")
+        # Do not follow redirects automatically to avoid POST→GET on 301
+        self.client = httpx.AsyncClient(timeout=300, follow_redirects=False)
 
     async def close(self):
         """Close the httpx client."""
