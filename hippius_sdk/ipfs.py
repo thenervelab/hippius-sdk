@@ -2345,6 +2345,8 @@ class IPFSClient:
         if not return_bytes and not output_path:
             raise ValueError("output_path is required when not using return_bytes mode")
 
+        # Use gateway style instead of cat API for better HTTP semantics
+        download_url = f"{download_node.rstrip('/')}/ipfs/{cid}"
         # Download the file directly into memory from the specified download_node
         try:
             # Create parent directories if they don't exist (only for file output mode)
@@ -2352,9 +2354,6 @@ class IPFSClient:
                 os.makedirs(
                     os.path.dirname(os.path.abspath(output_path)), exist_ok=True
                 )
-
-            # Use gateway style instead of cat API for better HTTP semantics
-            download_url = f"{download_node.rstrip('/')}/ipfs/{cid}"
 
             # Download file into memory
             file_data = bytearray()
@@ -2371,6 +2370,7 @@ class IPFSClient:
             )
 
         except Exception as e:
+            logger.exception(f"Failed to download file {download_url}")
             raise HippiusIPFSError(
                 f"Failed to download file from {download_node}: {str(e)}"
             )
