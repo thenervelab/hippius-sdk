@@ -2534,7 +2534,7 @@ class IPFSClient:
         """
         try:
             # Use gateway style instead of cat API for better HTTP semantics
-            download_url = f"{download_node.rstrip('/')}/ipfs/{cid}"
+            download_url = f"{download_node.rstrip('/')}/api/v0/cat?arg={cid}"
 
             async with httpx.AsyncClient() as client:
                 async with client.stream("GET", download_url) as response:
