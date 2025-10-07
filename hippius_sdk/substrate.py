@@ -1,4 +1,5 @@
 import datetime
+import io
 import json
 import os
 import tempfile
@@ -6,6 +7,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Union
 
+import pandas as pd
 from dotenv import load_dotenv
 from mnemonic import Mnemonic
 from substrateinterface import Keypair, SubstrateInterface
@@ -1032,13 +1034,14 @@ class SubstrateClient:
 
             profile_cid = self._hex_to_ipfs_cid(profile_hex_cid)
 
-            # Fetch the profile JSON from IPFS
+            # Fetch the profile parquet from IPFS
             # Defer import to avoid circular imports
             from hippius_sdk.ipfs import IPFSClient
 
             ipfs_client = IPFSClient()
             profile_content = (await ipfs_client.cat(profile_cid))["content"]
-            files = json.loads(profile_content)
+            df = pd.read_parquet(io.BytesIO(profile_content))
+            files = df.to_dict(orient="records")
             processed_files = []
 
             for file in files:
@@ -1047,42 +1050,26 @@ class SubstrateClient:
                     # Skip non-dictionary entries silently
                     continue
 
-                # Convert numeric arrays to strings if needed
-                # Handle file_hash: could be an array of ASCII/UTF-8 code points
-                file_hash = None
-                raw_file_hash = file.get("file_hash")
-                if isinstance(raw_file_hash, list) and all(
-                    isinstance(n, int) for n in raw_file_hash
-                ):
-                    try:
-                        # Convert array of numbers to bytes, then to a string
-                        file_hash = bytes(raw_file_hash).decode("utf-8")
-                    except Exception as e:
-                        print(e)
-
-                # Handle file_name: could be an array of ASCII/UTF-8 code points
-                # Try different field names for the size
-                file_size = (
-                    file.get("size")
-                    or file.get("fileSize")
-                    or file.get("file_size")
-                    or file.get("file_size_in_bytes")
-                    or 0
-                )
+                # Get CID directly from the parquet column
+                cid = file.get("cid")
+                if not cid:
+                    continue
 
                 processed_file = {
-                    "cid": self._hex_to_ipfs_cid(file_hash),
-                    "file_hash": file_hash,
+                    "cid": cid,
+                    "file_hash": cid,  # Keep for backward compatibility
                     "file_name": file.get("file_name"),
                     "miner_ids": file.get("miner_ids", []),
-                    "miner_count": len(file.get("miner_ids", [])),  # Count the miners
-                    "file_size": file_size or 0,
-                    "selected_validator": file["selected_validator"],
+                    "miner_count": len(file.get("miner_ids", [])),
+                    "file_size": file.get("file_size", 0),
+                    "selected_validator": file.get("selected_validator"),
                 }
 
                 # Add formatted file size if available
-                if file_size:
-                    processed_file["size_formatted"] = format_size(file_size)
+                if processed_file["file_size"]:
+                    processed_file["size_formatted"] = format_size(
+                        processed_file["file_size"]
+                    )
                 else:
                     processed_file["size_formatted"] = "Unknown"
 
