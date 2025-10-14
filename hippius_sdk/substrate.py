@@ -552,10 +552,6 @@ class SubstrateClient:
             else:
                 file_inputs.append(file)
 
-        # Print what is being submitted
-        for file in file_inputs:
-            print(f"  - {file.file_name}: {file.file_hash}")
-
         # Initialize Substrate connection with seed phrase
         if not self._substrate:
             self.connect(seed_phrase)
