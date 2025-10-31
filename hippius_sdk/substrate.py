@@ -1249,7 +1249,7 @@ class SubstrateClient:
                 call=call, keypair=self._keypair
             )
             response = self._substrate.submit_extrinsic(
-                extrinsic, wait_for_inclusion=True
+                extrinsic, wait_for_finalization=True
             )
             print(f"Transaction hash: {response.extrinsic_hash}")
             return response.extrinsic_hash
