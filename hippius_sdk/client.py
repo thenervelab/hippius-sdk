@@ -9,25 +9,24 @@ from typing import Any, Callable, Dict, List, Optional, Union, AsyncIterator
 import nacl.secret
 import nacl.utils
 
-from hippius_sdk.config import get_config_value, get_encryption_key
-from hippius_sdk.ipfs import IPFSClient, S3PublishResult, S3PublishPin, S3DownloadResult
-from hippius_sdk.substrate import SubstrateClient
+from hippius_sdk.api_client import HippiusApiClient
+from hippius_sdk.config import get_config_value, get_encryption_key, validate_ipfs_node_url
+from hippius_sdk.ipfs import IPFSClient
 
 
 class HippiusClient:
     """
     Main client for interacting with the Hippius ecosystem.
 
-    Provides IPFS operations, with Substrate functionality for storage requests.
+    Provides IPFS operations and API-based storage management.
     """
 
     def __init__(
         self,
-        ipfs_gateway: Optional[str] = None,
         ipfs_api_url: Optional[str] = None,
-        substrate_url: Optional[str] = None,
-        substrate_seed_phrase: Optional[str] = None,
-        seed_phrase_password: Optional[str] = None,
+        hippius_key: Optional[str] = None,
+        hippius_key_password: Optional[str] = None,
+        api_url: Optional[str] = None,
         account_name: Optional[str] = None,
         encrypt_by_default: Optional[bool] = None,
         encryption_key: Optional[bytes] = None,
@@ -36,37 +35,23 @@ class HippiusClient:
         Initialize the Hippius client.
 
         Args:
-            ipfs_gateway: IPFS gateway URL for downloading content (from config if None)
-            ipfs_api_url: IPFS API URL for uploading content (from config if None)
-            substrate_url: WebSocket URL of the Hippius substrate node (from config if None)
-            substrate_seed_phrase: Seed phrase for Substrate account (from config if None)
-            seed_phrase_password: Password to decrypt the seed phrase if it's encrypted
+            ipfs_api_url: IPFS API URL for uploading/downloading content (from config if None)
+            hippius_key: HIPPIUS_KEY for API authentication (from config if None)
+            hippius_key_password: Password to decrypt the HIPPIUS_KEY if it's encrypted
+            api_url: Hippius API URL (default: https://api.hippius.com)
             account_name: Name of the account to use (uses active account if None)
             encrypt_by_default: Whether to encrypt files by default (from config if None)
             encryption_key: Encryption key for NaCl secretbox (from config if None)
         """
         # Load configuration values if not explicitly provided
-        if ipfs_gateway is None:
-            ipfs_gateway = get_config_value(
-                "ipfs", "gateway", "https://get.hippius.network"
-            )
-
         if ipfs_api_url is None:
-            ipfs_api_url = get_config_value(
-                "ipfs", "api_url", "https://store.hippius.network"
-            )
-
             # Check if local IPFS is enabled in config
             if get_config_value("ipfs", "local_ipfs", False):
                 ipfs_api_url = "http://localhost:5001"
-
-        if substrate_url is None:
-            substrate_url = get_config_value(
-                "substrate", "url", "wss://rpc.hippius.network"
-            )
-
-        # Don't try to get a seed phrase from the legacy location
-        # The substrate_client will handle getting it from the active account
+            else:
+                ipfs_api_url = get_config_value("ipfs", "api_url", None)
+                # Validate the URL (will raise ValueError if missing or deprecated)
+                ipfs_api_url = validate_ipfs_node_url(ipfs_api_url)
 
         if encrypt_by_default is None:
             encrypt_by_default = get_config_value(
@@ -78,15 +63,17 @@ class HippiusClient:
 
         # Initialize IPFS client
         self.ipfs_client = IPFSClient(
-            gateway=ipfs_gateway,
             api_url=ipfs_api_url,
             encrypt_by_default=encrypt_by_default,
             encryption_key=encryption_key,
         )
-        # Initialize Substrate client
-        self.substrate_client = SubstrateClient(
-            url=substrate_url,
-            password=seed_phrase_password,
+
+        # Initialize Hippius API client
+        api_url_to_use = api_url or get_config_value("hippius", "api_url", "https://api.hippius.com/api")
+        self.api_client = HippiusApiClient(
+            api_url=api_url_to_use,
+            hippius_key=hippius_key,
+            hippius_key_password=hippius_key_password,
             account_name=account_name,
         )
 
@@ -94,15 +81,21 @@ class HippiusClient:
         self,
         file_path: str,
         encrypt: Optional[bool] = None,
-        seed_phrase: Optional[str] = None,
+        hippius_key: Optional[str] = None,
+        pin: bool = True,
     ) -> Dict[str, Any]:
         """
-        Upload a file to IPFS with optional encryption.
+        Upload a file to local IPFS node and optionally pin to Hippius API.
+
+        Flow:
+            1. Upload file to local IPFS node -> get CID
+            2. If pin=True, pin CID to Hippius API via /storage-control/requests/
 
         Args:
             file_path: Path to the file to upload
             encrypt: Whether to encrypt the file (overrides default)
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
+            hippius_key: Optional HIPPIUS_KEY for API authentication
+            pin: Whether to pin to Hippius API after upload (default: True)
 
         Returns:
             Dict[str, Any]: Dictionary containing file details including:
@@ -111,24 +104,43 @@ class HippiusClient:
                 - size_bytes: Size of the file in bytes
                 - size_formatted: Human-readable file size
                 - encrypted: Whether the file was encrypted
+                - pinned: Whether file was pinned to Hippius API (if pin=True)
+                - pin_request_id: Pin request ID (if pin=True and successful)
+                - pin_error: Error message if pinning failed (if pin=True)
 
         Raises:
             FileNotFoundError: If the file doesn't exist
             ConnectionError: If no IPFS connection is available
             ValueError: If encryption is requested but not available
         """
-        # Use the enhanced IPFSClient method directly with encryption parameter
-        return await self.ipfs_client.upload_file(
+        upload_result = await self.ipfs_client.upload_file(
             file_path,
             encrypt=encrypt,
-            seed_phrase=seed_phrase,
         )
+
+        cid = upload_result["cid"]
+        filename = upload_result["filename"]
+
+        if pin:
+            pin_result = await self.api_client.pin_file(
+                cid=cid,
+                filename=filename,
+                hippius_key=hippius_key,
+            )
+
+            upload_result["pinned"] = True
+            upload_result["pin_request_id"] = (
+                pin_result.get("id") or pin_result.get("request_id")
+            )
+        else:
+            upload_result["pinned"] = False
+
+        return upload_result
 
     async def upload_directory(
         self,
         dir_path: str,
         encrypt: Optional[bool] = None,
-        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Upload a directory to IPFS with optional encryption.
@@ -136,7 +148,6 @@ class HippiusClient:
         Args:
             dir_path: Path to the directory to upload
             encrypt: Whether to encrypt files (overrides default)
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing directory details including:
@@ -154,15 +165,13 @@ class HippiusClient:
         """
         # Use the enhanced IPFSClient method directly with encryption parameter
         return await self.ipfs_client.upload_directory(
-            dir_path, encrypt=encrypt, seed_phrase=seed_phrase
-        )
+            dir_path, encrypt=encrypt,         )
 
     async def download_file(
         self,
         cid: str,
         output_path: str,
         decrypt: Optional[bool] = None,
-        seed_phrase: Optional[str] = None,
         skip_directory_check: bool = False,
     ) -> Dict[str, Any]:
         """
@@ -173,7 +182,6 @@ class HippiusClient:
             cid: Content Identifier (CID) of the file to download
             output_path: Path where the downloaded file/directory will be saved
             decrypt: Whether to decrypt the file (overrides default)
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
             skip_directory_check: don't check if it's a directory.
 
         Returns:
@@ -194,7 +202,6 @@ class HippiusClient:
             cid,
             output_path,
             _=decrypt,
-            seed_phrase=seed_phrase,
             skip_directory_check=skip_directory_check,
         )
 
@@ -204,7 +211,6 @@ class HippiusClient:
         max_display_bytes: int = 1024,
         format_output: bool = True,
         decrypt: Optional[bool] = None,
-        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Get the content of a file from IPFS with optional decryption.
@@ -214,7 +220,6 @@ class HippiusClient:
             max_display_bytes: Maximum number of bytes to include in the preview
             format_output: Whether to attempt to decode the content as text
             decrypt: Whether to decrypt the file (overrides default)
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing content details including:
@@ -230,18 +235,16 @@ class HippiusClient:
             max_display_bytes,
             format_output,
             decrypt=decrypt,
-            seed_phrase=seed_phrase,
         )
 
     async def exists(
-        self, cid: str, seed_phrase: Optional[str] = None
+        self, cid: str
     ) -> Dict[str, Any]:
         """
         Check if a CID exists on IPFS.
 
         Args:
             cid: Content Identifier (CID) to check
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -250,15 +253,14 @@ class HippiusClient:
                 - formatted_cid: Formatted version of the CID
                 - gateway_url: URL to access the content if it exists
         """
-        return await self.ipfs_client.exists(cid, seed_phrase=seed_phrase)
+        return await self.ipfs_client.exists(cid)
 
-    async def pin(self, cid: str, seed_phrase: Optional[str] = None) -> Dict[str, Any]:
+    async def pin(self, cid: str) -> Dict[str, Any]:
         """
         Pin a CID to IPFS to keep it available.
 
         Args:
             cid: Content Identifier (CID) to pin
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -267,7 +269,7 @@ class HippiusClient:
                 - formatted_cid: Formatted version of the CID
                 - message: Status message
         """
-        return await self.ipfs_client.pin(cid, seed_phrase=seed_phrase)
+        return await self.ipfs_client.pin(cid)
 
     def format_cid(self, cid: str) -> str:
         """
@@ -330,7 +332,6 @@ class HippiusClient:
         encrypt: Optional[bool] = None,
         max_retries: int = 3,
         verbose: bool = True,
-        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Split a file using erasure coding, then upload the chunks to IPFS.
@@ -348,7 +349,6 @@ class HippiusClient:
             encrypt: Whether to encrypt the file before encoding (defaults to self.encrypt_by_default)
             max_retries: Maximum number of retry attempts for IPFS uploads
             verbose: Whether to print progress information
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             dict: Metadata including the original file info and chunk information
@@ -365,7 +365,6 @@ class HippiusClient:
             encrypt=encrypt,
             max_retries=max_retries,
             verbose=verbose,
-            seed_phrase=seed_phrase,
         )
 
     async def reconstruct_from_erasure_code(
@@ -375,7 +374,6 @@ class HippiusClient:
         temp_dir: str = None,
         max_retries: int = 3,
         verbose: bool = True,
-        seed_phrase: Optional[str] = None,
     ) -> Dict:
         """
         Reconstruct a file from erasure-coded chunks using its metadata.
@@ -386,7 +384,6 @@ class HippiusClient:
             temp_dir: Directory to use for temporary files (default: system temp)
             max_retries: Maximum number of retry attempts for IPFS downloads
             verbose: Whether to print progress information
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict: containing file reconstruction info.
@@ -401,7 +398,6 @@ class HippiusClient:
             temp_dir=temp_dir,
             max_retries=max_retries,
             verbose=verbose,
-            seed_phrase=seed_phrase,
         )
 
     async def store_erasure_coded_file(
@@ -416,7 +412,6 @@ class HippiusClient:
         verbose: bool = True,
         progress_callback: Optional[Callable[[str, int, int], None]] = None,
         publish: bool = True,
-        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Erasure code a file, upload the chunks to IPFS, and store in the Hippius marketplace.
@@ -437,7 +432,6 @@ class HippiusClient:
             publish: Whether to publish to the blockchain (True) or just perform local
                     erasure coding without publishing (False). When False, no password
                     is needed for seed phrase access.
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             dict: Result including metadata CID and transaction hash (if published)
@@ -453,19 +447,17 @@ class HippiusClient:
             chunk_size=chunk_size,
             encrypt=encrypt,
             miner_ids=miner_ids,
-            substrate_client=self.substrate_client,
+            substrate_client=None,
             max_retries=max_retries,
             verbose=verbose,
             progress_callback=progress_callback,
             publish=publish,
-            seed_phrase=seed_phrase,
         )
 
     async def delete_file(
         self,
         cid: str,
         cancel_from_blockchain: bool = True,
-        seed_phrase: Optional[str] = None,
         unpin: bool = True,
     ) -> Dict[str, Any]:
         """
@@ -474,7 +466,6 @@ class HippiusClient:
         Args:
             cid: Content Identifier (CID) of the file to delete
             cancel_from_blockchain: Whether to also cancel the storage request from the blockchain
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
             unpin: whether to unpin or not.
         Returns:
             Dict containing the result of the operation
@@ -485,7 +476,6 @@ class HippiusClient:
         return await self.ipfs_client.delete_file(
             cid,
             cancel_from_blockchain,
-            seed_phrase=seed_phrase,
             unpin=unpin,
         )
 
@@ -494,7 +484,6 @@ class HippiusClient:
         metadata_cid: str,
         cancel_from_blockchain: bool = True,
         parallel_limit: int = 20,
-        seed_phrase: Optional[str] = None,
     ) -> bool:
         """
         Delete an erasure-coded file, including all its chunks in parallel.
@@ -503,7 +492,6 @@ class HippiusClient:
             metadata_cid: CID of the metadata file for the erasure-coded file
             cancel_from_blockchain: Whether to cancel storage from blockchain
             parallel_limit: Maximum number of concurrent deletion operations
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             True or false if failed.
@@ -515,110 +503,5 @@ class HippiusClient:
             metadata_cid,
             cancel_from_blockchain,
             parallel_limit,
-            seed_phrase=seed_phrase,
         )
 
-    async def s3_publish(
-        self,
-        content: Union[str, bytes, os.PathLike],
-        encrypt: bool,
-        seed_phrase: str,
-        subaccount_id: str,
-        bucket_name: str,
-        file_name: str = None,
-        store_node: str = "http://localhost:5001",
-        pin_node: str = "https://store.hippius.network",
-        substrate_url: str = "wss://rpc.hippius.network",
-        publish: bool = True,
-    ) -> Union[S3PublishResult, S3PublishPin]:
-        """
-        Publish content to IPFS and the Hippius marketplace in one operation.
-
-        Uses a two-node architecture for optimal performance:
-        1. Uploads to store_node (local) for immediate availability
-        2. Pins to pin_node (remote) for persistence and backup
-
-        Args:
-            content: Either a file path (str/PathLike) or bytes content to publish
-            file_name: The original file name (required if content is bytes)
-            encrypt: Whether to encrypt the file before uploading
-            seed_phrase: Seed phrase for blockchain transaction signing
-            subaccount_id: The subaccount/account identifier
-            bucket_name: The bucket name for key isolation
-            store_node: IPFS node URL for initial upload (default: local node)
-            pin_node: IPFS node URL for backup pinning (default: remote service)
-            substrate_url: substrate url to use for the storage request
-            publish: Whether to publish to blockchain (True) or just upload to IPFS (False)
-
-        Returns:
-            S3PublishResult: Object containing CID, file info, and transaction hash when publish=True
-            S3PublishPin: Object containing CID, subaccount, file_path, pin_node, substrate_url when publish=False
-
-        Raises:
-            HippiusIPFSError: If IPFS operations (add or pin) fail
-            HippiusSubstrateError: If substrate call fails
-            FileNotFoundError: If the file doesn't exist
-            ValueError: If encryption is requested but not available
-        """
-        return await self.ipfs_client.s3_publish(
-            content=content,
-            encrypt=encrypt,
-            seed_phrase=seed_phrase,
-            subaccount_id=subaccount_id,
-            bucket_name=bucket_name,
-            store_node=store_node,
-            pin_node=pin_node,
-            substrate_url=substrate_url,
-            publish=publish,
-            file_name=file_name,
-        )
-
-    async def s3_download(
-        self,
-        cid: str,
-        output_path: Optional[str] = None,
-        subaccount_id: Optional[str] = None,
-        bucket_name: Optional[str] = None,
-        auto_decrypt: bool = True,
-        download_node: str = "http://localhost:5001",
-        return_bytes: bool = False,
-        streaming: bool = False,
-    ) -> Union[S3DownloadResult, bytes, AsyncIterator[bytes]]:
-        """
-        Download content from IPFS with flexible output options and automatic decryption.
-
-        This method provides multiple output modes:
-        1. File output: Downloads to specified path (default mode)
-        2. Bytes output: Returns decrypted bytes in memory (return_bytes=True)
-        3. Streaming output: Returns raw streaming iterator from IPFS node (streaming=True)
-
-        Args:
-            cid: Content Identifier (CID) of the file to download
-            output_path: Path where the downloaded file will be saved (None for bytes/streaming)
-            subaccount_id: The subaccount/account identifier (required for decryption)
-            bucket_name: The bucket name for key isolation (required for decryption)
-            auto_decrypt: Whether to attempt automatic decryption (default: True)
-            download_node: IPFS node URL for download (default: local node)
-            return_bytes: If True, return bytes instead of saving to file
-            streaming: If True, return decrypted bytes when auto_decrypt=True, or raw streaming iterator when auto_decrypt=False
-
-        Returns:
-            S3DownloadResult: Download info and decryption status (default)
-            bytes: Raw decrypted content when return_bytes=True or streaming=True with auto_decrypt=True
-            AsyncIterator[bytes]: Raw streaming iterator when streaming=True and auto_decrypt=False
-
-        Raises:
-            HippiusIPFSError: If IPFS download fails
-            FileNotFoundError: If the output directory doesn't exist
-            ValueError: If decryption fails
-        """
-        return await self.ipfs_client.s3_download(
-            cid=cid,
-            output_path=output_path,
-            subaccount_id=subaccount_id,
-            bucket_name=bucket_name,
-            auto_decrypt=auto_decrypt,
-            download_node=download_node,
-            return_bytes=return_bytes,
-            streaming=streaming,
-        )

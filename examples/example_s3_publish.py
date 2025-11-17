@@ -78,7 +78,7 @@ async def s3_publish_download_test():
 
     client = HippiusClient()
 
-    seed_phrase = os.environ["HIPPIUS_SUBACCOUNT_PHRASE"]
+    hippius_key = os.environ["HIPPIUS_KEY"]
     subaccount_id = os.environ["HIPPIUS_SUBACCOUNT_ID"]
     bucket_name = test_file.split(".")[0]
 
@@ -90,13 +90,13 @@ async def s3_publish_download_test():
         result: S3PublishResult = await client.s3_publish(
             content=encrypted_file,
             encrypt=True,
-            seed_phrase=seed_phrase,
+            hippius_key=hippius_key,
             subaccount_id=subaccount_id,
             bucket_name=bucket_name,
             file_name="example_s3_publish",
             publish=False,
-            store_node="https://store.hippius.network",
-            pin_node="https://store.hippius.network",
+            store_node=os.getenv("IPFS_NODE_URL", "http://localhost:5001"),
+            pin_node=os.getenv("IPFS_NODE_URL", "http://localhost:5001"),
         )
 
         upload_time = time.time() - upload_start
@@ -128,7 +128,7 @@ async def s3_publish_download_test():
             subaccount_id=subaccount_id,
             bucket_name=bucket_name,
             auto_decrypt=True,
-            download_node="https://store.hippius.network",
+            download_node=os.getenv("IPFS_NODE_URL", "http://localhost:5001"),
         )
 
         download_time = time.time() - download_start

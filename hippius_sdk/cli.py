@@ -113,15 +113,7 @@ def main():
         encrypt = True if args.encrypt else (False if args.no_encrypt else None)
         decrypt = True if args.decrypt else (False if args.no_decrypt else None)
 
-        # For erasure-code specifically, the password may have been requested and cached already
-        # We need to preserve it if it was set by handle_erasure_code
-        if (
-            args.command == "erasure-code"
-            and hasattr(client.substrate_client, "_seed_phrase")
-            and client.substrate_client._seed_phrase
-        ):
-            # Password has already been handled by the command handler
-            pass
+        # Substrate client has been deprecated - password handling moved to API client
 
         # Handle commands with the helper function
         if args.command == "download":
@@ -179,18 +171,12 @@ def main():
                     args.all_miners if hasattr(args, "all_miners") else False
                 ),
                 file_cid=args.cid if hasattr(args, "cid") else None,
-            )
-
-        elif args.command == "pinning-status":
-            show_contents = (
-                not args.no_contents if hasattr(args, "no_contents") else True
-            )
-            return run_async_handler(
-                cli_handlers.handle_pinning_status,
-                client,
-                args.account_address if hasattr(args, "account_address") else None,
-                verbose=args.verbose,
-                show_contents=show_contents,
+                include_pending=(
+                    args.include_pending if hasattr(args, "include_pending") else False
+                ),
+                search=args.search if hasattr(args, "search") else None,
+                ordering=args.ordering if hasattr(args, "ordering") else None,
+                page=args.page if hasattr(args, "page") else None,
             )
 
         elif args.command == "ec-files":
@@ -301,45 +287,10 @@ def main():
                 print_help_text(config_parser)
                 return 1
 
-        elif args.command == "seed":
-            if args.seed_action == "set":
-                return cli_handlers.handle_seed_phrase_set(
-                    args.seed_phrase,
-                    args.encode if hasattr(args, "encode") else False,
-                    args.account if hasattr(args, "account") else None,
-                )
-            elif args.seed_action == "encode":
-                return cli_handlers.handle_seed_phrase_encode(
-                    args.account if hasattr(args, "account") else None
-                )
-            elif args.seed_action == "decode":
-                return cli_handlers.handle_seed_phrase_decode(
-                    args.account if hasattr(args, "account") else None
-                )
-            elif args.seed_action == "status":
-                return cli_handlers.handle_seed_phrase_status(
-                    args.account if hasattr(args, "account") else None
-                )
-            else:
-                # Display the Hippius logo banner with Rich formatting
-                console.print(HERO_TITLE, style="bold cyan")
-
-                seed_parser = get_subparser("seed")
-                from hippius_sdk.cli_rich import print_help_text
-
-                print_help_text(seed_parser)
-                return 1
-
         # Handle the account commands
         elif args.command == "account":
             if args.account_action == "list":
                 return cli_handlers.handle_account_list()
-            elif args.account_action == "create" and hasattr(args, "name"):
-                return cli_handlers.handle_account_create(
-                    client,
-                    args.name,
-                    encrypt=args.encrypt if hasattr(args, "encrypt") else False,
-                )
             elif args.account_action == "export":
                 return cli_handlers.handle_account_export(
                     client,

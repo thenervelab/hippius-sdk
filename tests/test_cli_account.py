@@ -1,7 +1,9 @@
 """
 Unit tests for the CLI account management commands.
+
+Updated for v0.3.0 - HIPPIUS_KEY authentication only.
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
@@ -16,289 +18,158 @@ from hippius_sdk.cli_handlers import (
 class TestCLIAccountCommands:
     """Tests for the CLI account management commands."""
 
-    @patch("hippius_sdk.cli_handlers.getpass.getpass")
-    @patch("hippius_sdk.cli_handlers.list_accounts")
-    def test_handle_account_create(self, mock_list_accounts, mock_getpass):
-        """Test the handle_account_create function."""
-        # Create mock client
-        mock_client = MagicMock()
-        mock_substrate_client = MagicMock()
-        mock_client.substrate_client = mock_substrate_client
-
-        # Set up mock response for list_accounts to return empty list (no existing accounts)
-        mock_list_accounts.return_value = {}
-
-        # Set up mock response from create_account
-        mock_substrate_client.create_account.return_value = {
-            "name": "test_account",
-            "address": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
-            "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-            "is_active": True,
-        }
-
-        # Mock the client's generate_seed_phrase method
-        mock_substrate_client.generate_seed_phrase.return_value = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-
-        # Test creating an account without encryption
-        with patch("hippius_sdk.cli_handlers.set_seed_phrase"), patch(
-            "hippius_sdk.cli_handlers.set_active_account"
-        ), patch(
-            "hippius_sdk.cli_handlers.get_account_address",
-            return_value="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
-        ):
-            result = handle_account_create(mock_client, "test_account")
-
-            # Verify the function returns successfully
-            assert result == 0
-
-    @patch("hippius_sdk.cli_handlers.getpass.getpass")
-    @patch("hippius_sdk.cli_handlers.list_accounts")
-    @patch("hippius_sdk.cli_handlers.HippiusClient")
-    def test_handle_account_create_with_encryption(
-        self, mock_HippiusClient, mock_list_accounts, mock_getpass
-    ):
-        """Test the handle_account_create function with encryption."""
-        # Create mock client
-        mock_client = MagicMock()
-        mock_substrate_client = MagicMock()
-        mock_client.substrate_client = mock_substrate_client
-
-        # Set up mock response for list_accounts to return empty list (no existing accounts)
-        mock_list_accounts.return_value = {}
-
-        # Set up mock password prompts
-        mock_getpass.side_effect = ["password123", "password123"]
-
-        # Set up mock response from generate_seed_phrase method
-        mock_substrate_client.generate_seed_phrase.return_value = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-
-        # Set up mock for temporary client creation
-        mock_temp_client = MagicMock()
-        mock_temp_substrate = MagicMock()
-        mock_temp_client.substrate_client = mock_temp_substrate
-        mock_temp_substrate.get_account_address.return_value = (
-            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
-        )
-        mock_HippiusClient.return_value = mock_temp_client
-
-        # Test creating an account with encryption
-        with patch("hippius_sdk.cli_handlers.set_seed_phrase"), patch(
-            "hippius_sdk.cli_handlers.set_active_account"
-        ):
-            result = handle_account_create(mock_client, "test_account", encrypt=True)
-
-            # Verify the function returns successfully
-            assert result == 0
-
-            # Verify getpass was called twice
-            assert mock_getpass.call_count == 2
-
-    @patch("hippius_sdk.cli_handlers.getpass.getpass")
-    def test_handle_account_create_password_mismatch(self, mock_getpass):
-        """Test handle_account_create with password mismatch."""
-        # Create mock client
+    def test_handle_account_create_deprecated(self):
+        """Test that handle_account_create returns deprecation error."""
         mock_client = MagicMock()
 
-        # Set up password mismatch
-        mock_getpass.side_effect = ["password123", "differentpassword"]
+        # handle_account_create should now return 1 (error) with deprecation message
+        result = handle_account_create(mock_client, "test_account", encrypt=False)
 
-        # Test creating an account with encryption
-        result = handle_account_create(mock_client, "test_account", encrypt=True)
-
-        # Verify the function returns error code
+        # Should return error code
         assert result == 1
 
-        # Verify create_account was not called
-        mock_client.substrate_client.create_account.assert_not_called()
-
+    @patch("builtins.open", new_callable=mock_open)
+    @patch("json.dump")
     @patch("hippius_sdk.cli_handlers.load_config")
-    @patch("hippius_sdk.cli_handlers.open")
-    @patch("hippius_sdk.cli_handlers.json.dump")
-    def test_handle_account_export(self, mock_json_dump, mock_open, mock_load_config):
-        """Test the handle_account_export function."""
-        # Create mock client
+    @patch("hippius_sdk.cli_handlers.get_active_account")
+    def test_handle_account_export(self, mock_get_active, mock_load_config, mock_json_dump, mock_file):
+        """Test the handle_account_export function with HIPPIUS_KEY."""
         mock_client = MagicMock()
-        mock_substrate_client = MagicMock()
-        mock_client.substrate_client = mock_substrate_client
 
-        # Mock the config data with a test account
-        mock_load_config.return_value = {
+        # Mock configuration
+        mock_config = {
             "substrate": {
                 "accounts": {
                     "test_account": {
-                        "seed_phrase": "test seed phrase",
-                        "address": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
-                        "encrypted": False,
+                        "hippius_key": "test_key_123",
+                        "hippius_key_encoded": False,
+                        "hippius_key_salt": None,
                     }
                 }
             }
         }
+        mock_load_config.return_value = mock_config
+        mock_get_active.return_value = "test_account"
 
-        # Test exporting an account
-        result = handle_account_export(
-            mock_client, name="test_account", file_path="test_export.json"
-        )
+        # Test exporting account
+        result = handle_account_export(mock_client, name="test_account", file_path="test_export.json")
 
-        # Verify the function returns successfully
+        # Verify success
         assert result == 0
+        mock_json_dump.assert_called_once()
 
-        # Verify the file was written with correct data
-        mock_open.assert_called_once_with("test_export.json", "w")
-        # Verify json.dump was called
-        assert mock_json_dump.called
+        # Verify exported data structure (HIPPIUS_KEY format)
+        exported_data = mock_json_dump.call_args[0][0]
+        assert exported_data["name"] == "test_account"
+        assert exported_data["hippius_key"] == "test_key_123"
+        assert exported_data["hippius_key_encoded"] is False
 
-    @patch("hippius_sdk.cli_handlers.getpass.getpass")
-    @patch("hippius_sdk.cli_handlers.os.path.exists")
-    @patch("hippius_sdk.cli_handlers.open")
-    @patch("hippius_sdk.cli_handlers.json.load")
-    @patch("hippius_sdk.cli_handlers.set_seed_phrase")
-    @patch("hippius_sdk.cli_handlers.set_active_account")
-    @patch("hippius_sdk.cli_handlers.get_account_address")
+    @patch("builtins.open", new_callable=mock_open, read_data='{"name":"test_account","hippius_key":"test_key_123","hippius_key_encoded":false}')
+    @patch("os.path.exists", return_value=True)
+    @patch("hippius_sdk.cli_handlers.list_accounts")
+    @patch("hippius_sdk.cli_handlers.load_config")
+    @patch("hippius_sdk.cli_handlers.save_config")
+    @patch("builtins.input", return_value="y")
     def test_handle_account_import(
-        self,
-        mock_get_address,
-        mock_set_active,
-        mock_set_seed,
-        mock_json_load,
-        mock_open,
-        mock_exists,
-        mock_getpass,
+        self, mock_input, mock_save_config, mock_load_config, mock_list_accounts, mock_exists, mock_file
     ):
-        """Test the handle_account_import function."""
-        # Create mock client
+        """Test the handle_account_import function with HIPPIUS_KEY."""
         mock_client = MagicMock()
-        mock_substrate_client = MagicMock()
-        mock_client.substrate_client = mock_substrate_client
 
-        # Mock file operations
-        mock_exists.return_value = True
+        # Mock existing accounts (account exists, will prompt for overwrite)
+        mock_list_accounts.return_value = {"test_account": {}}
 
-        # Mock json load to return account data
-        mock_json_load.return_value = {
-            "name": "imported_account",
-            "encrypted": False,
-            "seed_phrase": "test seed phrase",
-            "address": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+        # Mock configuration
+        mock_config = {
+            "substrate": {
+                "accounts": {}
+            }
         }
+        mock_load_config.return_value = mock_config
 
-        # Mock get_account_address
-        mock_get_address.return_value = (
-            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
-        )
+        # Test importing account
+        result = handle_account_import(mock_client, file_path="test_import.json", encrypt=False)
 
-        # Test importing an account without encryption
-        result = handle_account_import(mock_client, "test_import.json")
-
-        # Verify the function returns successfully
+        # Verify success
         assert result == 0
+        mock_save_config.assert_called_once()
 
-        # Verify set_seed_phrase was called
-        mock_set_seed.assert_called_once_with(
-            "test seed phrase", None, "imported_account"
-        )
+        # Verify account was added to config with HIPPIUS_KEY
+        saved_config = mock_save_config.call_args[0][0]
+        assert "test_account" in saved_config["substrate"]["accounts"]
+        account_data = saved_config["substrate"]["accounts"]["test_account"]
+        assert account_data["hippius_key"] == "test_key_123"
+        assert account_data["hippius_key_encoded"] is False
 
-        # Verify set_active_account was called
-        mock_set_active.assert_called_once_with("imported_account")
-
-    @patch("hippius_sdk.cli_handlers.getpass.getpass")
-    @patch("hippius_sdk.cli_handlers.os.path.exists")
-    @patch("hippius_sdk.cli_handlers.open")
-    @patch("hippius_sdk.cli_handlers.json.load")
-    @patch("hippius_sdk.cli_handlers.set_seed_phrase")
-    @patch("hippius_sdk.cli_handlers.set_active_account")
-    @patch("hippius_sdk.cli_handlers.get_account_address")
-    def test_handle_account_import_with_encryption(
-        self,
-        mock_get_address,
-        mock_set_active,
-        mock_set_seed,
-        mock_json_load,
-        mock_open,
-        mock_exists,
-        mock_getpass,
+    @patch("builtins.open", new_callable=mock_open, read_data='{"name":"new_account","hippius_key":"new_key_456","hippius_key_encoded":false}')
+    @patch("os.path.exists", return_value=True)
+    @patch("hippius_sdk.cli_handlers.list_accounts")
+    @patch("hippius_sdk.cli_handlers.load_config")
+    @patch("hippius_sdk.cli_handlers.save_config")
+    def test_handle_account_import_new_account(
+        self, mock_save_config, mock_load_config, mock_list_accounts, mock_exists, mock_file
     ):
-        """Test the handle_account_import function with encryption."""
-        # Create mock client
+        """Test importing a new account (no overwrite prompt)."""
         mock_client = MagicMock()
-        mock_substrate_client = MagicMock()
-        mock_client.substrate_client = mock_substrate_client
 
-        # Set up mock password prompts
-        mock_getpass.side_effect = ["password123", "password123"]
+        # Mock no existing accounts
+        mock_list_accounts.return_value = {}
 
-        # Mock file operations
-        mock_exists.return_value = True
-
-        # Mock json load to return account data
-        mock_json_load.return_value = {
-            "name": "imported_account",
-            "encrypted": False,
-            "seed_phrase": "test seed phrase",
-            "address": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+        # Mock configuration
+        mock_config = {
+            "substrate": {
+                "accounts": {}
+            }
         }
+        mock_load_config.return_value = mock_config
 
-        # Mock get_account_address
-        mock_get_address.return_value = (
-            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
-        )
+        # Test importing new account
+        result = handle_account_import(mock_client, file_path="new_import.json", encrypt=False)
 
-        # Test importing an account with encryption
-        result = handle_account_import(mock_client, "test_import.json", encrypt=True)
-
-        # Verify the function returns successfully
+        # Verify success
         assert result == 0
-
-        # Verify getpass was called twice
-        assert mock_getpass.call_count == 2
-
-        # Verify set_seed_phrase was called with password
-        mock_set_seed.assert_called_once_with(
-            "test seed phrase", "password123", "imported_account"
-        )
-
-        # Verify set_active_account was called
-        mock_set_active.assert_called_once_with("imported_account")
+        mock_save_config.assert_called_once()
 
     @patch("hippius_sdk.cli_handlers.list_accounts")
-    def test_handle_account_list(self, mock_list_accounts):
+    @patch("hippius_sdk.cli_handlers.get_active_account")
+    @patch("hippius_sdk.cli_handlers.load_config")
+    def test_handle_account_list(self, mock_load_config, mock_get_active, mock_list_accounts):
         """Test the handle_account_list function."""
-        # Set up mock response from list_accounts
-        mock_list_accounts.return_value = {
-            "account1": {
-                "ss58_address": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
-                "seed_phrase_encoded": True,
-                "is_active": True,
-            },
-            "account2": {
-                "ss58_address": "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
-                "seed_phrase_encoded": False,
-            },
+        # Mock accounts
+        mock_list_accounts.return_value = {"account1": {}, "account2": {}}
+        mock_get_active.return_value = "account1"
+
+        # Mock config with account details
+        mock_config = {
+            "substrate": {
+                "accounts": {
+                    "account1": {
+                        "hippius_key": "key1",
+                        "hippius_key_encoded": False
+                    },
+                    "account2": {
+                        "hippius_key": "key2",
+                        "hippius_key_encoded": True
+                    }
+                }
+            }
         }
+        mock_load_config.return_value = mock_config
 
         # Test listing accounts
         result = handle_account_list()
 
-        # Verify the function returns successfully
+        # Verify success
         assert result == 0
-
-        # Verify list_accounts was called
-        mock_list_accounts.assert_called_once()
 
     @patch("hippius_sdk.cli_handlers.list_accounts")
     def test_handle_account_list_no_accounts(self, mock_list_accounts):
-        """Test handle_account_list with no accounts."""
-        # Set up mock response from list_accounts
+        """Test the handle_account_list function with no accounts."""
+        # Mock no accounts
         mock_list_accounts.return_value = {}
 
-        # Test listing accounts when none exist
+        # Test listing accounts
         result = handle_account_list()
 
-        # Verify the function returns successfully
+        # Verify success (empty list is valid)
         assert result == 0
-
-        # Verify list_accounts was called
-        mock_list_accounts.assert_called_once()
-
-
-if __name__ == "__main__":
-    pytest.main()

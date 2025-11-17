@@ -21,10 +21,33 @@ from substrateinterface import Keypair
 # Define constants
 CONFIG_DIR = os.path.expanduser("~/.hippius")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+
+# Deprecated IPFS URL that should not be used
+DEPRECATED_IPFS_URL = "https://store.hippius.network"
+
+# Flag to track if we've already warned about deprecated IPFS URL
+_DEPRECATION_WARNING_SHOWN = False
+DEPRECATION_ERROR_MESSAGE = """
+Public https://store.hippius.network has been deprecated.
+Please provide a custom IPFS node URL via one of these methods:
+
+1. Environment variable:
+   export IPFS_NODE_URL=http://your-ipfs-node:5001
+
+2. Config file (~/.hippius/config.json):
+   hippius config set ipfs api_url http://your-ipfs-node:5001
+
+3. Use local IPFS node:
+   hippius config set ipfs local_ipfs true
+
+If none of this makes sense to you, we suggest you use our S3 endpoint
+instead of the CLI app to interact with Hippius.
+Documentation: https://docs.hippius.com/storage/s3/integration
+"""
+
 DEFAULT_CONFIG = {
     "ipfs": {
-        "gateway": "https://get.hippius.network",
-        "api_url": "https://store.hippius.network",
+        "api_url": None,
         "local_ipfs": False,
     },
     "substrate": {
@@ -35,6 +58,12 @@ DEFAULT_CONFIG = {
         "default_miners": [],
         "active_account": None,  # Name of the active account
         "accounts": {},  # Dictionary of accounts with names as keys
+    },
+    "hippius": {
+        "api_url": "https://api.hippius.com/api",
+        "hippius_key": None,
+        "hippius_key_encoded": False,
+        "hippius_key_salt": None,  # Salt for password-based encryption
     },
     "encryption": {
         "encrypt_by_default": False,
@@ -66,6 +95,28 @@ def ensure_config_dir() -> None:
             print(f"Warning: Could not create configuration directory: {e}")
 
 
+def validate_ipfs_node_url(api_url: Optional[str]) -> Optional[str]:
+    """
+    Validate IPFS node URL and check for deprecated values.
+
+    Args:
+        api_url: The IPFS node URL to validate
+
+    Returns:
+        The URL if valid
+
+    Raises:
+        ValueError: If the URL is deprecated or missing
+    """
+    if api_url and DEPRECATED_IPFS_URL in api_url:
+        raise ValueError(DEPRECATION_ERROR_MESSAGE)
+
+    if not api_url:
+        raise ValueError(DEPRECATION_ERROR_MESSAGE)
+
+    return api_url
+
+
 def load_config() -> Dict[str, Any]:
     """
     Load configuration from the config file.
@@ -89,6 +140,16 @@ def load_config() -> Dict[str, Any]:
         for section, defaults in DEFAULT_CONFIG.items():
             if section not in config:
                 config[section] = defaults
+
+        # Warn if deprecated IPFS URL is configured (unless local_ipfs is enabled)
+        # Only show warning once per process
+        global _DEPRECATION_WARNING_SHOWN
+        if not _DEPRECATION_WARNING_SHOWN and not config.get("ipfs", {}).get("local_ipfs", False):
+            api_url = config.get("ipfs", {}).get("api_url")
+            if api_url and DEPRECATED_IPFS_URL in api_url:
+                print(f"\nWARNING: Deprecated IPFS node URL detected in config!")
+                print(DEPRECATION_ERROR_MESSAGE)
+                _DEPRECATION_WARNING_SHOWN = True
 
         return config
     except Exception as e:
@@ -308,87 +369,75 @@ def decrypt_with_password(encrypted_data: str, salt: str, password: str) -> str:
     return decrypted_data.decode("utf-8")
 
 
-def encrypt_seed_phrase(
-    seed_phrase: str, password: Optional[str] = None, account_name: Optional[str] = None
+def encrypt_hippius_key(
+    hippius_key: str, password: Optional[str] = None, account_name: Optional[str] = None
 ) -> bool:
     """
-    Encrypt the substrate seed phrase using password-based encryption.
+    Encrypt the HIPPIUS_KEY using password-based encryption.
 
     Args:
-        seed_phrase: The plain text seed phrase to encrypt
+        hippius_key: The plain text HIPPIUS_KEY to encrypt
         password: Optional password (if None, will prompt)
         account_name: Optional name for the account (if None, uses active account)
 
     Returns:
         bool: True if encryption and saving was successful, False otherwise
     """
-    try:
-        # Get password from user if not provided
-        if password is None:
-            password = getpass.getpass("Enter password to encrypt seed phrase: ")
-            password_confirm = getpass.getpass("Confirm password: ")
+    # Get password from user if not provided
+    if password is None:
+        password = getpass.getpass("Enter password to encrypt HIPPIUS_KEY: ")
+        password_confirm = getpass.getpass("Confirm password: ")
 
-            if password != password_confirm:
-                raise ValueError("Passwords do not match")
+        if password != password_confirm:
+            raise ValueError("Passwords do not match")
 
-        # Encrypt the seed phrase
-        encrypted_data, salt = encrypt_with_password(seed_phrase, password)
+    # Encrypt the HIPPIUS_KEY
+    encrypted_data, salt = encrypt_with_password(hippius_key, password)
 
-        # Get the SS58 address from the seed phrase
-        ss58_address = None
-        try:
-            keypair = Keypair.create_from_mnemonic(seed_phrase)
-            ss58_address = keypair.ss58_address
-        except Exception as e:
-            print(f"Warning: Could not derive SS58 address: {e}")
+    config = load_config()
 
-        config = load_config()
+    # Use multi-account mode
+    # Use active account if no account specified
+    name_to_use = account_name
+    if name_to_use is None:
+        name_to_use = config["substrate"].get("active_account")
+        if not name_to_use:
+            # If no active account, we need a name
+            print("Error: No account name specified and no active account")
+            return False
 
-        # Only use multi-account mode
-        # Use active account if no account specified
-        name_to_use = account_name
-        if name_to_use is None:
-            name_to_use = config["substrate"].get("active_account")
-            if not name_to_use:
-                # If no active account, we need a name
-                print("Error: No account name specified and no active account")
-                return False
+    # Ensure accounts structure exists
+    if "accounts" not in config["substrate"]:
+        config["substrate"]["accounts"] = {}
 
-        # Ensure accounts structure exists
-        if "accounts" not in config["substrate"]:
-            config["substrate"]["accounts"] = {}
+    # Get or create account data
+    if name_to_use not in config["substrate"]["accounts"]:
+        config["substrate"]["accounts"][name_to_use] = {}
 
-        # Store the account data
-        config["substrate"]["accounts"][name_to_use] = {
-            "seed_phrase": encrypted_data,
-            "seed_phrase_encoded": True,
-            "seed_phrase_salt": salt,
-            "ss58_address": ss58_address,
-        }
+    # Store the HIPPIUS_KEY data
+    config["substrate"]["accounts"][name_to_use]["hippius_key"] = encrypted_data
+    config["substrate"]["accounts"][name_to_use]["hippius_key_encoded"] = True
+    config["substrate"]["accounts"][name_to_use]["hippius_key_salt"] = salt
 
-        # Set as active account if no active account exists
-        if not config["substrate"].get("active_account"):
-            config["substrate"]["active_account"] = name_to_use
+    # Set as active account if no active account exists
+    if not config["substrate"].get("active_account"):
+        config["substrate"]["active_account"] = name_to_use
 
-        return save_config(config)
-
-    except Exception as e:
-        print(f"Error encrypting seed phrase: {e}")
-        return False
+    return save_config(config)
 
 
-def decrypt_seed_phrase(
+def decrypt_hippius_key(
     password: Optional[str] = None, account_name: Optional[str] = None
 ) -> Optional[str]:
     """
-    Decrypt the substrate seed phrase using password-based decryption.
+    Decrypt the HIPPIUS_KEY using password-based decryption.
 
     Args:
         password: Optional password (if None, will prompt; if empty string, will skip password for read-only operations)
         account_name: Optional account name (if None, uses active account)
 
     Returns:
-        Optional[str]: The decrypted seed phrase, or None if decryption failed
+        Optional[str]: The decrypted HIPPIUS_KEY, or None if decryption failed
     """
     config = load_config()
 
@@ -404,37 +453,36 @@ def decrypt_seed_phrase(
         return None
 
     account_data = config["substrate"]["accounts"][name_to_use]
-    is_encoded = account_data.get("seed_phrase_encoded", False)
+    is_encoded = account_data.get("hippius_key_encoded", False)
 
     if not is_encoded:
-        return account_data.get("seed_phrase")
+        return account_data.get("hippius_key")
 
-    encrypted_data = account_data.get("seed_phrase")
-    salt = account_data.get("seed_phrase_salt")
+    encrypted_data = account_data.get("hippius_key")
+    salt = account_data.get("hippius_key_salt")
 
     if not encrypted_data or not salt:
-        print("Error: No encrypted seed phrase found or missing salt")
+        print("Error: No encrypted HIPPIUS_KEY found or missing salt")
         return None
 
     # Check if we're in skip-password mode (empty string)
-    # This is used for read-only operations that don't need blockchain interaction
+    # This is used for read-only operations that don't need the key
     if password == "":
-        # Don't print a message as it's confusing to the user
         return None
 
     # Get password from user if not provided
     if password is None:
-        password = getpass.getpass("Enter password to decrypt seed phrase: \n\n")
+        password = getpass.getpass("Enter password to decrypt HIPPIUS_KEY: \n\n")
 
-    # Decrypt the seed phrase
+    # Decrypt the HIPPIUS_KEY
     return decrypt_with_password(encrypted_data, salt, password)
 
 
-def get_seed_phrase(
+def get_hippius_key(
     password: Optional[str] = None, account_name: Optional[str] = None
 ) -> Optional[str]:
     """
-    Get the substrate seed phrase from configuration, decrypting if necessary.
+    Get the HIPPIUS_KEY from configuration, decrypting if necessary.
 
     Args:
         password: Optional password for decryption (if None and needed, will prompt;
@@ -442,7 +490,7 @@ def get_seed_phrase(
         account_name: Optional account name (if None, uses active account)
 
     Returns:
-        Optional[str]: The seed phrase, or None if not available
+        Optional[str]: The HIPPIUS_KEY, or None if not available
     """
     config = load_config()
 
@@ -458,31 +506,31 @@ def get_seed_phrase(
         return None
 
     account_data = config["substrate"]["accounts"][name_to_use]
-    is_encoded = account_data.get("seed_phrase_encoded", False)
+    is_encoded = account_data.get("hippius_key_encoded", False)
 
     # If password is an empty string, this indicates we're doing a read-only operation
-    # that doesn't require the seed phrase, so we can return None
+    # that doesn't require the HIPPIUS_KEY, so we can return None
     if password == "" and is_encoded:
         return None
 
     if is_encoded:
-        return decrypt_seed_phrase(password, name_to_use)
+        return decrypt_hippius_key(password, name_to_use)
     else:
-        return account_data.get("seed_phrase")
+        return account_data.get("hippius_key")
 
 
-def set_seed_phrase(
-    seed_phrase: str,
+def set_hippius_key(
+    hippius_key: str,
     encode: bool = False,
     password: Optional[str] = None,
     account_name: Optional[str] = None,
 ) -> bool:
     """
-    Set the substrate seed phrase in configuration, with optional encryption.
+    Set the HIPPIUS_KEY in configuration, with optional encryption.
 
     Args:
-        seed_phrase: The seed phrase to store
-        encode: Whether to encrypt the seed phrase (requires password)
+        hippius_key: The HIPPIUS_KEY to store
+        encode: Whether to encrypt the HIPPIUS_KEY (requires password)
         password: Optional password for encryption (if None and encode=True, will prompt)
         account_name: Optional name for the account (if None, uses active account)
 
@@ -490,17 +538,9 @@ def set_seed_phrase(
         bool: True if saving was successful, False otherwise
     """
     if encode:
-        return encrypt_seed_phrase(seed_phrase, password, account_name)
+        return encrypt_hippius_key(hippius_key, password, account_name)
     else:
         config = load_config()
-
-        # Get the SS58 address from the seed phrase
-        ss58_address = None
-        try:
-            keypair = Keypair.create_from_mnemonic(seed_phrase)
-            ss58_address = keypair.ss58_address
-        except Exception as e:
-            print(f"Warning: Could not derive SS58 address: {e}")
 
         # Only use multi-account mode
         # Use active account if no account specified
@@ -516,13 +556,14 @@ def set_seed_phrase(
         if "accounts" not in config["substrate"]:
             config["substrate"]["accounts"] = {}
 
-        # Store the account data
-        config["substrate"]["accounts"][name_to_use] = {
-            "seed_phrase": seed_phrase,
-            "seed_phrase_encoded": False,
-            "seed_phrase_salt": None,
-            "ss58_address": ss58_address,
-        }
+        # Get or create account data
+        if name_to_use not in config["substrate"]["accounts"]:
+            config["substrate"]["accounts"][name_to_use] = {}
+
+        # Store the HIPPIUS_KEY data
+        config["substrate"]["accounts"][name_to_use]["hippius_key"] = hippius_key
+        config["substrate"]["accounts"][name_to_use]["hippius_key_encoded"] = False
+        config["substrate"]["accounts"][name_to_use]["hippius_key_salt"] = None
 
         # Set as active account if no active account exists
         if not config["substrate"].get("active_account"):
@@ -658,13 +699,18 @@ def initialize_from_env() -> None:
     changed = False
 
     # IPFS settings
-    if os.getenv("IPFS_GATEWAY"):
-        config["ipfs"]["gateway"] = os.getenv("IPFS_GATEWAY")
-        changed = True
+    # Check for new IPFS_NODE_URL first, then fall back to old IPFS_API_URL for backward compatibility
+    node_url = os.getenv("IPFS_NODE_URL") or os.getenv("IPFS_API_URL")
+    if node_url:
+        if os.getenv("IPFS_API_URL") and not os.getenv("IPFS_NODE_URL"):
+            print("\nWARNING: IPFS_API_URL is deprecated. Please use IPFS_NODE_URL instead.")
 
-    if os.getenv("IPFS_API_URL"):
-        config["ipfs"]["api_url"] = os.getenv("IPFS_API_URL")
-        changed = True
+        if DEPRECATED_IPFS_URL in node_url:
+            print(f"\nERROR: Cannot use deprecated IPFS node URL!")
+            print(DEPRECATION_ERROR_MESSAGE)
+        else:
+            config["ipfs"]["api_url"] = node_url
+            changed = True
 
     # Substrate settings
     if os.getenv("SUBSTRATE_URL"):
@@ -715,6 +761,23 @@ def reset_config() -> bool:
         bool: True if reset was successful, False otherwise
     """
     return save_config(DEFAULT_CONFIG.copy())
+
+
+def get_seed_phrase() -> Optional[str]:
+    """
+    Get seed phrase from user input.
+    Prompts the user to paste their miner seed phrase securely.
+
+    Returns:
+        Optional[str]: The seed phrase entered by the user, or None if empty
+    """
+    import getpass
+    from hippius_sdk.cli_rich import info
+
+    info("Please enter your miner seed phrase (12 or 24 words):")
+    seed_phrase = getpass.getpass("Seed phrase: ").strip()
+
+    return seed_phrase if seed_phrase else None
 
 
 # Initialize configuration on module import

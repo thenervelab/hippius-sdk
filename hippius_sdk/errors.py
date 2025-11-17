@@ -21,6 +21,18 @@ class HippiusIPFSError(HippiusError):
     pass
 
 
+class HippiusAPIError(HippiusError):
+    """Base exception for API-related errors."""
+
+    pass
+
+
+class HippiusAuthenticationError(HippiusAPIError):
+    """Raised when there's an authentication issue with the API."""
+
+    pass
+
+
 # Specific blockchain errors
 class HippiusNotFoundError(HippiusSubstrateError):
     """Raised when a resource is not found on the blockchain."""

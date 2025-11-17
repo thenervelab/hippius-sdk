@@ -17,7 +17,6 @@ class AsyncIPFSClient:
     def __init__(
         self,
         api_url: str = "http://localhost:5001",
-        gateway: str = "https://get.hippius.network",
     ):
         # Handle multiaddr format
         if api_url and api_url.startswith("/"):
@@ -40,7 +39,6 @@ class AsyncIPFSClient:
                 api_url = "http://localhost:5001"
         # Normalize URLs and avoid trailing slash to prevent "//" when joining paths
         self.api_url = api_url.rstrip("/")
-        self.gateway = gateway.rstrip("/")
         # Do not follow redirects automatically to avoid POST→GET on 301
         self.client = httpx.AsyncClient(timeout=300, follow_redirects=False)
 
@@ -215,8 +213,9 @@ class AsyncIPFSClient:
             True if content exists, False otherwise
         """
         try:
-            await self.client.head(f"{self.gateway}/ipfs/{cid}")
-            return True
+            # Use the API to check if content exists
+            response = await self.client.post(f"{self.api_url}/api/v0/ls?arg={cid}")
+            return response.status_code == 200
         except httpx.HTTPError:
             return False
 

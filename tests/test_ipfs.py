@@ -9,9 +9,16 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import httpx
 import pytest
 import pytest_asyncio
+from dotenv import load_dotenv
 
 from hippius_sdk.ipfs import IPFSClient
 from hippius_sdk.ipfs_core import AsyncIPFSClient
+
+# Load test environment variables
+load_dotenv('.env.test', override=True)
+
+# Get IPFS API URL from environment
+IPFS_API_URL = os.getenv("IPFS_API_URL", "http://localhost:5001")
 
 
 class MockResponse:
@@ -72,7 +79,7 @@ async def mock_dir_response():
 async def async_ipfs_client(monkeypatch, mock_httpx_client):
     """Create an AsyncIPFSClient with mocked httpx client."""
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: mock_httpx_client)
-    client = AsyncIPFSClient(api_url="http://localhost:5001")
+    client = AsyncIPFSClient(api_url=IPFS_API_URL)
     return client
 
 
@@ -316,7 +323,7 @@ async def test_add_directory(
 async def test_client_context_manager(mock_httpx_client):
     """Test using the AsyncIPFSClient as a context manager."""
     with patch("httpx.AsyncClient", return_value=mock_httpx_client):
-        async with AsyncIPFSClient() as client:
+        async with AsyncIPFSClient(api_url=IPFS_API_URL) as client:
             result = await client.add_str("Test context manager")
             assert result == {"Hash": "QmTest123", "Size": "123"}
 
@@ -366,7 +373,7 @@ async def test_ipfs_client_upload_file(temp_file):
     with patch.dict(
         "hippius_sdk.ipfs.__dict__", {"AsyncIPFSClient": mock_async_ipfs_client}
     ):
-        client = IPFSClient(api_url="http://localhost:5001")
+        client = IPFSClient(api_url=IPFS_API_URL)
         result = await client.upload_file(temp_file)
 
         # Verify AsyncIPFSClient.add_file was called
@@ -396,7 +403,7 @@ async def test_ipfs_client_upload_directory(temp_dir):
     with patch.dict(
         "hippius_sdk.ipfs.__dict__", {"AsyncIPFSClient": mock_async_ipfs_client}
     ):
-        client = IPFSClient(api_url="http://localhost:5001")
+        client = IPFSClient(api_url=IPFS_API_URL)
         result = await client.upload_directory(temp_dir)
 
         # Verify AsyncIPFSClient.add_directory was called
@@ -420,7 +427,7 @@ async def test_ipfs_client_cat():
     with patch.dict(
         "hippius_sdk.ipfs.__dict__", {"AsyncIPFSClient": mock_async_ipfs_client}
     ):
-        client = IPFSClient(api_url="http://localhost:5001")
+        client = IPFSClient(api_url=IPFS_API_URL)
         result = await client.cat("QmTest123")
 
         # Verify AsyncIPFSClient.cat was called
@@ -444,7 +451,7 @@ async def test_ipfs_client_exists():
     with patch.dict(
         "hippius_sdk.ipfs.__dict__", {"AsyncIPFSClient": mock_async_ipfs_client}
     ):
-        client = IPFSClient(api_url="http://localhost:5001")
+        client = IPFSClient(api_url=IPFS_API_URL)
         result = await client.exists("QmTest123")
 
         # Verify AsyncIPFSClient.ls was called
@@ -467,7 +474,7 @@ async def test_ipfs_client_pin():
     with patch.dict(
         "hippius_sdk.ipfs.__dict__", {"AsyncIPFSClient": mock_async_ipfs_client}
     ):
-        client = IPFSClient(api_url="http://localhost:5001")
+        client = IPFSClient(api_url=IPFS_API_URL)
         result = await client.pin("QmTest123")
 
         # Verify AsyncIPFSClient.pin was called
@@ -501,7 +508,7 @@ async def test_ipfs_client_download_file(tmp_path):
         }
 
     with patch("hippius_sdk.ipfs.IPFSClient.download_file", mock_download_impl):
-        client = IPFSClient(gateway="https://ipfs.example.com")
+        client = IPFSClient(api_url=IPFS_API_URL, gateway="https://ipfs.example.com")
         result = await client.download_file(test_cid, output_path)
 
         assert os.path.exists(output_path)

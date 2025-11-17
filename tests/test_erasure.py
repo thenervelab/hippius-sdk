@@ -45,30 +45,18 @@ DEFAULT_K = 3
 DEFAULT_M = 5
 
 
-def is_ipfs_available():
-    """Check if IPFS node is available at the configured URL."""
-    try:
-        import requests
-
-        # IPFS API requires POST method for most endpoints
-        response = requests.post(f"{IPFS_API_URL}/api/v0/version", timeout=5)
-        return response.status_code == 200
-    except Exception as e:
-        print(f"IPFS connection error: {str(e)}")
-        return False
-
-
 @pytest.fixture
-def client():
-    """Create and return a HippiusClient configured for local IPFS."""
-    # Skip tests if IPFS is not available
-    if not is_ipfs_available():
-        pytest.skip("IPFS node not available")
+def client(docker_ipfs_node):
+    """
+    Create and return a HippiusClient configured for Docker IPFS.
 
-    # Create client with timeout settings
+    Args:
+        docker_ipfs_node: Session-scoped fixture that provides Docker IPFS API URL
+    """
+    # Create client with Docker IPFS settings
     client = HippiusClient(
         ipfs_gateway=IPFS_GATEWAY,
-        ipfs_api_url=IPFS_API_URL,
+        ipfs_api_url=docker_ipfs_node,  # Use Docker IPFS from fixture
     )
 
     # Verify client is properly instantiated
@@ -271,9 +259,9 @@ async def upload_shares_to_ipfs(
                 lambda: client.upload_file(share_path)
             )
 
-            # Validate CID format (should start with Qm or bafy)
+            # Validate CID format (CIDv0 starts with Qm, CIDv1 starts with baf)
             assert result["cid"].startswith("Qm") or result["cid"].startswith(
-                "bafy"
+                "baf"
             ), f"Invalid CID format: {result['cid']}"
 
             share_info.append({"index": i, "cid": result["cid"], "size": len(share)})
@@ -1137,6 +1125,64 @@ async def test_large_file_chunked(client, temp_dir):
         pytest.fail(f"Large file chunked test failed: {str(e)}")
     finally:
         cleanup.cleanup()
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_erasure_coding_with_pinning(hippius_client, temp_test_file):
+    """Test erasure coding with chunk and metadata pinning to Hippius API."""
+    if not ZFEC_AVAILABLE:
+        pytest.skip("zfec not installed")
+
+    result = await hippius_client.ipfs_client.store_erasure_coded_file(
+        file_path=temp_test_file,
+        k=3,
+        m=5,
+        api_client=hippius_client.api_client,
+        pin_chunks=True,
+        pin_metadata=True,
+        verbose=False,
+    )
+
+    assert "metadata_cid" in result
+    assert "metadata" in result
+
+    assert result["metadata_pinned"] is True
+    assert "metadata_pin_request_id" in result
+    assert result["metadata_pin_request_id"] is not None
+
+    metadata = result["metadata"]
+    assert "chunks" in metadata
+
+    for chunk in metadata["chunks"]:
+        assert "cid" in chunk
+        assert "pin_request_id" in chunk
+        assert chunk["pin_request_id"] is not None
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_erasure_coding_without_pinning(hippius_client, temp_test_file):
+    """Test erasure coding without API pinning."""
+    if not ZFEC_AVAILABLE:
+        pytest.skip("zfec not installed")
+
+    result = await hippius_client.ipfs_client.store_erasure_coded_file(
+        file_path=temp_test_file,
+        k=3,
+        m=5,
+        pin_chunks=False,
+        pin_metadata=False,
+        verbose=False,
+    )
+
+    assert "metadata_cid" in result
+    assert result["metadata_pinned"] is False
+
+    metadata = result["metadata"]
+
+    for chunk in metadata["chunks"]:
+        assert "pin_request_id" not in chunk or chunk.get("pin_request_id") is None
 
 
 if __name__ == "__main__":

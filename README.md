@@ -26,19 +26,49 @@ poetry add hippius
 poetry add hippius -E clipboard
 ```
 
+## ⚠️ IMPORTANT: IPFS Node Configuration Required
+
+**The public IPFS node (`https://store.hippius.network`) has been deprecated and is no longer available as a default.**
+
+You must configure your own IPFS node using one of these methods:
+
+### Option 1: Environment Variable
+```bash
+export IPFS_NODE_URL=http://your-ipfs-node:5001
+```
+
+### Option 2: Config File
+```bash
+hippius config set ipfs.api_url http://your-ipfs-node:5001
+```
+
+### Option 3: Local IPFS Node
+```bash
+hippius config set ipfs.local_ipfs true
+# Requires IPFS daemon running on localhost:5001
+```
+
+### Alternative: Use S3 Endpoint
+If managing an IPFS node is not suitable for your use case, we recommend using our S3-compatible endpoint instead:
+- [S3 Integration Documentation](https://docs.hippius.com/storage/s3/integration)
+
+---
+
 ## Quick Start
 
 ```python
 import asyncio
 from hippius_sdk import HippiusClient
 
-# Initialize the client with default connections to Hippius network
-client = HippiusClient()
-
-# Or specify custom endpoints
+# Initialize with your own IPFS node
 client = HippiusClient(
-    ipfs_gateway="https://get.hippius.network",                       # For downloads (default)
-    ipfs_api_url="https://store.hippius.network",  # For uploads (default)
+    ipfs_gateway="https://your-gateway.example.com",
+    ipfs_api_url="http://your-ipfs-node:5001",
+)
+
+# Or use local IPFS node
+client = HippiusClient(
+    ipfs_api_url="http://localhost:5001"
 )
 
 async def main():
@@ -421,8 +451,8 @@ The Hippius SDK includes a powerful command-line interface (CLI) that provides a
 # Get help and list available commands
 hippius --help
 
-# Set global options
-hippius --gateway https://get.hippius.network --api-url https://store.hippius.network --verbose
+# Set global options (requires configured IPFS node)
+hippius --gateway https://get.hippius.network --api-url http://your-ipfs-node:5001 --verbose
 ```
 
 ### IPFS Operations
@@ -514,11 +544,9 @@ The `ec-files` command has been optimized for performance and can now handle lar
 The CLI automatically reads from your `.env` file for common settings:
 
 ```
+HIPPIUS_KEY=your_hippius_key_here
 IPFS_GATEWAY=https://get.hippius.network
-IPFS_API_URL=https://store.hippius.network
-SUBSTRATE_URL=wss://rpc.hippius.network
-SUBSTRATE_SEED_PHRASE="your twelve word seed phrase..."
-SUBSTRATE_DEFAULT_MINERS=miner1,miner2,miner3
+IPFS_NODE_URL=http://localhost:5001  # Your IPFS node URL (required)
 HIPPIUS_ENCRYPTION_KEY=your-base64-encoded-key
 HIPPIUS_ENCRYPT_BY_DEFAULT=true|false
 ```
@@ -532,13 +560,15 @@ import asyncio
 from hippius_sdk import IPFSClient
 
 async def main():
-    # Initialize the IPFS client (uses Hippius relay node by default)
-    ipfs_client = IPFSClient()
-    
-    # Or specify custom endpoints
+    # Initialize the IPFS client with your own IPFS node
     ipfs_client = IPFSClient(
-        gateway="https://get.hippius.network",                       # For downloads
-        api_url="http://relay-fr.hippius.network:5001"   # For uploads
+        gateway="https://get.hippius.network",  # For downloads
+        api_url="http://your-ipfs-node:5001"     # For uploads (required)
+    )
+
+    # Or use local IPFS node
+    ipfs_client = IPFSClient(
+        api_url="http://localhost:5001"
     )
     
     # Upload a file
@@ -627,14 +657,12 @@ The configuration is organized in the following sections:
 {
   "ipfs": {
     "gateway": "https://get.hippius.network",
-    "api_url": "https://store.hippius.network",
+    "api_url": "http://your-ipfs-node:5001",
     "local_ipfs": false
   },
   "substrate": {
-    "url": "wss://rpc.hippius.network",
-    "seed_phrase": null,
-    "default_miners": [],
-    "default_address": null
+    "accounts": {},
+    "active_account": null
   },
   "encryption": {
     "encrypt_by_default": false,
@@ -848,60 +876,77 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-### Seed Phrase Management
+### Account Management with HIPPIUS_KEY
 
-For enhanced security, Hippius SDK supports encrypting your Substrate seed phrase with a password:
+The Hippius SDK uses HIPPIUS_KEY for authentication. For enhanced security, you can encrypt your HIPPIUS_KEY with a password:
 
 ```bash
-# Set a seed phrase in plain text
-hippius seed set "your twelve word seed phrase here"
+# Login with your HIPPIUS_KEY
+hippius account login
+# You will be prompted for:
+# - Account name
+# - HIPPIUS_KEY (from https://hippius.com/account/api-keys)
+# - Optional encryption password
 
-# Set a seed phrase and encrypt it with a password
-hippius seed set "your twelve word seed phrase here" --encode
+# Check account status
+hippius account info
+
+# Encrypt an existing HIPPIUS_KEY
+hippius account encode --name myaccount
 # You will be prompted to enter and confirm a password
 
-# Check the status of your seed phrase
-hippius seed status
+# List all accounts
+hippius account list
 
-# Encrypt an existing seed phrase with a password
-hippius seed encode
-# You will be prompted to enter and confirm a password
+# Switch between accounts
+hippius account switch myaccount
 
-# Temporarily decrypt and view your seed phrase
-hippius seed decode
-# You will be prompted to enter your password
+# Export account (for backup)
+hippius account export --name myaccount --file backup.json
+
+# Import account
+hippius account import --file backup.json
 ```
 
 > **Note:** Password-based encryption requires both the `pynacl` and `cryptography` Python packages, which are included as dependencies when you install Hippius SDK.
 
-To use password-based seed phrase encryption:
-1. Set your seed phrase with encryption: `hippius seed set "your seed phrase" --encode`
-2. You'll be prompted to enter and confirm a secure password
-3. The seed phrase will be encrypted using your password and stored safely
-4. When the SDK needs to use your seed phrase, you'll be prompted for your password
-5. Your password is never stored - it's only used temporarily to decrypt the seed phrase
+To use password-based HIPPIUS_KEY encryption:
+1. During login, choose to encrypt your HIPPIUS_KEY when prompted
+2. Enter and confirm a secure password
+3. The HIPPIUS_KEY will be encrypted using your password and stored safely
+4. When the SDK needs to use your HIPPIUS_KEY, you'll be prompted for your password
+5. Your password is never stored - it's only used temporarily to decrypt the HIPPIUS_KEY
 
 This provides enhanced security by:
-- Protecting your seed phrase with a password only you know
-- Never storing the seed phrase in plain text
+- Protecting your HIPPIUS_KEY with a password only you know
+- Never storing the HIPPIUS_KEY in plain text
 - Using strong cryptography (PBKDF2 with SHA-256) to derive encryption keys
-- Requiring your password every time the seed phrase is needed
+- Requiring your password every time operations are performed
 
-When interacting with the Hippius SDK programmatically, you can provide the password when initializing clients:
+> **Migration from v0.2.x:** If you're upgrading from an older version that used seed phrases, please see [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)
+
+When interacting with the Hippius SDK programmatically, you can provide your HIPPIUS_KEY:
 
 ```python
 import asyncio
 from hippius_sdk import HippiusClient
 
-# The client will prompt for password when needed to decrypt the seed phrase
+# Use HIPPIUS_KEY from environment
 client = HippiusClient()
 
-# Or you can provide a password when initializing
-client = HippiusClient(seed_phrase_password="your-password")
+# Or provide HIPPIUS_KEY explicitly
+client = HippiusClient(hippius_key="your_hippius_key")
+
+# If your key is encrypted, provide the password
+client = HippiusClient(
+    hippius_key="your_encrypted_key",
+    hippius_key_password="your-password"
+)
 
 async def main():
-    # Your async code here
-    pass
+    # Upload a file
+    result = await client.upload_file("myfile.txt")
+    print(f"Uploaded: {result['cid']}")
 
 # Run the async function
 asyncio.run(main())
@@ -909,35 +954,41 @@ asyncio.run(main())
 
 ### Multi-Account Management
 
-Hippius SDK now supports managing multiple named accounts, each with their own seed phrase:
+Hippius SDK supports managing multiple named accounts, each with their own HIPPIUS_KEY:
 
 ```bash
-# Set a seed phrase for a named account
-hippius seed set "your seed phrase here" --account "my-validator"
+# Login with first account
+hippius account login
+# Enter name: my-production
+# Enter HIPPIUS_KEY: ...
+# Encrypt? Yes
 
-# Set another seed phrase for a different account
-hippius seed set "another seed phrase" --account "my-developer-account" --encode
+# Login with second account
+hippius account login
+# Enter name: my-development
+# Enter HIPPIUS_KEY: ...
+# Encrypt? No
 
 # List all configured accounts
 hippius account list
 
 # Switch the active account
-hippius account switch my-developer-account
+hippius account switch my-development
 
 # Check the status of a specific account
-hippius seed status --account my-validator
+hippius account info --name my-production
 
 # Delete an account
-hippius account delete my-developer-account
+hippius account delete my-development
 ```
 
 Key features of the multi-account system:
 
 1. **Named Accounts**: Each account has a unique name for easy identification
-2. **SS58 Address Storage**: Addresses are stored unencrypted for convenient access
+2. **Independent HIPPIUS_KEYs**: Each account can use a different HIPPIUS_KEY
 3. **Active Account**: One account is designated as "active" and used by default
-4. **Shared Password**: All accounts use the same password for encryption
-5. **Separate Encryption**: Each account can choose whether to encrypt its seed phrase
+4. **Optional Encryption**: Each account can choose whether to encrypt its HIPPIUS_KEY
+5. **Easy Switching**: Quickly switch between accounts for different projects
 
 To use multiple accounts in your code:
 
@@ -952,15 +1003,15 @@ async def main():
         print(f"{name}: {data.get('ss58_address')}")
     
     # Switch the active account
-    set_active_account("my-validator")
-    
-    # Create a client with the active account
-    client = HippiusClient(seed_phrase_password="your-password")
-    
+    set_active_account("my-production")
+
+    # Create a client with the active account (if encrypted)
+    client = HippiusClient(hippius_key_password="your-password")
+
     # Or specify a different account to use
     client = HippiusClient(
-        account_name="my-developer-account",
-        seed_phrase_password="your-password"
+        account_name="my-development",
+        hippius_key_password="your-password"
     )
 
 # Run the async function

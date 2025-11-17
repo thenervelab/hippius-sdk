@@ -54,13 +54,10 @@ examples:
   
   # View your stored files
   hippius files
-  
+
   # View all miners for stored files
   hippius files --all-miners
-  
-  # Check file pinning status
-  hippius pinning-status
-  
+
   # Erasure code a file (Reed-Solomon)
   hippius erasure-code large_file.mp4 --k 3 --m 5
   
@@ -95,14 +92,9 @@ examples:
 
     # Optional arguments for all commands
     parser.add_argument(
-        "--gateway",
-        default=get_config_value("ipfs", "gateway", "https://get.hippius.network"),
-        help="IPFS gateway URL for downloads (default: from config or https://get.hippius.network)",
-    )
-    parser.add_argument(
         "--api-url",
-        default=get_config_value("ipfs", "api_url", "https://store.hippius.network"),
-        help="IPFS API URL for uploads (default: from config or https://store.hippius.network)",
+        default=get_config_value("ipfs", "api_url", None),
+        help="IPFS API URL for uploads (required if not configured via config file or IPFS_NODE_URL env variable)",
     )
     parser.add_argument(
         "--local-ipfs",
@@ -152,7 +144,15 @@ examples:
     )
     parser.add_argument(
         "--password",
-        help="Password to decrypt the seed phrase if needed (will prompt if required and not provided)",
+        help="Password to decrypt the seed phrase if needed (DEPRECATED - use --hippius-key-password)",
+    )
+    parser.add_argument(
+        "--hippius-key",
+        help="HIPPIUS_KEY for API authentication (uses config if not specified)",
+    )
+    parser.add_argument(
+        "--hippius-key-password",
+        help="Password to decrypt the HIPPIUS_KEY if needed (will prompt if required and not provided)",
     )
     parser.add_argument(
         "--account",
@@ -168,7 +168,6 @@ examples:
     add_market_commands(subparsers)
     add_erasure_coding_commands(subparsers)
     add_config_commands(subparsers)
-    add_seed_commands(subparsers)
     add_account_commands(subparsers)
     add_address_commands(subparsers)
     add_miner_commands(subparsers)
@@ -255,20 +254,6 @@ def add_storage_commands(subparsers):
         help="Don't publish files to IPFS or store on the blockchain (local only)",
     )
 
-    # Pinning status command
-    pinning_status_parser = subparsers.add_parser(
-        "pinning-status", help="Check the status of file pinning requests"
-    )
-    pinning_status_parser.add_argument(
-        "--account_address",
-        help="Substrate account to view pins for (defaults to your keyfile account)",
-    )
-    pinning_status_parser.add_argument(
-        "--no-contents",
-        action="store_true",
-        help="Don't fetch additional content info for pins",
-    )
-
     # Delete command
     delete_parser = subparsers.add_parser(
         "delete",
@@ -339,6 +324,26 @@ def add_market_commands(subparsers):
         "--all-miners",
         action="store_true",
         help="Show all miners for each file",
+    )
+    files_parser.add_argument(
+        "--include-pending",
+        action="store_true",
+        help="Include files with pending status",
+    )
+    files_parser.add_argument(
+        "--search",
+        type=str,
+        help="Search term to filter files",
+    )
+    files_parser.add_argument(
+        "--ordering",
+        type=str,
+        help="Field to use when ordering results",
+    )
+    files_parser.add_argument(
+        "--page",
+        type=int,
+        help="Page number within paginated result set",
     )
 
     files_parser.add_argument(
@@ -470,59 +475,6 @@ def add_config_commands(subparsers):
     )
 
 
-def add_seed_commands(subparsers):
-    """Add seed phrase commands to the parser."""
-    # Seed command
-    seed_parser = subparsers.add_parser("seed", help="Manage substrate seed phrase")
-    seed_subparsers = seed_parser.add_subparsers(
-        dest="seed_action", help="Seed phrase action"
-    )
-
-    # Set seed phrase
-    set_seed_parser = seed_subparsers.add_parser(
-        "set", help="Set the substrate seed phrase"
-    )
-    set_seed_parser.add_argument(
-        "seed_phrase", help="Substrate seed phrase (12 or 24 words)"
-    )
-    set_seed_parser.add_argument(
-        "--encode",
-        action="store_true",
-        help="Encrypt the seed phrase with a password",
-    )
-    set_seed_parser.add_argument(
-        "--account",
-        help="Account name to use (uses default if not specified)",
-    )
-
-    # Encode seed phrase
-    encode_seed_parser = seed_subparsers.add_parser(
-        "encode", help="Encrypt the existing seed phrase"
-    )
-    encode_seed_parser.add_argument(
-        "--account",
-        help="Account name to use (uses default if not specified)",
-    )
-
-    # Decode seed phrase
-    decode_seed_parser = seed_subparsers.add_parser(
-        "decode", help="Temporarily decrypt and display the seed phrase"
-    )
-    decode_seed_parser.add_argument(
-        "--account",
-        help="Account name to use (uses default if not specified)",
-    )
-
-    # Status seed phrase
-    status_seed_parser = seed_subparsers.add_parser(
-        "status", help="Check the status of the configured seed phrase"
-    )
-    status_seed_parser.add_argument(
-        "--account",
-        help="Account name to check (uses default if not specified)",
-    )
-
-
 def add_account_commands(subparsers):
     """Add account management commands to the parser."""
     # Account command
@@ -533,21 +485,6 @@ def add_account_commands(subparsers):
 
     # List accounts
     account_subparsers.add_parser("list", help="List all accounts")
-
-    # Create account
-    create_account_parser = account_subparsers.add_parser(
-        "create", help="Create a new account with a generated seed phrase"
-    )
-    create_account_parser.add_argument(
-        "--name",
-        required=True,
-        help="Name for the new account",
-    )
-    create_account_parser.add_argument(
-        "--encrypt",
-        action="store_true",
-        help="Encrypt the seed phrase with a password",
-    )
 
     # Export account
     export_account_parser = account_subparsers.add_parser(

@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: hippius-test-ipfs
+    ports:
+      - "5001:5001"  # API
+      - "8080:8080"  # Gateway
+    environment:
+      - IPFS_PROFILE=test
+      - IPFS_PATH=/data/ipfs
+    volumes:
+      - ipfs-test-data:/data/ipfs
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD-SHELL", "ipfs id || exit 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  ipfs-test-data:
+    driver: local
+
+networks:
+  test-network:
+    driver: bridge

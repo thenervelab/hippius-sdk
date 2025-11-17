@@ -56,25 +56,50 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Start Docker IPFS for tests
+      run: |
+        docker compose -f docker-compose.test.yml up -d
+        echo "Waiting for IPFS to be healthy..."
+        sleep 15
+        docker compose -f docker-compose.test.yml ps
+
     - name: Install Poetry
       uses: snok/install-poetry@v1
       with:
         version: 1.5.1
         virtualenvs-create: true
         virtualenvs-in-project: true
+
     - name: Install dependencies
       run: |
         poetry install --all-extras
+
     - name: Check formatting with black
       run: |
         poetry run black --check .
-    - name: Test with pytest
+
+    - name: Create test environment file
       run: |
-        # Simplified test approach to ensure CI passes
-        # Run a minimal check that will pass even if some tests fail
-        poetry run python -c "import hippius; print('Basic import test passed!')" || true
-        # We'll skip the full test suite for now until tests are updated
-        # poetry run pytest
+        cat > .env.test << EOF
+        # Testing Configuration
+        HIPPIUS_KEY=${{ secrets.HIPPIUS_KEY }}
+        API_URL=https://api.hippius.com/api
+        IPFS_API_URL=http://localhost:5001
+        EOF
+
+    - name: Run unit and integration tests (with e2e if HIPPIUS_KEY available)
+      run: |
+        # Run all tests. E2E tests will run if HIPPIUS_KEY secret is set, otherwise they'll be skipped
+        poetry run pytest tests/ -v --tb=short
+
+    - name: Stop Docker IPFS
+      if: always()
+      run: |
+        docker compose -f docker-compose.test.yml down -v
 
   build-and-publish:
     name: Build and publish to PyPI

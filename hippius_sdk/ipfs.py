@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Union, AsyncIterator
 import httpx
 from pydantic import BaseModel
 
-from hippius_sdk.config import get_config_value, get_encryption_key
+from hippius_sdk.config import get_config_value, get_encryption_key, validate_ipfs_node_url
 from hippius_sdk.errors import HippiusIPFSError, HippiusSubstrateError
 from hippius_sdk.ipfs_core import AsyncIPFSClient
 from hippius_sdk.key_storage import (
@@ -26,7 +26,6 @@ from hippius_sdk.key_storage import (
     get_key_for_subaccount,
     is_key_storage_enabled,
 )
-from hippius_sdk.substrate import FileInput, SubstrateClient
 from hippius_sdk.utils import format_cid, format_size
 
 # Import PyNaCl for encryption
@@ -52,40 +51,6 @@ PARALLEL_ORIGINAL_CHUNKS = (
     15  # Maximum number of original chunks to process in parallel
 )
 
-
-class S3PublishResult(BaseModel):
-    """Result model for s3_publish method."""
-
-    cid: str
-    file_name: str
-    size_bytes: int
-    encryption_key: Optional[str]
-    tx_hash: str
-
-
-class S3PublishPin(BaseModel):
-    """Result model for s3_publish method when publish=False."""
-
-    cid: str
-    subaccount: str
-    file_path: str
-    file_name: str
-    pin_node: str
-    substrate_url: str
-
-
-class S3DownloadResult(BaseModel):
-    """Result model for s3_download method."""
-
-    cid: str
-    output_path: str
-    size_bytes: int
-    size_formatted: str
-    elapsed_seconds: float
-    decrypted: bool
-    encryption_key: Optional[str]
-
-
 # Set up logger for this module
 logger = logging.getLogger(__name__)
 
@@ -95,7 +60,6 @@ class IPFSClient:
 
     def __init__(
         self,
-        gateway: Optional[str] = None,
         api_url: Optional[str] = None,
         encrypt_by_default: Optional[bool] = None,
         encryption_key: Optional[bytes] = None,
@@ -104,39 +68,34 @@ class IPFSClient:
         Initialize the IPFS client.
 
         Args:
-            gateway: IPFS gateway URL for downloading content (from config if None)
-            api_url: IPFS API URL for uploading content (from config if None)
+            api_url: IPFS API URL for uploading/downloading content (from config if None)
                     Set to None to try to connect to a local IPFS daemon.
             encrypt_by_default: Whether to encrypt files by default (from config if None)
             encryption_key: Encryption key for NaCl secretbox (from config if None)
         """
         # Load configuration values if not explicitly provided
-        if gateway is None:
-            gateway = get_config_value("ipfs", "gateway", "https://get.hippius.network")
-
         if api_url is None:
-            api_url = get_config_value(
-                "ipfs", "api_url", "https://store.hippius.network"
-            )
-
             # Check if local IPFS is enabled in config
             if get_config_value("ipfs", "local_ipfs", False):
                 api_url = "http://localhost:5001"
+            else:
+                api_url = get_config_value("ipfs", "api_url", None)
+                # Validate the URL (will raise ValueError if missing or deprecated)
+                api_url = validate_ipfs_node_url(api_url)
 
         # Normalize to avoid double slashes when joining paths
-        self.gateway = gateway.rstrip("/")
         self.api_url = (api_url or "").rstrip("/")
 
         # Extract base URL from API URL for HTTP fallback
         self.base_url = self.api_url
 
         try:
-            self.client = AsyncIPFSClient(api_url=self.api_url, gateway=self.gateway)
+            self.client = AsyncIPFSClient(api_url=self.api_url)
         except httpx.ConnectError:
             print(
-                f"Warning: Falling back to local IPFS daemon, but still using gateway={self.gateway}"
+                f"Warning: Falling back to local IPFS daemon at {self.api_url}"
             )
-            self.client = AsyncIPFSClient(gateway=self.gateway)
+            self.client = AsyncIPFSClient(api_url=self.api_url)
 
         self._initialize_encryption(encrypt_by_default, encryption_key)
 
@@ -243,7 +202,6 @@ class IPFSClient:
         include_formatted_size: bool = True,
         encrypt: Optional[bool] = None,
         max_retries: int = 3,
-        seed_phrase: Optional[str] = None,
         file_name: str = None,
     ) -> Dict[str, Any]:
         """
@@ -254,7 +212,6 @@ class IPFSClient:
             include_formatted_size: Whether to include formatted size in the result (default: True)
             encrypt: Whether to encrypt the file (overrides default)
             max_retries: Maximum number of retry attempts (default: 3)
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
             file_name: The original file name
 
         Returns:
@@ -338,7 +295,6 @@ class IPFSClient:
         dir_path: str,
         include_formatted_size: bool = True,
         encrypt: Optional[bool] = None,
-        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Upload a directory to IPFS with optional encryption of files.
@@ -347,7 +303,6 @@ class IPFSClient:
             dir_path: Path to the directory to upload
             include_formatted_size: Whether to include formatted size in the result (default: True)
             encrypt: Whether to encrypt files (overrides default)
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -492,7 +447,6 @@ class IPFSClient:
         output_path: str,
         _: Optional[bool] = None,
         max_retries: int = 3,
-        seed_phrase: Optional[str] = None,
         skip_directory_check: bool = False,
     ) -> Dict[str, Any]:
         """
@@ -503,7 +457,6 @@ class IPFSClient:
             output_path: Path where the downloaded file will be saved
             _: Whether to decrypt the file (overrides default)
             max_retries: Maximum number of retry attempts (default: 3)
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
             skip_directory_check: Whether to skip checking if the CID is a directory (default: False)
 
         Returns:
@@ -580,15 +533,29 @@ class IPFSClient:
             retries = 0
             while retries < max_retries:
                 try:
-                    url = f"{self.gateway}/ipfs/{cid}"
-                    async with self.client.client.stream(
-                        url=url, method="GET"
-                    ) as response:
-                        response.raise_for_status()
+                    # Try API endpoint first (for local IPFS nodes), fall back to gateway format
+                    if self.api_url == self.api_url or ":5001" in self.api_url:
+                        # Use API endpoint format
+                        url = f"{self.api_url}/api/v0/cat?arg={cid}"
+                        async with self.client.client.stream(
+                            url=url, method="POST"
+                        ) as response:
+                            response.raise_for_status()
 
-                        with open(output_path, "wb") as f:
-                            async for chunk in response.aiter_bytes(chunk_size=8192):
-                                f.write(chunk)
+                            with open(output_path, "wb") as f:
+                                async for chunk in response.aiter_bytes(chunk_size=8192):
+                                    f.write(chunk)
+                    else:
+                        # Use gateway format
+                        url = f"{self.api_url}/api/v0/cat?arg={cid}"
+                        async with self.client.client.stream(
+                            url=url, method="GET"
+                        ) as response:
+                            response.raise_for_status()
+
+                            with open(output_path, "wb") as f:
+                                async for chunk in response.aiter_bytes(chunk_size=8192):
+                                    f.write(chunk)
                     break
 
                 except (httpx.HTTPError, IOError) as e:
@@ -620,7 +587,6 @@ class IPFSClient:
         max_display_bytes: int = 1024,
         format_output: bool = True,
         decrypt: Optional[bool] = None,
-        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Get the content of a file from IPFS with optional decryption.
@@ -630,7 +596,6 @@ class IPFSClient:
             max_display_bytes: Maximum number of bytes to include in the preview (default: 1024)
             format_output: Whether to attempt to decode the content as text (default: True)
             decrypt: Whether to decrypt the file (overrides default)
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -692,35 +657,32 @@ class IPFSClient:
         return result
 
     async def exists(
-        self, cid: str, seed_phrase: Optional[str] = None
+        self, cid: str
     ) -> Dict[str, Any]:
         """
         Check if a CID exists on IPFS.
 
         Args:
             cid: Content Identifier (CID) to check
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
                 - exists: Boolean indicating if the CID exists
                 - cid: The CID that was checked
                 - formatted_cid: Formatted version of the CID
-                - gateway_url: URL to access the content if it exists
-        """
+                        """
         formatted_cid = self.format_cid(cid)
-        gateway_url = f"{self.gateway}/ipfs/{cid}"
+        gateway_url = f"{self.api_url}/api/v0/cat?arg={cid}"
         exists = await self.client.ls(cid)
 
         return {
             "exists": exists,
             "cid": cid,
             "formatted_cid": formatted_cid,
-            "gateway_url": gateway_url if exists else None,
-        }
+                    }
 
     async def publish_global(
-        self, cid: str, seed_phrase: Optional[str] = None
+        self, cid: str
     ) -> Dict[str, Any]:
         """
         Publish a CID to the global IPFS network, ensuring it's widely available.
@@ -730,7 +692,6 @@ class IPFSClient:
 
         Args:
             cid: Content Identifier (CID) to publish globally
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -740,7 +701,7 @@ class IPFSClient:
                 - message: Status message
         """
         # First ensure it's pinned locally
-        pin_result = await self.pin(cid, seed_phrase=seed_phrase)
+        pin_result = await self.pin(cid)
 
         if not pin_result.get("success", False):
             return {
@@ -760,13 +721,12 @@ class IPFSClient:
             "message": "Content published to global IPFS network",
         }
 
-    async def pin(self, cid: str, seed_phrase: Optional[str] = None) -> Dict[str, Any]:
+    async def pin(self, cid: str) -> Dict[str, Any]:
         """
         Pin a CID to IPFS to keep it available.
 
         Args:
             cid: Content Identifier (CID) to pin
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict[str, Any]: Dictionary containing:
@@ -809,7 +769,9 @@ class IPFSClient:
         max_retries: int = 3,
         verbose: bool = True,
         progress_callback: Optional[Callable[[str, int, int], None]] = None,
-        seed_phrase: Optional[str] = None,
+        api_client: Optional["HippiusApiClient"] = None,
+        hippius_key: Optional[str] = None,
+        pin_chunks: bool = False,
     ) -> Dict[str, Any]:
         """
         Split a file using erasure coding, then upload the chunks to IPFS.
@@ -829,10 +791,13 @@ class IPFSClient:
             verbose: Whether to print progress information
             progress_callback: Optional callback function for progress updates
                             Function receives (stage_name, current, total)
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
+            api_client: Optional HippiusApiClient for pinning chunks to Hippius API
+            hippius_key: Optional HIPPIUS_KEY for API authentication
+            pin_chunks: Whether to pin each chunk to Hippius API after upload (default: False)
 
         Returns:
-            dict: Metadata including the original file info and chunk information
+            dict: Metadata including the original file info and chunk information.
+                  If pin_chunks=True, each chunk will have a 'pin_request_id' field.
 
         Raises:
             ValueError: If erasure coding is not available or parameters are invalid
@@ -1066,26 +1031,31 @@ class IPFSClient:
                 nonlocal chunk_uploads
 
                 async with semaphore:
-                    try:
-                        chunk_cid = await self.upload_file(
-                            chunk_info["path"], max_retries=max_retries
+                    chunk_cid_result = await self.upload_file(
+                        chunk_info["path"], max_retries=max_retries
+                    )
+                    chunk_cid = chunk_cid_result["cid"]
+                    chunk_info["cid"] = chunk_cid
+                    chunk_uploads += 1
+
+                    if pin_chunks and api_client:
+                        pin_result = await api_client.pin_file(
+                            cid=chunk_cid,
+                            filename=chunk_info["name"],
+                            hippius_key=hippius_key,
                         )
-                        chunk_info["cid"] = chunk_cid
-                        chunk_uploads += 1
+                        chunk_info["pin_request_id"] = (
+                            pin_result.get("id") or pin_result.get("request_id")
+                        )
 
-                        # Update progress through callback
-                        if progress_callback:
-                            progress_callback("upload", chunk_uploads, total_chunks)
+                    if progress_callback:
+                        progress_callback("upload", chunk_uploads, total_chunks)
 
-                        if verbose and chunk_uploads % 10 == 0:
-                            print(f"  Uploaded {chunk_uploads}/{total_chunks} chunks")
-                        return chunk_info
-                    except Exception as e:
-                        if verbose:
-                            print(
-                                f"Error uploading chunk {chunk_info['name']}: {str(e)}"
-                            )
-                        return None
+                    if verbose and chunk_uploads % 10 == 0:
+                        action = "pinned" if pin_chunks else "uploaded"
+                        print(f"  {action.capitalize()} {chunk_uploads}/{total_chunks} chunks")
+
+                    return chunk_info
 
             # Create tasks for all chunk uploads
             upload_tasks = [upload_chunk(chunk_info) for chunk_info in all_chunk_info]
@@ -1141,7 +1111,6 @@ class IPFSClient:
         temp_dir: str = None,
         max_retries: int = 3,
         verbose: bool = True,
-        seed_phrase: Optional[str] = None,
     ) -> Dict:
         """
         Reconstruct a file from erasure-coded chunks using its metadata.
@@ -1152,7 +1121,6 @@ class IPFSClient:
             temp_dir: Directory to use for temporary files (default: system temp)
             max_retries: Maximum number of retry attempts for IPFS downloads
             verbose: Whether to print progress information
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict: containing file reconstruction info.
@@ -1186,7 +1154,6 @@ class IPFSClient:
                 metadata_cid,
                 metadata_path,
                 max_retries=max_retries,
-                seed_phrase=seed_phrase,
             )
 
             if verbose:
@@ -1284,7 +1251,6 @@ class IPFSClient:
                                         path,
                                         max_retries=max_retries,
                                         skip_directory_check=True,
-                                        seed_phrase=seed_phrase,
                                     )
 
                                     # Read chunk data
@@ -1531,12 +1497,15 @@ class IPFSClient:
         verbose: bool = True,
         progress_callback: Optional[Callable[[str, int, int], None]] = None,
         publish: bool = True,
-        seed_phrase: Optional[str] = None,
+        api_client: Optional["HippiusApiClient"] = None,
+        hippius_key: Optional[str] = None,
+        pin_chunks: bool = False,
+        pin_metadata: bool = False,
     ) -> Dict[str, Any]:
         """
-        Erasure code a file, upload the chunks to IPFS, and store in the Hippius marketplace.
+        Erasure code a file, upload the chunks to IPFS, and optionally pin to Hippius API.
 
-        This is a convenience method that combines erasure_code_file with storage_request.
+        This is a convenience method that combines erasure_code_file with optional API pinning.
 
         Args:
             file_path: Path to the file to upload
@@ -1553,19 +1522,22 @@ class IPFSClient:
             publish: Whether to publish to the blockchain (True) or just perform local
                     erasure coding without publishing (False). When False, no password
                     is needed for seed phrase access.
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
+            api_client: Optional HippiusApiClient for pinning to Hippius API
+            hippius_key: Optional HIPPIUS_KEY for API authentication
+            pin_chunks: Whether to pin each chunk to Hippius API (default: False)
+            pin_metadata: Whether to pin metadata file to Hippius API (default: False)
 
         Returns:
-            dict: Result including metadata CID and transaction hash (if published)
+            dict: Result including metadata CID, pinning status, and transaction hash (if published).
+                  If pin_chunks=True, chunks will have 'pin_request_id' fields.
+                  If pin_metadata=True, result will have 'metadata_pinned' and 'metadata_pin_request_id'.
 
         Raises:
             ValueError: If parameters are invalid
             RuntimeError: If processing fails
         """
-        # Step 1: Create substrate client if we need it and are publishing
-        if substrate_client is None and publish:
-            substrate_client = SubstrateClient(password=None, account_name=None)
-        # Step 2: Erasure code the file and upload chunks
+        original_filename = os.path.basename(file_path)
+
         metadata = await self.erasure_code_file(
             file_path=file_path,
             k=k,
@@ -1575,90 +1547,43 @@ class IPFSClient:
             max_retries=max_retries,
             verbose=verbose,
             progress_callback=progress_callback,
-            seed_phrase=seed_phrase,
+            api_client=api_client,
+            hippius_key=hippius_key,
+            pin_chunks=pin_chunks,
         )
 
         original_file = metadata["original_file"]
         metadata_cid = metadata["metadata_cid"]
 
-        # Initialize transaction hash variable
-        tx_hash = None
+        if verbose:
+            print(f"Erasure coding complete. Metadata CID: {metadata_cid}")
+            print(f"Total chunks: {len(metadata['chunks'])}")
 
-        # Only proceed with blockchain storage if publish is True
-        if publish:
-            # Create a list to hold all the file inputs (metadata + all chunks)
-            all_file_inputs = []
+        result = {
+            "metadata": metadata,
+            "metadata_cid": metadata_cid,
+            "total_files_stored": len(metadata["chunks"]) + 1,
+        }
 
-            # Step 3: Prepare metadata file for storage
+        if pin_metadata and api_client:
             if verbose:
-                print(
-                    f"Preparing to store metadata and {len(metadata['chunks'])} chunks in the Hippius marketplace..."
-                )
+                print("Pinning metadata file to Hippius API...")
 
-            # Create a file input for the metadata file
-            metadata_file_input = FileInput(
-                file_hash=metadata_cid, file_name=f"{original_file['name']}.ec_metadata"
+            pin_result = await api_client.pin_file(
+                cid=metadata_cid,
+                filename=f"{original_filename}.metadata.json",
+                hippius_key=hippius_key,
             )
-            all_file_inputs.append(metadata_file_input)
 
-            # Step 4: Add all chunks to the storage request
-            if verbose:
-                print("Adding all chunks to storage request...")
-
-            for i, chunk in enumerate(metadata["chunks"]):
-                # Extract the CID string from the chunk's cid dictionary
-                chunk_cid = (
-                    chunk["cid"]["cid"]
-                    if isinstance(chunk["cid"], dict) and "cid" in chunk["cid"]
-                    else chunk["cid"]
-                )
-                chunk_file_input = FileInput(
-                    file_hash=chunk_cid, file_name=chunk["name"]
-                )
-                all_file_inputs.append(chunk_file_input)
-
-                # Print progress for large numbers of chunks
-                if verbose and (i + 1) % 50 == 0:
-                    print(
-                        f"  Prepared {i + 1}/{len(metadata['chunks'])} chunks for storage"
-                    )
-
-            # Step 5: Submit the storage request for all files
-            if verbose:
-                print(
-                    f"Submitting storage request for 1 metadata file and {len(metadata['chunks'])} chunks..."
-                )
-
-            tx_hash = await substrate_client.storage_request(
-                files=all_file_inputs, miner_ids=miner_ids, seed_phrase=seed_phrase
+            result["metadata_pinned"] = True
+            result["metadata_pin_request_id"] = (
+                pin_result.get("id") or pin_result.get("request_id")
             )
-            if verbose:
-                print("Successfully stored all files in marketplace!")
-                print(f"Transaction hash: {tx_hash}")
-                print(f"Metadata CID: {metadata_cid}")
-                print(
-                    f"Total files stored: {len(all_file_inputs)} (1 metadata + {len(metadata['chunks'])} chunks)"
-                )
 
-            result = {
-                "metadata": metadata,
-                "metadata_cid": metadata_cid,
-                "transaction_hash": tx_hash,
-                "total_files_stored": len(all_file_inputs),
-            }
+            if verbose:
+                print(f"Metadata pinned successfully. Request ID: {result['metadata_pin_request_id']}")
         else:
-            # Not publishing to blockchain (--no-publish flag used)
-            if verbose:
-                print("Not publishing to blockchain (--no-publish flag used)")
-                print(f"Metadata CID: {metadata_cid}")
-                print(f"Total chunks: {len(metadata['chunks'])}")
-
-            result = {
-                "metadata": metadata,
-                "metadata_cid": metadata_cid,
-                "total_files_stored": len(metadata["chunks"])
-                + 1,  # +1 for metadata file
-            }
+            result["metadata_pinned"] = False
 
         return result
 
@@ -1667,7 +1592,6 @@ class IPFSClient:
         cid: str,
         cancel_from_blockchain: bool = True,
         unpin: bool = True,
-        seed_phrase: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Delete a file or directory from IPFS and optionally cancel its storage on the blockchain.
@@ -1677,7 +1601,6 @@ class IPFSClient:
             cid: Content Identifier (CID) of the file/directory to delete
             cancel_from_blockchain: Whether to also cancel the storage request from the blockchain
             unpin: Whether to unpin the file from IPFS (default: True)
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
 
         Returns:
             Dict containing the result of the operation
@@ -1792,30 +1715,6 @@ class IPFSClient:
             result["unpin_result"] = {"skipped": True}
             result["success"] = True
 
-        # Then, if requested, cancel from blockchain
-        if cancel_from_blockchain:
-            try:
-                substrate_client = SubstrateClient()
-                await substrate_client.cancel_storage_request(
-                    cid, seed_phrase=seed_phrase
-                )
-                print("Successfully cancelled storage from blockchain")
-                result["blockchain_result"] = {"success": True}
-            except Exception as e:
-                # Handle the case where the CID is not in storage requests
-                error_str = str(e)
-                if "not found in storage requests" in error_str:
-                    print(
-                        "Note: Content was not found in blockchain storage requests (may already be deleted)"
-                    )
-                    result["blockchain_result"] = {
-                        "success": True,
-                        "already_deleted": True,
-                    }
-                else:
-                    print(f"Warning: Error cancelling from blockchain: {error_str}")
-                    result["blockchain_result"] = {"success": False, "error": error_str}
-
         # Update timing information
         result["timing"]["end_time"] = time.time()
         result["timing"]["duration_seconds"] = (
@@ -1829,7 +1728,6 @@ class IPFSClient:
         metadata_cid: str,
         cancel_from_blockchain: bool = True,
         parallel_limit: int = 20,
-        seed_phrase: Optional[str] = None,
         metadata_timeout: int = 30,
         # Timeout in seconds for metadata fetch
     ) -> bool:
@@ -1840,7 +1738,6 @@ class IPFSClient:
             metadata_cid: CID of the metadata file for the erasure-coded file
             cancel_from_blockchain: Whether to cancel storage from blockchain
             parallel_limit: Maximum number of concurrent deletion operations
-            seed_phrase: Optional seed phrase to use for blockchain interactions (uses config if None)
             metadata_timeout: Timeout in seconds for metadata fetch operation (default: 30)
 
         Returns:
@@ -1939,579 +1836,11 @@ class IPFSClient:
             # Record the failure but continue with blockchain cancellation
             print(f"Error unpinning metadata file: {e}")
 
-        # Handle blockchain cancellation if requested
-        if cancel_from_blockchain:
-            try:
-                # Create a substrate client
-                print("Creating substrate client for blockchain cancellation...")
-                substrate_client = SubstrateClient()
-
-                # This will raise appropriate exceptions if it fails:
-                # - HippiusAlreadyDeletedError if already deleted
-                # - HippiusFailedSubstrateDelete if transaction fails
-                # - Other exceptions for other failures
-                print(f"Cancelling storage request for CID: {metadata_cid}")
-                await substrate_client.cancel_storage_request(
-                    metadata_cid, seed_phrase=seed_phrase
-                )
-                print("Successfully cancelled storage request on blockchain")
-            except Exception as e:
-                print(f"Error during blockchain cancellation: {e}")
-                # Re-raise the exception to be handled by the caller
-                raise
-
-        # If we get here, either:
-        # 1. Blockchain cancellation succeeded (if requested)
-        # 2. We weren't doing blockchain cancellation
-        # In either case, we report success
+        # Delete operation completed successfully
         print("Delete EC file operation completed successfully")
         return True
 
-    async def s3_publish(
-        self,
-        content: Union[str, bytes, os.PathLike],
-        encrypt: bool,
-        seed_phrase: str,
-        subaccount_id: str,
-        bucket_name: str,
-        store_node: str = "http://localhost:5001",
-        pin_node: str = "https://store.hippius.network",
-        substrate_url: str = "wss://rpc.hippius.network",
-        publish: bool = True,
-        file_name: str = None,
-    ) -> Union[S3PublishResult, S3PublishPin]:
-        """
-        Publish content to IPFS and the Hippius marketplace in one operation.
 
-        This method uses a two-node architecture for optimal performance:
-        1. Uploads to store_node (local) for immediate availability
-        2. Pins to pin_node (remote) for persistence and backup
-        3. Publishes to substrate marketplace
-
-        This method automatically manages encryption keys per account+bucket combination:
-        - If encrypt=True, it will get or generate an encryption key for the account+bucket
-        - Keys are stored in PostgreSQL and versioned (never deleted)
-        - Always uses the most recent key for an account+bucket combination
-
-        Args:
-            content: Either a file path (str/PathLike) or bytes content to publish
-            encrypt: Whether to encrypt the content before uploading
-            seed_phrase: Seed phrase for blockchain transaction signing
-            subaccount_id: The subaccount/account identifier
-            bucket_name: The bucket name for key isolation
-            store_node: IPFS node URL for initial upload (default: local node)
-            pin_node: IPFS node URL for backup pinning (default: remote service)
-            substrate_url: the substrate url to connect to for the storage request
-            publish: Whether to publish to blockchain (True) or just upload to IPFS (False)
-            file_name: The original file name (required if content is bytes)
-
-        Returns:
-            S3PublishResult: Object containing CID, file info, and transaction hash when publish=True
-            S3PublishPin: Object containing CID, subaccount, content info, pin_node, substrate_url when publish=False
-
-        Raises:
-            HippiusIPFSError: If IPFS operations (add or pin) fail
-            HippiusSubstrateError: If substrate call fails
-            FileNotFoundError: If the file doesn't exist (when content is a path)
-            ValueError: If encryption is requested but not available, or if file_name is missing for bytes content
-        """
-        # Determine if content is a file path or bytes
-        is_file_path = isinstance(content, (str, os.PathLike))
-
-        if is_file_path:
-            # Handle file path input
-            file_path = str(content)
-            if not os.path.exists(file_path):
-                raise FileNotFoundError(f"File {file_path} not found")
-
-            # Get file info
-            filename = file_name or os.path.basename(file_path)
-            size_bytes = os.path.getsize(file_path)
-
-            # Read file content into memory
-            with open(file_path, "rb") as f:
-                content_bytes = f.read()
-        else:
-            # Handle bytes input
-            if not isinstance(content, bytes):
-                raise ValueError(
-                    f"Content must be str, PathLike, or bytes, got {type(content)}"
-                )
-
-            if not file_name:
-                raise ValueError("file_name is required when content is bytes")
-
-            filename = file_name
-            content_bytes = content
-            size_bytes = len(content_bytes)
-
-        # Handle encryption if requested with automatic key management
-        encryption_key_used = None
-        if encrypt:
-            # Check if key storage is enabled and available
-            try:
-                key_storage_available = is_key_storage_enabled()
-                logger.debug(f"Key storage enabled: {key_storage_available}")
-            except ImportError:
-                logger.debug("Key storage module not available")
-                key_storage_available = False
-
-            if key_storage_available:
-                # Create combined key identifier from account+bucket
-                account_bucket_key = f"{subaccount_id}:{bucket_name}"
-
-                # Try to get existing key for this account+bucket combination
-                existing_key_b64 = await get_key_for_subaccount(account_bucket_key)
-
-                if existing_key_b64:
-                    # Use existing key
-                    logger.info(
-                        "Using existing encryption key for account+bucket combination"
-                    )
-                    encryption_key_bytes = base64.b64decode(existing_key_b64)
-                    encryption_key_used = existing_key_b64
-                else:
-                    # Generate and store new key for this account+bucket combination
-                    logger.info(
-                        "Generating new encryption key for account+bucket combination"
-                    )
-                    new_key_b64 = await generate_and_store_key_for_subaccount(
-                        account_bucket_key
-                    )
-                    encryption_key_bytes = base64.b64decode(new_key_b64)
-                    encryption_key_used = new_key_b64
-
-                # Encrypt the data using the key from key storage
-                import nacl.secret
-
-                box = nacl.secret.SecretBox(encryption_key_bytes)
-                logger.info("encrypting...")
-                content_bytes = box.encrypt(content_bytes)
-                logger.info("finished encryption!")
-            else:
-                # Fallback to the original encryption system if key_storage is not available
-                if not self.encryption_available:
-                    raise ValueError(
-                        "Encryption requested but not available. Either install key storage with 'pip install hippius_sdk[key_storage]' or configure an encryption key with 'hippius keygen --save'"
-                    )
-
-                # Encrypt the data using the client's encryption key
-                content_bytes = self.encrypt_data(content_bytes)
-
-                # Store the encryption key for the result
-                encryption_key_used = (
-                    base64.b64encode(self.encryption_key).decode("utf-8")
-                    if self.encryption_key
-                    else None
-                )
-
-        # Step 1: Upload to store_node (local) for immediate availability
-        try:
-            store_client = AsyncIPFSClient(api_url=store_node)
-            result = await store_client.add_bytes(
-                content_bytes,
-                filename=filename,
-            )
-            if isinstance(result, bytes):  # must be multiple json lines
-                lines = result.decode("utf-8").strip().split("\n")
-                objects = [json.loads(line) for line in lines if line.strip()]
-
-                logger.info(f"Got {len(objects)=} from {store_node=}")
-                # filter out just the one file cid, ignore dirs, it's usually the first item,
-                # but hey let's not risk it. IPFS may convert + to spaces in filenames.
-                for o in objects:
-                    if o["Name"] == file_name:
-                        cid = o["Hash"]
-                        break
-                else:
-                    # If exact match fails, try to find by matching the basename only
-                    # This handles cases where IPFS modifies the filename (e.g., + to space)
-                    target_basename = os.path.basename(file_name)
-                    for o in objects:
-                        if os.path.basename(o["Name"]) == target_basename:
-                            cid = o["Hash"]
-                            logger.info(
-                                f"Found file by basename match: {o['Name']} (original: {file_name})"
-                            )
-                            break
-                    else:
-                        raise KeyError(
-                            f"Store call failed, {file_name=} not found in {objects=}"
-                        )
-            else:
-                cid = result["Hash"]
-            logger.info(f"Content uploaded to store node {store_node} with CID: {cid}")
-        except Exception as e:
-            raise HippiusIPFSError(
-                f"Failed to upload content to store node {store_node}: {str(e)}"
-            ) from e
-
-        # Step 2: Pin to pin_node (remote) for persistence and backup
-        try:
-            pin_client = AsyncIPFSClient(api_url=pin_node)
-            await pin_client.pin(cid)
-            logger.info(f"File pinned to {pin_node=}")
-        except Exception as e:
-            raise HippiusIPFSError(
-                f"Failed to pin content to {pin_node=}: {str(e)}"
-            ) from e
-
-        # Conditionally publish to substrate marketplace based on publish flag
-        if publish:
-            try:
-                # Pass the seed phrase directly to avoid password prompts for encrypted config
-                substrate_client = SubstrateClient(
-                    seed_phrase=seed_phrase,
-                    url=substrate_url,
-                )
-                logger.info(
-                    f"Submitting storage request to substrate for file: {file_name}, CID: {cid}"
-                )
-
-                tx_hash = await substrate_client.storage_request(
-                    files=[
-                        FileInput(
-                            file_hash=cid,
-                            file_name=filename,
-                        )
-                    ],
-                    miner_ids=[],
-                    seed_phrase=seed_phrase,
-                )
-
-                logger.debug(f"Substrate call result: {tx_hash}")
-
-                # Check if we got a valid transaction hash
-                if not tx_hash or tx_hash == "0x" or len(tx_hash) < 10:
-                    logger.error(f"Invalid transaction hash received: {tx_hash}")
-                    raise HippiusSubstrateError(
-                        f"Invalid transaction hash received: {tx_hash}. This might indicate insufficient credits or transaction failure."
-                    )
-
-                logger.info(
-                    f"Successfully published to substrate with transaction: {tx_hash}"
-                )
-
-            except Exception as e:
-                logger.error(f"Substrate call failed: {str(e)}")
-                logger.debug(
-                    "Possible causes: insufficient credits, network issues, invalid seed phrase, or substrate node unavailability"
-                )
-                raise HippiusSubstrateError(
-                    f"Failed to publish to substrate: {str(e)}"
-                ) from e
-
-            return S3PublishResult(
-                cid=cid,
-                file_name=filename,
-                size_bytes=size_bytes,
-                encryption_key=encryption_key_used,
-                tx_hash=tx_hash,
-            )
-        else:
-            # Return S3PublishPin with required information when not publishing
-            return S3PublishPin(
-                cid=cid,
-                subaccount=subaccount_id,
-                file_path=filename,
-                file_name=filename,
-                pin_node=pin_node,
-                substrate_url=substrate_url,
-            )
-
-    async def s3_download(
-        self,
-        cid: str,
-        output_path: Optional[str] = None,
-        subaccount_id: Optional[str] = None,
-        bucket_name: Optional[str] = None,
-        auto_decrypt: bool = True,
-        download_node: str = "http://localhost:5001",
-        return_bytes: bool = False,
-        streaming: bool = False,
-    ) -> Union[S3DownloadResult, bytes, AsyncIterator[bytes]]:
-        """
-        Download content from IPFS with flexible output options and automatic decryption.
-
-        This method provides multiple output modes:
-        1. File output: Downloads to specified path (default mode)
-        2. Bytes output: Returns decrypted bytes in memory (return_bytes=True)
-        3. Streaming output: Returns decrypted bytes or raw iterator based on auto_decrypt (streaming=True)
-
-        Args:
-            cid: Content Identifier (CID) of the file to download
-            output_path: Path where the downloaded file will be saved (None for bytes/streaming)
-            subaccount_id: The subaccount/account identifier (required for decryption)
-            bucket_name: The bucket name for key isolation (required for decryption)
-            auto_decrypt: Whether to attempt automatic decryption (default: True)
-            download_node: IPFS node URL for download (default: local node)
-            return_bytes: If True, return bytes instead of saving to file
-            streaming: If True, return decrypted bytes when auto_decrypt=True, or raw streaming iterator when auto_decrypt=False
-
-        Returns:
-            S3DownloadResult: Download info and decryption status (default)
-            bytes: Raw decrypted content when return_bytes=True or streaming=True with auto_decrypt=True
-            AsyncIterator[bytes]: Raw streaming iterator when streaming=True and auto_decrypt=False
-
-        Raises:
-            HippiusIPFSError: If IPFS download fails
-            FileNotFoundError: If the output directory doesn't exist
-            ValueError: If decryption fails or invalid parameter combinations
-        """
-        # Validate parameter combinations
-        if streaming and return_bytes:
-            raise ValueError("Cannot specify both streaming and return_bytes")
-
-        if streaming:
-            # Validate required parameters for decryption if auto_decrypt is True
-            if auto_decrypt and (not subaccount_id or not bucket_name):
-                raise ValueError(
-                    "subaccount_id and bucket_name are required for streaming decryption"
-                )
-
-            if auto_decrypt:
-                # Return decrypted bytes directly (not streaming)
-                try:
-                    key_storage_available = is_key_storage_enabled()
-                except ImportError:
-                    key_storage_available = False
-
-                encryption_key_bytes = None
-
-                if key_storage_available:
-                    # Create combined key identifier from account+bucket
-                    account_bucket_key = f"{subaccount_id}:{bucket_name}"
-
-                    try:
-                        existing_key_b64 = await get_key_for_subaccount(
-                            account_bucket_key
-                        )
-                        if existing_key_b64:
-                            encryption_key_bytes = base64.b64decode(existing_key_b64)
-                    except Exception as e:
-                        logger.debug(f"Failed to get encryption key: {e}")
-
-                # If key storage decryption failed or wasn't available, try client encryption key
-                if not encryption_key_bytes and self.encryption_available:
-                    logger.debug("Using client encryption key for streaming decryption")
-                    encryption_key_bytes = self.encryption_key
-
-                if not encryption_key_bytes:
-                    logger.warning(
-                        "No encryption key found - downloading raw encrypted data as bytes"
-                    )
-                    # Return raw encrypted data as bytes
-                    encrypted_data = b""
-                    async for chunk in self._get_ipfs_stream(cid, download_node):
-                        encrypted_data += chunk
-                    return encrypted_data
-
-                # Collect all encrypted data first
-                logger.debug("Buffering encrypted content for decryption")
-                encrypted_data = b""
-                async for chunk in self._get_ipfs_stream(cid, download_node):
-                    encrypted_data += chunk
-
-                # Decrypt the complete buffered content and return as bytes
-                try:
-                    box = nacl.secret.SecretBox(encryption_key_bytes)
-                    decrypted_data = box.decrypt(encrypted_data)
-                    logger.info(f"Successfully decrypted {len(decrypted_data)} bytes")
-
-                    # Return all decrypted data as bytes
-                    return decrypted_data
-
-                except Exception as decrypt_error:
-                    logger.error(f"Streaming decryption failed: {decrypt_error}")
-                    raise ValueError(
-                        f"Failed to decrypt streaming content: {decrypt_error}"
-                    )
-            else:
-                # Return raw streaming iterator from IPFS node - no processing
-                async def streaming_wrapper():
-                    async for chunk in self._get_ipfs_stream(cid, download_node):
-                        yield chunk
-
-                return streaming_wrapper()
-
-        start_time = time.time()
-
-        # Validate required parameters for decryption
-        if auto_decrypt and (not subaccount_id or not bucket_name):
-            raise ValueError(
-                "subaccount_id and bucket_name are required when auto_decrypt=True"
-            )
-
-        if not return_bytes and not output_path:
-            raise ValueError("output_path is required when not using return_bytes mode")
-
-        # Use gateway style instead of cat API for better HTTP semantics
-        download_url = f"{download_node.rstrip('/')}/ipfs/{cid}"
-        # Download the file directly into memory from the specified download_node
-        try:
-            # Create parent directories if they don't exist (only for file output mode)
-            if not return_bytes:
-                os.makedirs(
-                    os.path.dirname(os.path.abspath(output_path)), exist_ok=True
-                )
-
-            # Download file into memory
-            file_data = bytearray()
-            timeout = httpx.Timeout(10.0, read=300.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream("GET", download_url) as response:
-                    response.raise_for_status()
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        file_data.extend(chunk)
-
-            # Convert to bytes for consistency
-            file_data = bytes(file_data)
-            logger.info(
-                f"File downloaded from {download_node} with CID: {cid} ({len(file_data)} bytes)"
-            )
-
-        except Exception as e:
-            logger.exception(f"Failed to download file {download_url}")
-            raise HippiusIPFSError(
-                f"Failed to download file from {download_node}: {str(e)}"
-            )
-
-        # Attempt automatic decryption if requested
-        decrypted = False
-        encryption_key_used = None
-        final_data = file_data  # This will hold either encrypted or decrypted data
-
-        if auto_decrypt:
-            # Check if file is empty - this indicates a problem
-            if len(file_data) == 0:
-                logger.error(f"Downloaded file is empty (0 bytes) for CID: {cid}")
-                raise HippiusIPFSError(
-                    f"File not available: Downloaded 0 bytes for CID {cid}. "
-                    f"File may not exist on download node {download_node}. "
-                    f"Download URL: {download_url}"
-                )
-            elif (
-                len(file_data) < 40
-            ):  # PyNaCl encrypted data is at least 40 bytes (24-byte nonce + 16-byte auth tag + data)
-                logger.info(
-                    f"File too small to be encrypted ({len(file_data)} bytes), treating as plaintext"
-                )
-                decrypted = False
-                encryption_key_used = None
-            else:
-                # Check if key storage is enabled and available
-                try:
-                    key_storage_available = is_key_storage_enabled()
-                    logger.debug(f"Key storage enabled: {key_storage_available}")
-                except ImportError:
-                    logger.debug("Key storage module not available")
-                    key_storage_available = False
-
-                # File has content, attempt decryption if requested
-                decryption_attempted = False
-                decryption_successful = False
-
-                if key_storage_available:
-                    # Create combined key identifier from account+bucket
-                    account_bucket_key = f"{subaccount_id}:{bucket_name}"
-
-                    # Try to get the encryption key for this account+bucket combination
-                    try:
-                        existing_key_b64 = await get_key_for_subaccount(
-                            account_bucket_key
-                        )
-
-                        if existing_key_b64:
-                            logger.debug(
-                                "Found encryption key for account+bucket combination, attempting decryption"
-                            )
-                            decryption_attempted = True
-                            encryption_key_used = existing_key_b64
-
-                            # Attempt decryption with the stored key
-                            try:
-                                import nacl.secret
-
-                                encryption_key_bytes = base64.b64decode(
-                                    existing_key_b64
-                                )
-                                box = nacl.secret.SecretBox(encryption_key_bytes)
-                                final_data = box.decrypt(file_data)
-
-                                decryption_successful = True
-                                decrypted = True
-                                logger.info(
-                                    "Successfully decrypted file using stored key"
-                                )
-
-                            except Exception as decrypt_error:
-                                logger.debug(
-                                    f"Decryption failed with stored key: {decrypt_error}"
-                                )  # Continue to try fallback decryption
-                        else:
-                            logger.debug(
-                                "No encryption key found for account+bucket combination"
-                            )
-
-                    except Exception as e:
-                        logger.debug(f"Error retrieving key from storage: {e}")
-
-                # If key storage decryption failed or wasn't available, try client encryption key
-                if not decryption_successful and self.encryption_available:
-                    logger.debug("Attempting decryption with client encryption key")
-                    decryption_attempted = True
-
-                    try:
-                        final_data = self.decrypt_data(file_data)
-
-                        decryption_successful = True
-                        decrypted = True
-
-                        # Store the encryption key for the result
-                        encryption_key_used = (
-                            base64.b64encode(self.encryption_key).decode("utf-8")
-                            if self.encryption_key
-                            else None
-                        )
-                        logger.info(
-                            "Successfully decrypted file using client encryption key"
-                        )
-
-                    except Exception as decrypt_error:
-                        logger.debug(
-                            f"Decryption failed with client key: {decrypt_error}"
-                        )
-
-                # Log final decryption status
-                if decryption_attempted and not decryption_successful:
-                    logger.info(
-                        "File may not be encrypted or decryption keys don't match"
-                    )
-                elif not decryption_attempted:
-                    logger.debug("No decryption attempted - no keys available")
-
-        # Handle output based on mode
-        if return_bytes:
-            # Return bytes directly
-            return final_data
-        else:
-            # Write the final data (encrypted or decrypted) to disk once
-            with open(output_path, "wb") as f:
-                f.write(final_data)
-
-            # Get final file info
-            size_bytes = len(final_data)
-            elapsed_time = time.time() - start_time
-
-            return S3DownloadResult(
-                cid=cid,
-                output_path=output_path,
-                size_bytes=size_bytes,
-                size_formatted=self.format_size(size_bytes),
-                elapsed_seconds=round(elapsed_time, 2),
-                decrypted=decrypted,
-                encryption_key=encryption_key_used,
-            )
 
     async def _get_ipfs_stream(
         self, cid: str, download_node: str
