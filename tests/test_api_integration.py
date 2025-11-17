@@ -185,7 +185,9 @@ class TestClientIPFSOperations:
         assert "success" in result or "message" in result
 
     @pytest.mark.slow
-    async def test_upload_download_from_gateway_match(self, hippius_client, temp_test_file):
+    async def test_upload_download_from_gateway_match(
+        self, hippius_client, temp_test_file
+    ):
         """Test upload with pinning, download from local IPFS API, and verify files match."""
         import hashlib
         import httpx
@@ -214,12 +216,16 @@ class TestClientIPFSOperations:
             downloaded_data = f.read()
         downloaded_hash = hashlib.sha256(downloaded_data).hexdigest()
 
-        assert original_hash == downloaded_hash, "Downloaded file does not match original"
+        assert (
+            original_hash == downloaded_hash
+        ), "Downloaded file does not match original"
 
         os.unlink(download_path)
 
     @pytest.mark.slow
-    async def test_upload_download_from_gateway_no_pin(self, hippius_client, temp_test_file):
+    async def test_upload_download_from_gateway_no_pin(
+        self, hippius_client, temp_test_file
+    ):
         """Test upload without pinning, download from local IPFS API, verify match."""
         import hashlib
         import httpx
@@ -248,12 +254,16 @@ class TestClientIPFSOperations:
             downloaded_data = f.read()
         downloaded_hash = hashlib.sha256(downloaded_data).hexdigest()
 
-        assert original_hash == downloaded_hash, "Downloaded file does not match original"
+        assert (
+            original_hash == downloaded_hash
+        ), "Downloaded file does not match original"
 
         os.unlink(download_path)
 
     @pytest.mark.slow
-    async def test_erasure_code_reassemble_download_match(self, hippius_client, temp_test_file):
+    async def test_erasure_code_reassemble_download_match(
+        self, hippius_client, temp_test_file
+    ):
         """Test erasure coding with pinning, reassemble, download from local IPFS API, and verify match."""
         import hashlib
         import httpx
@@ -290,15 +300,22 @@ class TestClientIPFSOperations:
             reconstructed_data = f.read()
         reconstructed_hash = hashlib.sha256(reconstructed_data).hexdigest()
 
-        assert original_hash == reconstructed_hash, "Reconstructed file does not match original"
+        assert (
+            original_hash == reconstructed_hash
+        ), "Reconstructed file does not match original"
 
         ipfs_api_url = hippius_client.ipfs_client.api_url
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(f"{ipfs_api_url}/api/v0/cat?arg={metadata_cid}")
+            response = await client.post(
+                f"{ipfs_api_url}/api/v0/cat?arg={metadata_cid}"
+            )
             response.raise_for_status()
 
             metadata_from_api = response.json()
-            assert "metadata_cid" in metadata_from_api or "original_file" in metadata_from_api
+            assert (
+                "metadata_cid" in metadata_from_api
+                or "original_file" in metadata_from_api
+            )
 
         os.unlink(reconstructed_path)
 
@@ -337,7 +354,9 @@ class TestClientIPFSOperations:
             reconstructed_data = f.read()
         reconstructed_hash = hashlib.sha256(reconstructed_data).hexdigest()
 
-        assert original_hash == reconstructed_hash, f"SHA mismatch! Original: {original_hash}, Reconstructed: {reconstructed_hash}"
+        assert (
+            original_hash == reconstructed_hash
+        ), f"SHA mismatch! Original: {original_hash}, Reconstructed: {reconstructed_hash}"
 
         os.unlink(reconstructed_path)
 
@@ -351,12 +370,16 @@ class TestClientIPFSOperations:
         assert upload_result["pinned"] is False
         cid = upload_result["cid"]
 
-        pin_result = await hippius_client.api_client.pin_file(cid=cid, filename="test_pin_unpin.txt")
+        pin_result = await hippius_client.api_client.pin_file(
+            cid=cid, filename="test_pin_unpin.txt"
+        )
         assert isinstance(pin_result, dict)
 
         await asyncio.sleep(2)
 
-        files = await hippius_client.api_client.list_files(cid=cid, include_pending=True)
+        files = await hippius_client.api_client.list_files(
+            cid=cid, include_pending=True
+        )
         assert isinstance(files, list)
 
         file_found = any(f.get("cid") == cid for f in files)
@@ -369,7 +392,9 @@ class TestClientIPFSOperations:
 
         await asyncio.sleep(2)
 
-        files_after_unpin = await hippius_client.api_client.list_files(cid=cid, include_pending=True)
+        files_after_unpin = await hippius_client.api_client.list_files(
+            cid=cid, include_pending=True
+        )
 
         if files_after_unpin:
             for f in files_after_unpin:
@@ -444,7 +469,9 @@ class TestClientErasureCoding:
             if os.path.exists(output_path):
                 os.unlink(output_path)
 
-    async def test_erasure_code_with_chunk_pinning(self, hippius_client, temp_test_file):
+    async def test_erasure_code_with_chunk_pinning(
+        self, hippius_client, temp_test_file
+    ):
         """Test erasure coding with chunk pinning to Hippius API."""
         result = await hippius_client.ipfs_client.store_erasure_coded_file(
             file_path=temp_test_file,

@@ -15,7 +15,7 @@ from hippius_sdk.ipfs import IPFSClient
 from hippius_sdk.ipfs_core import AsyncIPFSClient
 
 # Load test environment variables
-load_dotenv('.env.test', override=True)
+load_dotenv(".env.test", override=True)
 
 # Get IPFS API URL from environment
 IPFS_API_URL = os.getenv("IPFS_API_URL", "http://localhost:5001")

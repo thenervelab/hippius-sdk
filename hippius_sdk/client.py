@@ -10,7 +10,11 @@ import nacl.secret
 import nacl.utils
 
 from hippius_sdk.api_client import HippiusApiClient
-from hippius_sdk.config import get_config_value, get_encryption_key, validate_ipfs_node_url
+from hippius_sdk.config import (
+    get_config_value,
+    get_encryption_key,
+    validate_ipfs_node_url,
+)
 from hippius_sdk.ipfs import IPFSClient
 
 
@@ -69,7 +73,9 @@ class HippiusClient:
         )
 
         # Initialize Hippius API client
-        api_url_to_use = api_url or get_config_value("hippius", "api_url", "https://api.hippius.com/api")
+        api_url_to_use = api_url or get_config_value(
+            "hippius", "api_url", "https://api.hippius.com/api"
+        )
         self.api_client = HippiusApiClient(
             api_url=api_url_to_use,
             hippius_key=hippius_key,
@@ -129,8 +135,8 @@ class HippiusClient:
             )
 
             upload_result["pinned"] = True
-            upload_result["pin_request_id"] = (
-                pin_result.get("id") or pin_result.get("request_id")
+            upload_result["pin_request_id"] = pin_result.get("id") or pin_result.get(
+                "request_id"
             )
         else:
             upload_result["pinned"] = False
@@ -165,7 +171,9 @@ class HippiusClient:
         """
         # Use the enhanced IPFSClient method directly with encryption parameter
         return await self.ipfs_client.upload_directory(
-            dir_path, encrypt=encrypt,         )
+            dir_path,
+            encrypt=encrypt,
+        )
 
     async def download_file(
         self,
@@ -237,9 +245,7 @@ class HippiusClient:
             decrypt=decrypt,
         )
 
-    async def exists(
-        self, cid: str
-    ) -> Dict[str, Any]:
+    async def exists(self, cid: str) -> Dict[str, Any]:
         """
         Check if a CID exists on IPFS.
 
@@ -504,4 +510,3 @@ class HippiusClient:
             cancel_from_blockchain,
             parallel_limit,
         )
-

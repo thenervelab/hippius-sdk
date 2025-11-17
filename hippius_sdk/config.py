@@ -144,7 +144,9 @@ def load_config() -> Dict[str, Any]:
         # Warn if deprecated IPFS URL is configured (unless local_ipfs is enabled)
         # Only show warning once per process
         global _DEPRECATION_WARNING_SHOWN
-        if not _DEPRECATION_WARNING_SHOWN and not config.get("ipfs", {}).get("local_ipfs", False):
+        if not _DEPRECATION_WARNING_SHOWN and not config.get("ipfs", {}).get(
+            "local_ipfs", False
+        ):
             api_url = config.get("ipfs", {}).get("api_url")
             if api_url and DEPRECATED_IPFS_URL in api_url:
                 print(f"\nWARNING: Deprecated IPFS node URL detected in config!")
@@ -703,7 +705,9 @@ def initialize_from_env() -> None:
     node_url = os.getenv("IPFS_NODE_URL") or os.getenv("IPFS_API_URL")
     if node_url:
         if os.getenv("IPFS_API_URL") and not os.getenv("IPFS_NODE_URL"):
-            print("\nWARNING: IPFS_API_URL is deprecated. Please use IPFS_NODE_URL instead.")
+            print(
+                "\nWARNING: IPFS_API_URL is deprecated. Please use IPFS_NODE_URL instead."
+            )
 
         if DEPRECATED_IPFS_URL in node_url:
             print(f"\nERROR: Cannot use deprecated IPFS node URL!")
