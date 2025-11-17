@@ -392,7 +392,7 @@ class TestApiClientResponseParsing:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "balance": "100.500000000000000000",
-            "last_updated": "2025-11-17T11:55:07.705142Z"
+            "last_updated": "2025-11-17T11:55:07.705142Z",
         }
         mock_response.raise_for_status = Mock()
 

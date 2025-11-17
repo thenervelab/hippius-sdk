@@ -32,7 +32,9 @@ class TestCLIAccountCommands:
     @patch("json.dump")
     @patch("hippius_sdk.cli_handlers.load_config")
     @patch("hippius_sdk.cli_handlers.get_active_account")
-    def test_handle_account_export(self, mock_get_active, mock_load_config, mock_json_dump, mock_file):
+    def test_handle_account_export(
+        self, mock_get_active, mock_load_config, mock_json_dump, mock_file
+    ):
         """Test the handle_account_export function with HIPPIUS_KEY."""
         mock_client = MagicMock()
 
@@ -52,7 +54,9 @@ class TestCLIAccountCommands:
         mock_get_active.return_value = "test_account"
 
         # Test exporting account
-        result = handle_account_export(mock_client, name="test_account", file_path="test_export.json")
+        result = handle_account_export(
+            mock_client, name="test_account", file_path="test_export.json"
+        )
 
         # Verify success
         assert result == 0
@@ -64,14 +68,24 @@ class TestCLIAccountCommands:
         assert exported_data["hippius_key"] == "test_key_123"
         assert exported_data["hippius_key_encoded"] is False
 
-    @patch("builtins.open", new_callable=mock_open, read_data='{"name":"test_account","hippius_key":"test_key_123","hippius_key_encoded":false}')
+    @patch(
+        "builtins.open",
+        new_callable=mock_open,
+        read_data='{"name":"test_account","hippius_key":"test_key_123","hippius_key_encoded":false}',
+    )
     @patch("os.path.exists", return_value=True)
     @patch("hippius_sdk.cli_handlers.list_accounts")
     @patch("hippius_sdk.cli_handlers.load_config")
     @patch("hippius_sdk.cli_handlers.save_config")
     @patch("builtins.input", return_value="y")
     def test_handle_account_import(
-        self, mock_input, mock_save_config, mock_load_config, mock_list_accounts, mock_exists, mock_file
+        self,
+        mock_input,
+        mock_save_config,
+        mock_load_config,
+        mock_list_accounts,
+        mock_exists,
+        mock_file,
     ):
         """Test the handle_account_import function with HIPPIUS_KEY."""
         mock_client = MagicMock()
@@ -80,15 +94,13 @@ class TestCLIAccountCommands:
         mock_list_accounts.return_value = {"test_account": {}}
 
         # Mock configuration
-        mock_config = {
-            "substrate": {
-                "accounts": {}
-            }
-        }
+        mock_config = {"substrate": {"accounts": {}}}
         mock_load_config.return_value = mock_config
 
         # Test importing account
-        result = handle_account_import(mock_client, file_path="test_import.json", encrypt=False)
+        result = handle_account_import(
+            mock_client, file_path="test_import.json", encrypt=False
+        )
 
         # Verify success
         assert result == 0
@@ -101,13 +113,22 @@ class TestCLIAccountCommands:
         assert account_data["hippius_key"] == "test_key_123"
         assert account_data["hippius_key_encoded"] is False
 
-    @patch("builtins.open", new_callable=mock_open, read_data='{"name":"new_account","hippius_key":"new_key_456","hippius_key_encoded":false}')
+    @patch(
+        "builtins.open",
+        new_callable=mock_open,
+        read_data='{"name":"new_account","hippius_key":"new_key_456","hippius_key_encoded":false}',
+    )
     @patch("os.path.exists", return_value=True)
     @patch("hippius_sdk.cli_handlers.list_accounts")
     @patch("hippius_sdk.cli_handlers.load_config")
     @patch("hippius_sdk.cli_handlers.save_config")
     def test_handle_account_import_new_account(
-        self, mock_save_config, mock_load_config, mock_list_accounts, mock_exists, mock_file
+        self,
+        mock_save_config,
+        mock_load_config,
+        mock_list_accounts,
+        mock_exists,
+        mock_file,
     ):
         """Test importing a new account (no overwrite prompt)."""
         mock_client = MagicMock()
@@ -116,15 +137,13 @@ class TestCLIAccountCommands:
         mock_list_accounts.return_value = {}
 
         # Mock configuration
-        mock_config = {
-            "substrate": {
-                "accounts": {}
-            }
-        }
+        mock_config = {"substrate": {"accounts": {}}}
         mock_load_config.return_value = mock_config
 
         # Test importing new account
-        result = handle_account_import(mock_client, file_path="new_import.json", encrypt=False)
+        result = handle_account_import(
+            mock_client, file_path="new_import.json", encrypt=False
+        )
 
         # Verify success
         assert result == 0
@@ -133,7 +152,9 @@ class TestCLIAccountCommands:
     @patch("hippius_sdk.cli_handlers.list_accounts")
     @patch("hippius_sdk.cli_handlers.get_active_account")
     @patch("hippius_sdk.cli_handlers.load_config")
-    def test_handle_account_list(self, mock_load_config, mock_get_active, mock_list_accounts):
+    def test_handle_account_list(
+        self, mock_load_config, mock_get_active, mock_list_accounts
+    ):
         """Test the handle_account_list function."""
         # Mock accounts
         mock_list_accounts.return_value = {"account1": {}, "account2": {}}
@@ -143,14 +164,8 @@ class TestCLIAccountCommands:
         mock_config = {
             "substrate": {
                 "accounts": {
-                    "account1": {
-                        "hippius_key": "key1",
-                        "hippius_key_encoded": False
-                    },
-                    "account2": {
-                        "hippius_key": "key2",
-                        "hippius_key_encoded": True
-                    }
+                    "account1": {"hippius_key": "key1", "hippius_key_encoded": False},
+                    "account2": {"hippius_key": "key2", "hippius_key_encoded": True},
                 }
             }
         }

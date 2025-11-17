@@ -22,7 +22,7 @@ from hippius_sdk.client import HippiusClient
 from hippius_sdk.config import get_hippius_key
 
 # Load test environment variables from .env.test
-load_dotenv('.env.test', override=True)
+load_dotenv(".env.test", override=True)
 
 
 @pytest.fixture(scope="session")
@@ -58,7 +58,7 @@ def docker_ipfs_node():
     subprocess.run(
         ["docker", "compose", "-f", compose_file, "up", "-d"],
         check=True,
-        capture_output=True
+        capture_output=True,
     )
 
     # Wait for IPFS to be healthy (max 30 seconds)
@@ -70,7 +70,7 @@ def docker_ipfs_node():
         result = subprocess.run(
             ["docker", "compose", "-f", compose_file, "ps", "--format", "json"],
             capture_output=True,
-            text=True
+            text=True,
         )
 
         if result.returncode == 0 and '"Health":"healthy"' in result.stdout:
@@ -90,7 +90,7 @@ def docker_ipfs_node():
     subprocess.run(
         ["docker", "compose", "-f", compose_file, "down", "-v"],
         check=True,
-        capture_output=True
+        capture_output=True,
     )
     print("✅ Docker IPFS node stopped")
 
@@ -128,7 +128,9 @@ def test_api_url() -> str:
 
 
 @pytest_asyncio.fixture
-async def api_client(test_hippius_key: str, test_api_url: str) -> AsyncGenerator[HippiusApiClient, None]:
+async def api_client(
+    test_hippius_key: str, test_api_url: str
+) -> AsyncGenerator[HippiusApiClient, None]:
     """
     Create an authenticated API client for testing.
 
@@ -151,7 +153,9 @@ async def api_client(test_hippius_key: str, test_api_url: str) -> AsyncGenerator
 
 
 @pytest_asyncio.fixture
-async def hippius_client(test_hippius_key: str, test_api_url: str, docker_ipfs_node: str) -> AsyncGenerator[HippiusClient, None]:
+async def hippius_client(
+    test_hippius_key: str, test_api_url: str, docker_ipfs_node: str
+) -> AsyncGenerator[HippiusClient, None]:
     """
     Create a full HippiusClient for integration testing.
 
@@ -173,7 +177,7 @@ async def hippius_client(test_hippius_key: str, test_api_url: str, docker_ipfs_n
     yield client
 
     # Cleanup
-    if hasattr(client.api_client, 'close'):
+    if hasattr(client.api_client, "close"):
         await client.api_client.close()
 
 
@@ -185,7 +189,7 @@ def temp_test_file():
     Yields:
         Path to temporary file
     """
-    with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.txt') as f:
+    with tempfile.NamedTemporaryFile(mode="wb", delete=False, suffix=".txt") as f:
         # Write test content
         test_content = b"This is a test file for Hippius SDK e2e tests.\n" * 100
         f.write(test_content)
@@ -210,7 +214,7 @@ def temp_test_dir():
         # Create some test files
         for i in range(3):
             file_path = os.path.join(temp_dir, f"test_file_{i}.txt")
-            with open(file_path, 'w') as f:
+            with open(file_path, "w") as f:
                 f.write(f"Test file {i} content\n" * 50)
 
         yield temp_dir
@@ -236,28 +240,25 @@ def mock_api_response() -> Dict:
         Dictionary with mock response data
     """
     return {
-        "credits": {
-            "balance": 100.50,
-            "currency": "USD"
-        },
+        "credits": {"balance": 100.50, "currency": "USD"},
         "file": {
             "id": "test-file-id-123",
             "cid": "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
             "name": "test_file.txt",
             "size": 1024,
-            "created_at": "2025-01-01T00:00:00Z"
+            "created_at": "2025-01-01T00:00:00Z",
         },
         "upload": {
             "id": "test-upload-id-456",
             "status": "completed",
-            "cid": "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+            "cid": "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
         },
         "storage_request": {
             "id": "test-request-id-789",
             "type": "Pin",
             "status": "pending",
-            "cid": "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
-        }
+            "cid": "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+        },
     }
 
 
@@ -290,6 +291,4 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "requires_ipfs: mark test as requiring local IPFS node"
     )
-    config.addinivalue_line(
-        "markers", "slow: mark test as slow running"
-    )
+    config.addinivalue_line("markers", "slow: mark test as slow running")

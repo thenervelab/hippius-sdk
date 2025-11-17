@@ -18,7 +18,11 @@ from typing import Any, Callable, Dict, List, Optional, Union, AsyncIterator
 import httpx
 from pydantic import BaseModel
 
-from hippius_sdk.config import get_config_value, get_encryption_key, validate_ipfs_node_url
+from hippius_sdk.config import (
+    get_config_value,
+    get_encryption_key,
+    validate_ipfs_node_url,
+)
 from hippius_sdk.errors import HippiusIPFSError, HippiusSubstrateError
 from hippius_sdk.ipfs_core import AsyncIPFSClient
 from hippius_sdk.key_storage import (
@@ -92,9 +96,7 @@ class IPFSClient:
         try:
             self.client = AsyncIPFSClient(api_url=self.api_url)
         except httpx.ConnectError:
-            print(
-                f"Warning: Falling back to local IPFS daemon at {self.api_url}"
-            )
+            print(f"Warning: Falling back to local IPFS daemon at {self.api_url}")
             self.client = AsyncIPFSClient(api_url=self.api_url)
 
         self._initialize_encryption(encrypt_by_default, encryption_key)
@@ -543,7 +545,9 @@ class IPFSClient:
                             response.raise_for_status()
 
                             with open(output_path, "wb") as f:
-                                async for chunk in response.aiter_bytes(chunk_size=8192):
+                                async for chunk in response.aiter_bytes(
+                                    chunk_size=8192
+                                ):
                                     f.write(chunk)
                     else:
                         # Use gateway format
@@ -554,7 +558,9 @@ class IPFSClient:
                             response.raise_for_status()
 
                             with open(output_path, "wb") as f:
-                                async for chunk in response.aiter_bytes(chunk_size=8192):
+                                async for chunk in response.aiter_bytes(
+                                    chunk_size=8192
+                                ):
                                     f.write(chunk)
                     break
 
@@ -656,9 +662,7 @@ class IPFSClient:
 
         return result
 
-    async def exists(
-        self, cid: str
-    ) -> Dict[str, Any]:
+    async def exists(self, cid: str) -> Dict[str, Any]:
         """
         Check if a CID exists on IPFS.
 
@@ -670,7 +674,7 @@ class IPFSClient:
                 - exists: Boolean indicating if the CID exists
                 - cid: The CID that was checked
                 - formatted_cid: Formatted version of the CID
-                        """
+        """
         formatted_cid = self.format_cid(cid)
         gateway_url = f"{self.api_url}/api/v0/cat?arg={cid}"
         exists = await self.client.ls(cid)
@@ -679,11 +683,9 @@ class IPFSClient:
             "exists": exists,
             "cid": cid,
             "formatted_cid": formatted_cid,
-                    }
+        }
 
-    async def publish_global(
-        self, cid: str
-    ) -> Dict[str, Any]:
+    async def publish_global(self, cid: str) -> Dict[str, Any]:
         """
         Publish a CID to the global IPFS network, ensuring it's widely available.
 
@@ -1044,16 +1046,18 @@ class IPFSClient:
                             filename=chunk_info["name"],
                             hippius_key=hippius_key,
                         )
-                        chunk_info["pin_request_id"] = (
-                            pin_result.get("id") or pin_result.get("request_id")
-                        )
+                        chunk_info["pin_request_id"] = pin_result.get(
+                            "id"
+                        ) or pin_result.get("request_id")
 
                     if progress_callback:
                         progress_callback("upload", chunk_uploads, total_chunks)
 
                     if verbose and chunk_uploads % 10 == 0:
                         action = "pinned" if pin_chunks else "uploaded"
-                        print(f"  {action.capitalize()} {chunk_uploads}/{total_chunks} chunks")
+                        print(
+                            f"  {action.capitalize()} {chunk_uploads}/{total_chunks} chunks"
+                        )
 
                     return chunk_info
 
@@ -1576,12 +1580,14 @@ class IPFSClient:
             )
 
             result["metadata_pinned"] = True
-            result["metadata_pin_request_id"] = (
-                pin_result.get("id") or pin_result.get("request_id")
+            result["metadata_pin_request_id"] = pin_result.get("id") or pin_result.get(
+                "request_id"
             )
 
             if verbose:
-                print(f"Metadata pinned successfully. Request ID: {result['metadata_pin_request_id']}")
+                print(
+                    f"Metadata pinned successfully. Request ID: {result['metadata_pin_request_id']}"
+                )
         else:
             result["metadata_pinned"] = False
 
@@ -1839,8 +1845,6 @@ class IPFSClient:
         # Delete operation completed successfully
         print("Delete EC file operation completed successfully")
         return True
-
-
 
     async def _get_ipfs_stream(
         self, cid: str, download_node: str

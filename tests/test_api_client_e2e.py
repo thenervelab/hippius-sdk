@@ -154,7 +154,9 @@ class TestStorageRequestEndpoints:
         {cid: string, original_name: string, request_type: "Pin"}
         """
         try:
-            result = await api_client.pin_file(cid=sample_cid, filename="test_pin_file.txt")
+            result = await api_client.pin_file(
+                cid=sample_cid, filename="test_pin_file.txt"
+            )
 
             assert isinstance(result, dict), "pin_file should return a dict"
 
@@ -182,12 +184,7 @@ class TestStorageRequestEndpoints:
         """
         try:
             result = await api_client.storage_request(
-                files=[
-                    {
-                        "cid": sample_cid,
-                        "filename": "test_generic_request.txt"
-                    }
-                ]
+                files=[{"cid": sample_cid, "filename": "test_generic_request.txt"}]
             )
 
             # Returns request ID as string
