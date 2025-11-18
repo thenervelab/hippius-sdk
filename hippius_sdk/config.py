@@ -48,7 +48,7 @@ Documentation: https://docs.hippius.com/storage/s3/integration
 DEFAULT_CONFIG = {
     "ipfs": {
         "api_url": None,
-        "local_ipfs": False,
+        "local_ipfs": True,
     },
     "substrate": {
         "url": "wss://rpc.hippius.network",
@@ -149,7 +149,7 @@ def load_config() -> Dict[str, Any]:
         ):
             api_url = config.get("ipfs", {}).get("api_url")
             if api_url and DEPRECATED_IPFS_URL in api_url:
-                print(f"\nWARNING: Deprecated IPFS node URL detected in config!")
+                print("\nWARNING: Deprecated IPFS node URL detected in config!")
                 print(DEPRECATION_ERROR_MESSAGE)
                 _DEPRECATION_WARNING_SHOWN = True
 
@@ -710,7 +710,7 @@ def initialize_from_env() -> None:
             )
 
         if DEPRECATED_IPFS_URL in node_url:
-            print(f"\nERROR: Cannot use deprecated IPFS node URL!")
+            print("\nERROR: Cannot use deprecated IPFS node URL!")
             print(DEPRECATION_ERROR_MESSAGE)
         else:
             config["ipfs"]["api_url"] = node_url
@@ -767,21 +767,227 @@ def reset_config() -> bool:
     return save_config(DEFAULT_CONFIG.copy())
 
 
-def get_seed_phrase() -> Optional[str]:
+def set_seed_phrase(
+    seed_phrase: str,
+    encode: bool = False,
+    password: Optional[str] = None,
+    account_name: Optional[str] = None,
+) -> bool:
     """
-    Get seed phrase from user input.
-    Prompts the user to paste their miner seed phrase securely.
+    Set the substrate seed phrase in configuration, with optional encryption.
+
+    Args:
+        seed_phrase: The seed phrase to store
+        encode: Whether to encrypt the seed phrase (requires password)
+        password: Optional password for encryption (if None and encode=True, will prompt)
+        account_name: Optional name for the account (if None, uses active account)
 
     Returns:
-        Optional[str]: The seed phrase entered by the user, or None if empty
+        bool: True if saving was successful, False otherwise
     """
-    import getpass
-    from hippius_sdk.cli_rich import info
+    if encode:
+        return encrypt_seed_phrase(seed_phrase, password, account_name)
+    else:
+        config = load_config()
 
-    info("Please enter your miner seed phrase (12 or 24 words):")
-    seed_phrase = getpass.getpass("Seed phrase: ").strip()
+        # Get the SS58 address from the seed phrase
+        ss58_address = None
+        try:
+            keypair = Keypair.create_from_mnemonic(seed_phrase)
+            ss58_address = keypair.ss58_address
+        except Exception as e:
+            print(f"Warning: Could not derive SS58 address: {e}")
 
-    return seed_phrase if seed_phrase else None
+        # Only use multi-account mode
+        # Use active account if no account specified
+        name_to_use = account_name
+        if name_to_use is None:
+            name_to_use = config["substrate"].get("active_account")
+            if not name_to_use:
+                # If no active account, we need a name
+                print("Error: No account name specified and no active account")
+                return False
+
+        # Ensure accounts structure exists
+        if "accounts" not in config["substrate"]:
+            config["substrate"]["accounts"] = {}
+
+        # Store the account data
+        config["substrate"]["accounts"][name_to_use] = {
+            "seed_phrase": seed_phrase,
+            "seed_phrase_encoded": False,
+            "seed_phrase_salt": None,
+            "ss58_address": ss58_address,
+        }
+
+        # Set as active account if no active account exists
+        if not config["substrate"].get("active_account"):
+            config["substrate"]["active_account"] = name_to_use
+
+        return save_config(config)
+
+
+def encrypt_seed_phrase(
+    seed_phrase: str, password: Optional[str] = None, account_name: Optional[str] = None
+) -> bool:
+    """
+    Encrypt the substrate seed phrase using password-based encryption.
+
+    Args:
+        seed_phrase: The plain text seed phrase to encrypt
+        password: Optional password (if None, will prompt)
+        account_name: Optional name for the account (if None, uses active account)
+
+    Returns:
+        bool: True if encryption and saving was successful, False otherwise
+    """
+    try:
+        # Get password from user if not provided
+        if password is None:
+            password = getpass.getpass("Enter password to encrypt seed phrase: ")
+            password_confirm = getpass.getpass("Confirm password: ")
+
+            if password != password_confirm:
+                raise ValueError("Passwords do not match")
+
+        # Encrypt the seed phrase
+        encrypted_data, salt = encrypt_with_password(seed_phrase, password)
+
+        # Get the SS58 address from the seed phrase
+        ss58_address = None
+        try:
+            keypair = Keypair.create_from_mnemonic(seed_phrase)
+            ss58_address = keypair.ss58_address
+        except Exception as e:
+            print(f"Warning: Could not derive SS58 address: {e}")
+
+        config = load_config()
+
+        # Only use multi-account mode
+        # Use active account if no account specified
+        name_to_use = account_name
+        if name_to_use is None:
+            name_to_use = config["substrate"].get("active_account")
+            if not name_to_use:
+                # If no active account, we need a name
+                print("Error: No account name specified and no active account")
+                return False
+
+        # Ensure accounts structure exists
+        if "accounts" not in config["substrate"]:
+            config["substrate"]["accounts"] = {}
+
+        # Store the account data
+        config["substrate"]["accounts"][name_to_use] = {
+            "seed_phrase": encrypted_data,
+            "seed_phrase_encoded": True,
+            "seed_phrase_salt": salt,
+            "ss58_address": ss58_address,
+        }
+
+        # Set as active account if no active account exists
+        if not config["substrate"].get("active_account"):
+            config["substrate"]["active_account"] = name_to_use
+
+        return save_config(config)
+
+    except Exception as e:
+        print(f"Error encrypting seed phrase: {e}")
+        return False
+
+
+def decrypt_seed_phrase(
+    password: Optional[str] = None, account_name: Optional[str] = None
+) -> Optional[str]:
+    """
+    Decrypt the substrate seed phrase using password-based decryption.
+
+    Args:
+        password: Optional password (if None, will prompt; if empty string, will skip password for read-only operations)
+        account_name: Optional account name (if None, uses active account)
+
+    Returns:
+        Optional[str]: The decrypted seed phrase, or None if decryption failed
+    """
+    config = load_config()
+
+    # Only use the multi-account system
+    name_to_use = account_name or config["substrate"].get("active_account")
+
+    if not name_to_use:
+        print("Error: No account specified and no active account")
+        return None
+
+    if name_to_use not in config["substrate"].get("accounts", {}):
+        print(f"Error: Account '{name_to_use}' not found")
+        return None
+
+    account_data = config["substrate"]["accounts"][name_to_use]
+    is_encoded = account_data.get("seed_phrase_encoded", False)
+
+    if not is_encoded:
+        return account_data.get("seed_phrase")
+
+    encrypted_data = account_data.get("seed_phrase")
+    salt = account_data.get("seed_phrase_salt")
+
+    if not encrypted_data or not salt:
+        print("Error: No encrypted seed phrase found or missing salt")
+        return None
+
+    # Check if we're in skip-password mode (empty string)
+    # This is used for read-only operations that don't need blockchain interaction
+    if password == "":
+        # Don't print a message as it's confusing to the user
+        return None
+
+    # Get password from user if not provided
+    if password is None:
+        password = getpass.getpass("Enter password to decrypt seed phrase: \n\n")
+
+    # Decrypt the seed phrase
+    return decrypt_with_password(encrypted_data, salt, password)
+
+
+def get_seed_phrase(
+    password: Optional[str] = None, account_name: Optional[str] = None
+) -> Optional[str]:
+    """
+    Get the substrate seed phrase from configuration, decrypting if necessary.
+
+    Args:
+        password: Optional password for decryption (if None and needed, will prompt;
+                if empty string, will skip decryption for read-only operations)
+        account_name: Optional account name (if None, uses active account)
+
+    Returns:
+        Optional[str]: The seed phrase, or None if not available
+    """
+    config = load_config()
+
+    # Only use the multi-account system
+    name_to_use = account_name or config["substrate"].get("active_account")
+
+    if not name_to_use:
+        print("Error: No account specified and no active account")
+        return None
+
+    if name_to_use not in config["substrate"].get("accounts", {}):
+        print(f"Error: Account '{name_to_use}' not found")
+        return None
+
+    account_data = config["substrate"]["accounts"][name_to_use]
+    is_encoded = account_data.get("seed_phrase_encoded", False)
+
+    # If password is an empty string, this indicates we're doing a read-only operation
+    # that doesn't require the seed phrase, so we can return None
+    if password == "" and is_encoded:
+        return None
+
+    if is_encoded:
+        return decrypt_seed_phrase(password, name_to_use)
+    else:
+        return account_data.get("seed_phrase")
 
 
 # Initialize configuration on module import
