@@ -27,7 +27,7 @@ from hippius_sdk.config import (
 from hippius_sdk.ipfs import IPFSClient
 from hippius_sdk.utils import format_cid, format_size, hex_to_ipfs_cid
 
-__version__ = "0.2.69"
+__version__ = "0.2.70"
 __all__ = [
     "HippiusClient",
     "IPFSClient",
