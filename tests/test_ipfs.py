@@ -231,11 +231,7 @@ async def test_exists_true(async_ipfs_client, mock_httpx_client):
     result = await async_ipfs_client.exists(cid)
 
     # Verify the correct endpoint was called
-    mock_httpx_client.head.assert_called_once()
-    assert (
-        mock_httpx_client.head.call_args[0][0]
-        == f"https://get.hippius.network/ipfs/{cid}"
-    )
+    mock_httpx_client.post.assert_called_once()
 
     # Check the result
     assert result is True
@@ -247,16 +243,12 @@ async def test_exists_false(async_ipfs_client, mock_httpx_client):
     cid = "QmNonexistent"
 
     # Set up the mock to raise an exception
-    mock_httpx_client.head.side_effect = httpx.HTTPError("Not found")
+    mock_httpx_client.post.side_effect = httpx.HTTPError("Not found")
 
     result = await async_ipfs_client.exists(cid)
 
     # Verify the correct endpoint was called
-    mock_httpx_client.head.assert_called_once()
-    assert (
-        mock_httpx_client.head.call_args[0][0]
-        == f"https://get.hippius.network/ipfs/{cid}"
-    )
+    mock_httpx_client.post.assert_called_once()
 
     # Check the result
     assert result is False
@@ -461,7 +453,6 @@ async def test_ipfs_client_exists():
         assert result["exists"] is True
         assert result["cid"] == "QmTest123"
         assert "formatted_cid" in result
-        assert "gateway_url" in result
 
 
 @pytest.mark.asyncio
@@ -508,7 +499,7 @@ async def test_ipfs_client_download_file(tmp_path):
         }
 
     with patch("hippius_sdk.ipfs.IPFSClient.download_file", mock_download_impl):
-        client = IPFSClient(api_url=IPFS_API_URL, gateway="https://ipfs.example.com")
+        client = IPFSClient(api_url=IPFS_API_URL)
         result = await client.download_file(test_cid, output_path)
 
         assert os.path.exists(output_path)

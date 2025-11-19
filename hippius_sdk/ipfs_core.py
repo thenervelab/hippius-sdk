@@ -40,7 +40,8 @@ class AsyncIPFSClient:
         # Normalize URLs and avoid trailing slash to prevent "//" when joining paths
         self.api_url = api_url.rstrip("/")
         # Do not follow redirects automatically to avoid POST→GET on 301
-        self.client = httpx.AsyncClient(timeout=300, follow_redirects=False)
+        # Use 30 second timeout for IPFS operations
+        self.client = httpx.AsyncClient(timeout=30.0, follow_redirects=False)
 
     async def close(self):
         """Close the httpx client."""

@@ -9,6 +9,7 @@ API Documentation: https://api.hippius.com/?format=openapi
 
 import asyncio
 import functools
+import logging
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -19,6 +20,8 @@ from hippius_sdk.errors import (
     HippiusAuthenticationError,
     HippiusFailedSubstrateDelete,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def retry_on_error(retries: int = 3, backoff: float = 5.0):
@@ -196,11 +199,18 @@ class HippiusApiClient:
         if filename:
             payload["original_name"] = filename
 
+        logger.info(f"Sending pin_file request to {self.api_url}/storage-control/requests/")
+        logger.info(f"Payload: {payload}")
+        logger.info(f"Headers: {headers}")
+
         response = await self._client.post(
             "/storage-control/requests/",
             json=payload,
             headers=headers,
         )
+
+        logger.info(f"Response status: {response.status_code}")
+        logger.info(f"Response body: {response.text}")
 
         response.raise_for_status()
         return response.json()

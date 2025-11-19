@@ -13,6 +13,8 @@ import time
 from typing import AsyncGenerator, Dict, Optional
 from unittest.mock import AsyncMock, Mock
 
+import nacl.secret
+import nacl.utils
 import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
@@ -21,7 +23,8 @@ from hippius_sdk.api_client import HippiusApiClient
 from hippius_sdk.client import HippiusClient
 from hippius_sdk.config import get_hippius_key
 
-# Load test environment variables from .env.test
+# Load environment variables from .env first, then .env.test (which can override)
+load_dotenv(".env")
 load_dotenv(".env.test", override=True)
 
 
@@ -167,11 +170,14 @@ async def hippius_client(
     Yields:
         Configured HippiusClient instance
     """
+    # Generate a test encryption key (32 bytes for NaCl SecretBox)
+    test_encryption_key = nacl.utils.random(nacl.secret.SecretBox.KEY_SIZE)
+
     client = HippiusClient(
         hippius_key=test_hippius_key,
         api_url=test_api_url,
         ipfs_api_url=docker_ipfs_node,
-        ipfs_gateway=docker_ipfs_node,
+        encryption_key=test_encryption_key,
     )
 
     yield client
@@ -223,12 +229,17 @@ def temp_test_dir():
 @pytest.fixture
 def sample_cid() -> str:
     """
-    Sample CID for testing (a valid but non-existent CID).
+    Sample CID for testing.
+
+    Uses a real, publicly available CID that exists on IPFS.
+    This is the "Hello World" file commonly used for IPFS testing.
 
     Returns:
         Sample CID string
     """
-    return "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+    # This is a real CID for a simple "Hello World" text file
+    # It's widely available on the IPFS network
+    return "QmZ4tDuvesekSs4qM5ZBKpXiZGun7S2CYtEZRB3DYXkjGx"
 
 
 @pytest.fixture

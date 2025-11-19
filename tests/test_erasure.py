@@ -46,17 +46,18 @@ DEFAULT_M = 5
 
 
 @pytest.fixture
-def client(docker_ipfs_node):
+def client(docker_ipfs_node, test_hippius_key):
     """
     Create and return a HippiusClient configured for Docker IPFS.
 
     Args:
         docker_ipfs_node: Session-scoped fixture that provides Docker IPFS API URL
+        test_hippius_key: Test HIPPIUS_KEY from environment
     """
-    # Create client with Docker IPFS settings
+    # Create client with Docker IPFS settings and hippius_key
     client = HippiusClient(
-        ipfs_gateway=IPFS_GATEWAY,
-        ipfs_api_url=docker_ipfs_node,  # Use Docker IPFS from fixture
+        ipfs_api_url=docker_ipfs_node,
+        hippius_key=test_hippius_key,
     )
 
     # Verify client is properly instantiated

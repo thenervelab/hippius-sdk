@@ -138,44 +138,69 @@ class TestClientIPFSOperations:
         assert result["pinned"] is True
         assert "pin_request_id" in result
 
-    async def test_download_file_basic(self, hippius_client, sample_cid):
+    async def test_download_file_basic(self, hippius_client, temp_test_file):
         """Test basic file download through client."""
+        # First upload a file to get a real CID
+        upload_result = await hippius_client.ipfs_client.upload_file(
+            temp_test_file, encrypt=False
+        )
+        cid = upload_result["cid"]
+
+        # Now download it
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             output_path = tmp.name
 
         try:
-            # This may fail if CID doesn't exist - that's expected
-            result = await hippius_client.download_file(sample_cid, output_path)
+            result = await hippius_client.download_file(cid, output_path)
 
-            if result.get("success"):
-                assert os.path.exists(output_path)
-                assert "size_bytes" in result
-                assert "elapsed_seconds" in result
-        except Exception:
-            pytest.skip("Sample CID not available for download")
+            assert result.get("success") is True
+            assert os.path.exists(output_path)
+            assert "size_bytes" in result
+            assert "elapsed_seconds" in result
+
+            # Verify content matches
+            with open(temp_test_file, "rb") as f1, open(output_path, "rb") as f2:
+                assert f1.read() == f2.read()
         finally:
             if os.path.exists(output_path):
                 os.unlink(output_path)
 
-    async def test_cat_file(self, hippius_client, sample_cid):
+    async def test_cat_file(self, hippius_client, temp_test_file):
         """Test getting file content through cat."""
-        try:
-            result = await hippius_client.cat(sample_cid, max_display_bytes=100)
+        # First upload a file to get a real CID
+        upload_result = await hippius_client.ipfs_client.upload_file(
+            temp_test_file, encrypt=False
+        )
+        cid = upload_result["cid"]
 
-            assert isinstance(result, dict)
-            assert "content" in result
-            assert "size_bytes" in result
-        except Exception:
-            pytest.skip("Sample CID not available")
+        # Now cat the file
+        result = await hippius_client.cat(cid, max_display_bytes=100)
 
-    async def test_exists_check(self, hippius_client, sample_cid):
+        assert isinstance(result, dict)
+        assert "content" in result
+        assert "size_bytes" in result
+
+        # Verify content matches (at least the first 100 bytes)
+        with open(temp_test_file, "rb") as f:
+            expected_content = f.read(100)
+            assert result["content"][:100] == expected_content
+
+    async def test_exists_check(self, hippius_client, temp_test_file):
         """Test checking if CID exists."""
-        result = await hippius_client.exists(sample_cid)
+        # First upload a file to get a real CID
+        upload_result = await hippius_client.ipfs_client.upload_file(
+            temp_test_file, encrypt=False
+        )
+        cid = upload_result["cid"]
+
+        # Test that uploaded CID exists
+        result = await hippius_client.exists(cid)
 
         assert isinstance(result, dict)
         assert "exists" in result
-        assert isinstance(result["exists"], bool)
+        assert result["exists"] is True
         assert "cid" in result
+        assert result["cid"] == cid
 
     async def test_pin_operation(self, hippius_client, sample_cid):
         """Test pinning a CID."""
@@ -566,7 +591,7 @@ class TestClientErrorPropagation:
         # We can't test this easily without knowing what will fail
         # But we can verify the error handling structure exists
         assert hasattr(hippius_client.api_client, "_client")
-        assert hasattr(hippius_client.api_client, "_get_auth_headers")
+        assert hasattr(hippius_client.api_client, "_get_headers")
 
 
 @pytest.mark.e2e
@@ -659,8 +684,9 @@ class TestClientConcurrency:
         # All should complete
         assert len(results) == 3
 
-        # Credits should be numeric
-        assert isinstance(results[0], (int, float))
+        # Balance should be a dict with 'balance' key
+        assert isinstance(results[0], dict)
+        assert "balance" in results[0]
 
         # Files and uploads should be lists
         assert isinstance(results[1], list)

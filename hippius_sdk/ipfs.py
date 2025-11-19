@@ -676,8 +676,14 @@ class IPFSClient:
                 - formatted_cid: Formatted version of the CID
         """
         formatted_cid = self.format_cid(cid)
-        gateway_url = f"{self.api_url}/api/v0/cat?arg={cid}"
-        exists = await self.client.ls(cid)
+
+        try:
+            # Try to ls the CID - if it exists, this will succeed
+            await self.client.ls(cid)
+            exists = True
+        except Exception:
+            # If ls fails, the CID doesn't exist or isn't accessible
+            exists = False
 
         return {
             "exists": exists,
