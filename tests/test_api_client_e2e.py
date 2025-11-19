@@ -132,7 +132,9 @@ class TestStorageFileEndpoints:
         assert isinstance(files2, list)
 
         # They should have the same number of files
-        assert len(files1) == len(files2), "Both methods should return same number of files"
+        assert len(files1) == len(
+            files2
+        ), "Both methods should return same number of files"
 
         # Verify basic structure is maintained
         if files1:

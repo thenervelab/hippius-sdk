@@ -199,7 +199,9 @@ class HippiusApiClient:
         if filename:
             payload["original_name"] = filename
 
-        logger.info(f"Sending pin_file request to {self.api_url}/storage-control/requests/")
+        logger.info(
+            f"Sending pin_file request to {self.api_url}/storage-control/requests/"
+        )
         logger.info(f"Payload: {payload}")
         logger.info(f"Headers: {headers}")
 
