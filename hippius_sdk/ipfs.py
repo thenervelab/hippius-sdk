@@ -23,10 +23,9 @@ from hippius_sdk.config import (
     get_encryption_key,
     validate_ipfs_node_url,
 )
-from hippius_sdk.errors import HippiusIPFSError, HippiusSubstrateError
+from hippius_sdk.errors import HippiusIPFSError
 from hippius_sdk.ipfs_core import AsyncIPFSClient
 from hippius_sdk.key_storage import (
-    generate_and_store_key_for_subaccount,
     get_key_for_subaccount,
     is_key_storage_enabled,
 )
@@ -57,6 +56,18 @@ PARALLEL_ORIGINAL_CHUNKS = (
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
+
+
+class S3DownloadResult(BaseModel):
+    """Result model for s3_download method."""
+
+    cid: str
+    output_path: str
+    size_bytes: int
+    size_formatted: str
+    elapsed_seconds: float
+    decrypted: bool
+    encryption_key: Optional[str]
 
 
 class IPFSClient:
@@ -1887,3 +1898,299 @@ class IPFSClient:
 
         except Exception as e:
             raise HippiusIPFSError(f"Failed to stream from {download_node}: {str(e)}")
+
+    async def s3_download(
+        self,
+        cid: str,
+        output_path: Optional[str] = None,
+        subaccount_id: Optional[str] = None,
+        bucket_name: Optional[str] = None,
+        auto_decrypt: bool = True,
+        download_node: str = "http://localhost:5001",
+        return_bytes: bool = False,
+        streaming: bool = False,
+    ) -> Union[S3DownloadResult, bytes, AsyncIterator[bytes]]:
+        """
+        Download content from IPFS with flexible output options and automatic decryption.
+
+        This method provides multiple output modes:
+        1. File output: Downloads to specified path (default mode)
+        2. Bytes output: Returns decrypted bytes in memory (return_bytes=True)
+        3. Streaming output: Returns decrypted bytes or raw iterator based on auto_decrypt (streaming=True)
+
+        Args:
+            cid: Content Identifier (CID) of the file to download
+            output_path: Path where the downloaded file will be saved (None for bytes/streaming)
+            subaccount_id: The subaccount/account identifier (required for decryption)
+            bucket_name: The bucket name for key isolation (required for decryption)
+            auto_decrypt: Whether to attempt automatic decryption (default: True)
+            download_node: IPFS node URL for download (default: local node)
+            return_bytes: If True, return bytes instead of saving to file
+            streaming: If True, return decrypted bytes when auto_decrypt=True, or raw streaming iterator when auto_decrypt=False
+
+        Returns:
+            S3DownloadResult: Download info and decryption status (default)
+            bytes: Raw decrypted content when return_bytes=True or streaming=True with auto_decrypt=True
+            AsyncIterator[bytes]: Raw streaming iterator when streaming=True and auto_decrypt=False
+
+        Raises:
+            HippiusIPFSError: If IPFS download fails
+            FileNotFoundError: If the output directory doesn't exist
+            ValueError: If decryption fails or invalid parameter combinations
+        """
+        # Validate parameter combinations
+        if streaming and return_bytes:
+            raise ValueError("Cannot specify both streaming and return_bytes")
+
+        if streaming:
+            # Validate required parameters for decryption if auto_decrypt is True
+            if auto_decrypt and (not subaccount_id or not bucket_name):
+                raise ValueError(
+                    "subaccount_id and bucket_name are required for streaming decryption"
+                )
+
+            if auto_decrypt:
+                # Return decrypted bytes directly (not streaming)
+                try:
+                    key_storage_available = is_key_storage_enabled()
+                except ImportError:
+                    key_storage_available = False
+
+                encryption_key_bytes = None
+
+                if key_storage_available:
+                    # Create combined key identifier from account+bucket
+                    account_bucket_key = f"{subaccount_id}:{bucket_name}"
+
+                    try:
+                        existing_key_b64 = await get_key_for_subaccount(
+                            account_bucket_key
+                        )
+                        if existing_key_b64:
+                            encryption_key_bytes = base64.b64decode(existing_key_b64)
+                    except Exception as e:
+                        logger.debug(f"Failed to get encryption key: {e}")
+
+                # If key storage decryption failed or wasn't available, try client encryption key
+                if not encryption_key_bytes and self.encryption_available:
+                    logger.debug("Using client encryption key for streaming decryption")
+                    encryption_key_bytes = self.encryption_key
+
+                if not encryption_key_bytes:
+                    logger.warning(
+                        "No encryption key found - downloading raw encrypted data as bytes"
+                    )
+                    # Return raw encrypted data as bytes
+                    encrypted_data = b""
+                    async for chunk in self._get_ipfs_stream(cid, download_node):
+                        encrypted_data += chunk
+                    return encrypted_data
+
+                # Collect all encrypted data first
+                logger.debug("Buffering encrypted content for decryption")
+                encrypted_data = b""
+                async for chunk in self._get_ipfs_stream(cid, download_node):
+                    encrypted_data += chunk
+
+                # Decrypt the complete buffered content and return as bytes
+                try:
+                    import nacl.secret
+
+                    box = nacl.secret.SecretBox(encryption_key_bytes)
+                    decrypted_data = box.decrypt(encrypted_data)
+                    logger.info(f"Successfully decrypted {len(decrypted_data)} bytes")
+
+                    # Return all decrypted data as bytes
+                    return decrypted_data
+
+                except Exception as decrypt_error:
+                    logger.error(f"Streaming decryption failed: {decrypt_error}")
+                    raise ValueError(
+                        f"Failed to decrypt streaming content: {decrypt_error}"
+                    )
+            else:
+                # Return raw streaming iterator from IPFS node - no processing
+                async def streaming_wrapper():
+                    async for chunk in self._get_ipfs_stream(cid, download_node):
+                        yield chunk
+
+                return streaming_wrapper()
+
+        start_time = time.time()
+
+        # Validate required parameters for decryption
+        if auto_decrypt and (not subaccount_id or not bucket_name):
+            raise ValueError(
+                "subaccount_id and bucket_name are required when auto_decrypt=True"
+            )
+
+        if not return_bytes and not output_path:
+            raise ValueError("output_path is required when not using return_bytes mode")
+
+        # Use gateway style instead of cat API for better HTTP semantics
+        download_url = f"{download_node.rstrip('/')}/ipfs/{cid}"
+        # Download the file directly into memory from the specified download_node
+        try:
+            # Create parent directories if they don't exist (only for file output mode)
+            if not return_bytes:
+                os.makedirs(
+                    os.path.dirname(os.path.abspath(output_path)), exist_ok=True
+                )
+
+            # Download file into memory
+            file_data = bytearray()
+            timeout = httpx.Timeout(10.0, read=300.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("GET", download_url) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        file_data.extend(chunk)
+
+            # Convert to bytes for consistency
+            file_data = bytes(file_data)
+            logger.info(
+                f"File downloaded from {download_node} with CID: {cid} ({len(file_data)} bytes)"
+            )
+
+        except Exception as e:
+            logger.exception(f"Failed to download file {download_url}")
+            raise HippiusIPFSError(
+                f"Failed to download file from {download_node}: {str(e)}"
+            )
+
+        # Attempt automatic decryption if requested
+        decrypted = False
+        encryption_key_used = None
+        final_data = file_data  # This will hold either encrypted or decrypted data
+
+        if auto_decrypt:
+            # Check if file is empty - this indicates a problem
+            if len(file_data) == 0:
+                logger.error(f"Downloaded file is empty (0 bytes) for CID: {cid}")
+                raise HippiusIPFSError(
+                    f"File not available: Downloaded 0 bytes for CID {cid}. "
+                    f"File may not exist on download node {download_node}. "
+                    f"Download URL: {download_url}"
+                )
+            elif (
+                len(file_data) < 40
+            ):  # PyNaCl encrypted data is at least 40 bytes (24-byte nonce + 16-byte auth tag + data)
+                logger.info(
+                    f"File too small to be encrypted ({len(file_data)} bytes), treating as plaintext"
+                )
+                decrypted = False
+                encryption_key_used = None
+            else:
+                # Check if key storage is enabled and available
+                try:
+                    key_storage_available = is_key_storage_enabled()
+                    logger.debug(f"Key storage enabled: {key_storage_available}")
+                except ImportError:
+                    logger.debug("Key storage module not available")
+                    key_storage_available = False
+
+                # File has content, attempt decryption if requested
+                decryption_attempted = False
+                decryption_successful = False
+
+                if key_storage_available:
+                    # Create combined key identifier from account+bucket
+                    account_bucket_key = f"{subaccount_id}:{bucket_name}"
+
+                    # Try to get the encryption key for this account+bucket combination
+                    try:
+                        existing_key_b64 = await get_key_for_subaccount(
+                            account_bucket_key
+                        )
+
+                        if existing_key_b64:
+                            logger.debug(
+                                "Found encryption key for account+bucket combination, attempting decryption"
+                            )
+                            decryption_attempted = True
+                            encryption_key_used = existing_key_b64
+
+                            # Attempt decryption with the stored key
+                            try:
+                                import nacl.secret
+
+                                encryption_key_bytes = base64.b64decode(
+                                    existing_key_b64
+                                )
+                                box = nacl.secret.SecretBox(encryption_key_bytes)
+                                final_data = box.decrypt(file_data)
+
+                                decryption_successful = True
+                                decrypted = True
+                                logger.info(
+                                    "Successfully decrypted file using stored key"
+                                )
+
+                            except Exception as decrypt_error:
+                                logger.debug(
+                                    f"Decryption failed with stored key: {decrypt_error}"
+                                )  # Continue to try fallback decryption
+                        else:
+                            logger.debug(
+                                "No encryption key found for account+bucket combination"
+                            )
+
+                    except Exception as e:
+                        logger.debug(f"Error retrieving key from storage: {e}")
+
+                # If key storage decryption failed or wasn't available, try client encryption key
+                if not decryption_successful and self.encryption_available:
+                    logger.debug("Attempting decryption with client encryption key")
+                    decryption_attempted = True
+
+                    try:
+                        final_data = self.decrypt_data(file_data)
+
+                        decryption_successful = True
+                        decrypted = True
+
+                        # Store the encryption key for the result
+                        encryption_key_used = (
+                            base64.b64encode(self.encryption_key).decode("utf-8")
+                            if self.encryption_key
+                            else None
+                        )
+                        logger.info(
+                            "Successfully decrypted file using client encryption key"
+                        )
+
+                    except Exception as decrypt_error:
+                        logger.debug(
+                            f"Decryption failed with client key: {decrypt_error}"
+                        )
+
+                # Log final decryption status
+                if decryption_attempted and not decryption_successful:
+                    logger.info(
+                        "File may not be encrypted or decryption keys don't match"
+                    )
+                elif not decryption_attempted:
+                    logger.debug("No decryption attempted - no keys available")
+
+        # Handle output based on mode
+        if return_bytes:
+            # Return bytes directly
+            return final_data
+        else:
+            # Write the final data (encrypted or decrypted) to disk once
+            with open(output_path, "wb") as f:
+                f.write(final_data)
+
+            # Get final file info
+            size_bytes = len(final_data)
+            elapsed_time = time.time() - start_time
+
+            return S3DownloadResult(
+                cid=cid,
+                output_path=output_path,
+                size_bytes=size_bytes,
+                size_formatted=self.format_size(size_bytes),
+                elapsed_seconds=round(elapsed_time, 2),
+                decrypted=decrypted,
+                encryption_key=encryption_key_used,
+            )

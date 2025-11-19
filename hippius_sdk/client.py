@@ -3,7 +3,6 @@ Main client for the Hippius SDK.
 """
 
 import base64
-import os
 from typing import Any, Callable, Dict, List, Optional, Union, AsyncIterator
 
 import nacl.secret
@@ -15,7 +14,7 @@ from hippius_sdk.config import (
     get_encryption_key,
     validate_ipfs_node_url,
 )
-from hippius_sdk.ipfs import IPFSClient
+from hippius_sdk.ipfs import IPFSClient, S3DownloadResult
 
 
 class HippiusClient:
@@ -509,4 +508,54 @@ class HippiusClient:
             metadata_cid,
             cancel_from_blockchain,
             parallel_limit,
+        )
+
+    async def s3_download(
+        self,
+        cid: str,
+        output_path: Optional[str] = None,
+        subaccount_id: Optional[str] = None,
+        bucket_name: Optional[str] = None,
+        auto_decrypt: bool = True,
+        download_node: str = "http://localhost:5001",
+        return_bytes: bool = False,
+        streaming: bool = False,
+    ) -> Union[S3DownloadResult, bytes, AsyncIterator[bytes]]:
+        """
+        Download content from IPFS with flexible output options and automatic decryption.
+
+        This method provides multiple output modes:
+        1. File output: Downloads to specified path (default mode)
+        2. Bytes output: Returns decrypted bytes in memory (return_bytes=True)
+        3. Streaming output: Returns raw streaming iterator from IPFS node (streaming=True)
+
+        Args:
+            cid: Content Identifier (CID) of the file to download
+            output_path: Path where the downloaded file will be saved (None for bytes/streaming)
+            subaccount_id: The subaccount/account identifier (required for decryption)
+            bucket_name: The bucket name for key isolation (required for decryption)
+            auto_decrypt: Whether to attempt automatic decryption (default: True)
+            download_node: IPFS node URL for download (default: local node)
+            return_bytes: If True, return bytes instead of saving to file
+            streaming: If True, return decrypted bytes when auto_decrypt=True, or raw streaming iterator when auto_decrypt=False
+
+        Returns:
+            S3DownloadResult: Download info and decryption status (default)
+            bytes: Raw decrypted content when return_bytes=True or streaming=True with auto_decrypt=True
+            AsyncIterator[bytes]: Raw streaming iterator when streaming=True and auto_decrypt=False
+
+        Raises:
+            HippiusIPFSError: If IPFS download fails
+            FileNotFoundError: If the output directory doesn't exist
+            ValueError: If decryption fails
+        """
+        return await self.ipfs_client.s3_download(
+            cid=cid,
+            output_path=output_path,
+            subaccount_id=subaccount_id,
+            bucket_name=bucket_name,
+            auto_decrypt=auto_decrypt,
+            download_node=download_node,
+            return_bytes=return_bytes,
+            streaming=streaming,
         )

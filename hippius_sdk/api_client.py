@@ -75,8 +75,6 @@ def retry_on_error(retries: int = 3, backoff: float = 5.0):
 class HippiusApiClient:
     """
     HTTP API client for Hippius platform.
-
-    Replaces SubstrateClient with API-based interactions using HIPPIUS_KEY.
     """
 
     def __init__(
@@ -199,20 +197,11 @@ class HippiusApiClient:
         if filename:
             payload["original_name"] = filename
 
-        logger.info(
-            f"Sending pin_file request to {self.api_url}/storage-control/requests/"
-        )
-        logger.info(f"Payload: {payload}")
-        logger.info(f"Headers: {headers}")
-
         response = await self._client.post(
             "/storage-control/requests/",
             json=payload,
             headers=headers,
         )
-
-        logger.info(f"Response status: {response.status_code}")
-        logger.info(f"Response body: {response.text}")
 
         response.raise_for_status()
         return response.json()
