@@ -527,7 +527,12 @@ def add_account_commands(subparsers):
 
     # Account login
     login_account_parser = account_subparsers.add_parser(
-        "login", help="Login with an account address and seed phrase"
+        "login", help="Login with HIPPIUS_KEY from hippius.com"
+    )
+
+    # Account login with seed phrase (for miner operations)
+    login_seed_account_parser = account_subparsers.add_parser(
+        "login-seed", help="Login with seed phrase for miner/blockchain operations"
     )
 
     # Account balance

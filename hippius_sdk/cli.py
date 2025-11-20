@@ -309,6 +309,8 @@ def main():
                 return cli_handlers.handle_account_delete(args.account_name)
             elif args.account_action == "login":
                 return cli_handlers.handle_account_login()
+            elif args.account_action == "login-seed":
+                return cli_handlers.handle_account_login_seed()
             elif args.account_action == "info":
                 return cli_handlers.handle_account_info(
                     args.name if hasattr(args, "name") else None

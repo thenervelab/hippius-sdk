@@ -2273,6 +2273,205 @@ def handle_account_login() -> int:
         return 1
 
 
+def handle_account_login_seed() -> int:
+    """Handle the account login-seed command - prompts for seed phrase for miner/blockchain operations"""
+    try:
+        # Display the login banner
+        from hippius_sdk.cli_assets import HERO_TITLE
+
+        console.print(HERO_TITLE, style="bold cyan")
+        console.print("\n[bold blue]Welcome to Hippius Miner Setup![/bold blue]\n")
+        console.print(
+            "[bold yellow]Note:[/bold yellow] This command is for miners who need to sign blockchain transactions.",
+            style="dim",
+        )
+        console.print(
+            "[dim]For regular file operations, use [bold green underline]hippius account login[/bold green underline] with your HIPPIUS_KEY.[/dim]\n"
+        )
+
+        # Create a style for prompts
+        prompt_style = "bold green"
+        input_style = "bold cyan"
+
+        # Prompt for account name with nice formatting
+        console.print(
+            "[bold]Step 1:[/bold] Choose a name for your miner account",
+            style=prompt_style,
+        )
+        console.print(
+            "This name will be used to identify your account in the Hippius system.",
+            style="dim",
+        )
+        console.print("Account name:", style=input_style, end=" ")
+        name = input().strip()
+
+        if not name:
+            error("[bold red]Account name cannot be empty[/bold red]")
+            return 1
+
+        # Check if account already exists
+        accounts = list_accounts()
+        if name in accounts:
+            warning(f"Account '[bold]{name}[/bold]' already exists")
+            console.print(
+                "Do you want to overwrite it? (y/n):", style=input_style, end=" "
+            )
+            confirm = input().strip().lower()
+            if confirm != "y":
+                info("Login cancelled")
+                return 0
+
+        # Prompt for seed phrase with detailed explanation
+        console.print(
+            "\n[bold]Step 2:[/bold] Enter your seed phrase", style=prompt_style
+        )
+        console.print(
+            "Your seed phrase gives access to your blockchain account and funds.",
+            style="dim",
+        )
+        console.print(
+            "[yellow]Important:[/yellow] Must be 12 or 24 words separated by spaces.",
+            style="dim",
+        )
+        console.print("Seed phrase:", style=input_style, end=" ")
+        seed_phrase = input().strip()
+
+        # Validate the seed phrase
+        if not seed_phrase or len(seed_phrase.split()) not in [12, 24]:
+            error(
+                "[bold red]Invalid seed phrase[/bold red] - must be 12 or 24 words separated by spaces"
+            )
+            return 1
+
+        # Prompt for encryption with security explanation
+        console.print("\n[bold]Step 3:[/bold] Secure your account", style=prompt_style)
+        console.print(
+            "Encrypting your seed phrase adds an extra layer of security.", style="dim"
+        )
+        console.print(
+            "[bold yellow]Strongly recommended[/bold yellow] to protect your account.",
+            style="dim",
+        )
+        console.print(
+            "Encrypt seed phrase? [bold green](Y/n)[/bold green]:",
+            style=input_style,
+            end=" ",
+        )
+        encrypt_input = input().strip().lower()
+        encrypt = encrypt_input == "y" or encrypt_input == "" or encrypt_input == "yes"
+
+        # Set up encryption if requested
+        password = None
+        if encrypt:
+            console.print(
+                "\n[bold]Step 4:[/bold] Set encryption password", style=prompt_style
+            )
+            console.print(
+                "This password will be required whenever you use your account for blockchain operations.",
+                style="dim",
+            )
+
+            password = getpass.getpass("Enter a password: ")
+            confirm_pw = getpass.getpass("Confirm password: ")
+
+            if password != confirm_pw:
+                error("[bold red]Passwords do not match[/bold red]")
+                return 1
+
+            if not password:
+                error("[bold red]Password cannot be empty for encryption[/bold red]")
+                return 1
+
+        # Initialize address variable
+        address = None
+
+        # Create and store the account
+        with console.status("[cyan]Setting up your account...[/cyan]", spinner="dots"):
+            # First, directly modify the config to ensure account is created
+            config = load_config()
+
+            # Ensure accounts structure exists
+            if "substrate" not in config:
+                config["substrate"] = {}
+            if "accounts" not in config["substrate"]:
+                config["substrate"]["accounts"] = {}
+
+            # Create keypair and get address from seed phrase
+            from substrateinterface import Keypair
+
+            keypair = Keypair.create_from_mnemonic(seed_phrase)
+            address = keypair.ss58_address
+
+            # Add the new account
+            config["substrate"]["accounts"][name] = {
+                "seed_phrase": seed_phrase,
+                "seed_phrase_encoded": False,
+                "seed_phrase_salt": None,
+                "ss58_address": address,
+            }
+
+            # Set as active account
+            config["substrate"]["active_account"] = name
+
+            # Save the config first
+            save_config(config)
+
+            # Now encrypt if requested
+            if encrypt:
+                from hippius_sdk import encrypt_seed_phrase
+
+                encrypt_seed_phrase(seed_phrase, password, name)
+
+            time.sleep(0.5)  # Small delay for visual feedback
+
+        # Success panel with account information
+        account_info = [
+            f"[bold]Account Name:[/bold] [bold magenta]{name}[/bold magenta]",
+            f"[bold]Blockchain Address:[/bold] [bold cyan]{address}[/bold cyan]",
+            "",
+            "[bold green]✓ Login successful![/bold green]",
+            "[bold green]✓ Account set as active[/bold green]",
+        ]
+
+        if encrypt:
+            account_info.append("[bold green]✓ Seed phrase encrypted[/bold green]")
+            account_info.append("")
+            account_info.append(
+                "[dim]You'll need your password when using this account for blockchain operations.[/dim]"
+            )
+        else:
+            account_info.append(
+                "[bold yellow]⚠ Seed phrase not encrypted[/bold yellow]"
+            )
+            account_info.append("")
+            account_info.append(
+                "[dim]For better security, consider re-running this command and encrypting your seed phrase.[/dim]"
+            )
+
+        # Add next steps
+        account_info.append("")
+        account_info.append("[bold blue]Next steps:[/bold blue]")
+        account_info.append(
+            "• [bold green underline]hippius miner register-coldkey[/bold green underline] - Register your miner node"
+        )
+        account_info.append(
+            "• [bold green underline]hippius miner register-hotkey[/bold green underline] - Register with a hotkey"
+        )
+        account_info.append(
+            "• [bold green underline]hippius account balance[/bold green underline] - Check your account balance"
+        )
+
+        print_panel(
+            "\n".join(account_info),
+            title="[bold green]Miner Account Ready[/bold green]",
+        )
+        return 0
+
+    except Exception as e:
+        error(f"[bold red]Error logging in:[/bold red] {e}")
+        return 1
+
+
 def handle_account_delete(account_name: str) -> int:
     """Handle the account delete command"""
     try:
@@ -2318,37 +2517,131 @@ def handle_account_delete(account_name: str) -> int:
 async def handle_account_balance(
     client: HippiusClient, account_address: Optional[str] = None
 ) -> int:
-    """Handle the account balance command - now shows credit balance from API"""
+    """Handle the account balance command - shows credit balance (API) or blockchain balance (Substrate)"""
     info("Checking account balance...")
 
-    if account_address:
-        warning(
-            "Note: Blockchain balances are deprecated. Showing credit balance instead."
-        )
-        warning("The account_address parameter is ignored.")
+    # Try to get credit balance from API first (requires HIPPIUS_KEY)
+    try:
+        balance_data = await client.api_client.get_account_balance()
 
-    # Get credit balance from API
-    balance_data = await client.api_client.get_account_balance()
+        credits = balance_data.get("balance", 0)
+        # Convert to float if it's a string
+        if isinstance(credits, str):
+            credits = float(credits)
 
-    credits = balance_data.get("balance", 0)
-    # Convert to float if it's a string
-    if isinstance(credits, str):
-        credits = float(credits)
+        # Create a panel with balance information
+        balance_info = [
+            f"Credit balance: [bold green]{credits:.2f} USD[/bold green]",
+        ]
 
-    # Create a panel with balance information
-    balance_info = [
-        f"Credit balance: [bold green]{credits:.2f} USD[/bold green]",
-    ]
+        # Add account info if available in response
+        if "account" in balance_data:
+            balance_info.append(
+                f"Account: [bold cyan]{balance_data['account']}[/bold cyan]"
+            )
 
-    # Add account info if available in response
-    if "account" in balance_data:
-        balance_info.append(
-            f"Account: [bold cyan]{balance_data['account']}[/bold cyan]"
-        )
+        print_panel("\n".join(balance_info), title="Account Balance (API)")
+        return 0
 
-    print_panel("\n".join(balance_info), title="Account Balance")
+    except Exception as api_error:
+        # If API fails (likely no HIPPIUS_KEY), try Substrate blockchain balance
+        if "HIPPIUS_KEY" in str(api_error) or "hippius_key" in str(api_error):
+            log(
+                "[dim]No HIPPIUS_KEY available, checking blockchain balance instead...[/dim]"
+            )
+        else:
+            log(f"[dim]API error: {api_error}, trying blockchain balance...[/dim]")
 
-    return 0
+        # Get the account address we're querying
+        if account_address is None:
+            # Get from active account
+            from hippius_sdk.config import get_account_address, get_active_account
+
+            active_account = get_active_account()
+            if active_account:
+                active_address = get_account_address(active_account)
+                if active_address:
+                    account_address = active_address
+                else:
+                    error(
+                        f"Active account '{active_account}' does not have a valid address."
+                    )
+                    warning(
+                        "Please provide an account address with '--address' or set up an account with seed phrase using:"
+                    )
+                    log(
+                        "  [bold green underline]hippius account login-seed[/bold green underline]"
+                    )
+                    return 1
+            else:
+                error("No account address available.")
+                warning("Please either:")
+                log(
+                    "  1. Set up a HIPPIUS_KEY account: [bold green underline]hippius account login[/bold green underline]"
+                )
+                log(
+                    "  2. Set up a seed phrase account: [bold green underline]hippius account login-seed[/bold green underline]"
+                )
+                log(
+                    "  3. Provide an address: [bold green underline]hippius account balance --address <address>[/bold green underline]"
+                )
+                return 1
+
+        # Try to get blockchain balance via Substrate
+        try:
+            from substrateinterface import SubstrateInterface
+
+            substrate_url = get_config_value(
+                "substrate", "url", "wss://rpc.hippius.network"
+            )
+            substrate = SubstrateInterface(url=substrate_url)
+
+            # Get account info
+            result = substrate.query("System", "Account", [account_address])
+
+            if result:
+                data = result.value["data"]
+                decimals = substrate.properties.get("tokenDecimals", 18)
+                unit = 10**decimals
+
+                free = data["free"] / unit
+                reserved = data["reserved"] / unit
+                frozen = data.get("frozen", data.get("miscFrozen", 0)) / unit
+                total = free + reserved
+
+                # Create a panel with balance information
+                balance_info = [
+                    f"Account address: [bold cyan]{account_address}[/bold cyan]",
+                    f"Free balance: [bold green]{free:.6f}[/bold green]",
+                    f"Reserved balance: [bold yellow]{reserved:.6f}[/bold yellow]",
+                    f"Frozen balance: [bold blue]{frozen:.6f}[/bold blue]",
+                    f"Total balance: [bold]{total:.6f}[/bold]",
+                ]
+
+                # Add the raw values in a more subtle format
+                balance_info.append("\n[dim]Raw values:[/dim]")
+                balance_info.append(f"[dim]Free: {data['free']:,}[/dim]")
+                balance_info.append(f"[dim]Reserved: {data['reserved']:,}[/dim]")
+                balance_info.append(f"[dim]Frozen: {frozen * unit:,.0f}[/dim]")
+
+                print_panel(
+                    "\n".join(balance_info), title="Account Balance (Blockchain)"
+                )
+                return 0
+            else:
+                error(f"Could not fetch balance for address: {account_address}")
+                return 1
+
+        except Exception as substrate_error:
+            error(f"Failed to check blockchain balance: {substrate_error}")
+            warning("Please ensure you have either:")
+            log(
+                "  1. A HIPPIUS_KEY configured: [bold green underline]hippius account login[/bold green underline]"
+            )
+            log(
+                "  2. A seed phrase configured: [bold green underline]hippius account login-seed[/bold green underline]"
+            )
+            return 1
 
 
 #
@@ -2599,6 +2892,11 @@ def handle_register_coldkey(
         if not seed_phrase:
             error("No seed phrase available for signing transaction")
             return 1
+
+        # Create keypair from seed phrase
+        from substrateinterface import Keypair
+
+        kp = Keypair.create_from_mnemonic(seed_phrase)
 
         # Submit transaction
         log("Submitting registration transaction...")
@@ -3007,6 +3305,11 @@ def handle_verify_node(
         if not seed_phrase:
             error("No seed phrase available for signing transaction")
             return 1
+
+        # Create keypair from seed phrase
+        from substrateinterface import Keypair
+
+        kp = Keypair.create_from_mnemonic(seed_phrase)
 
         # Submit transaction
         log("Submitting node verification transaction...")
