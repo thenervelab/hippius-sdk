@@ -323,7 +323,9 @@ class AsyncIPFSClient:
                         with open(target_path, "wb") as f:
                             f.write(content)
                     except Exception as file_error:
-                        logger.error(f"Failed to download file {link_name}: {str(file_error)}")
+                        logger.error(
+                            f"Failed to download file {link_name}: {str(file_error)}"
+                        )
 
             return output_path
 

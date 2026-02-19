@@ -57,7 +57,9 @@ def retry_on_error(retries: int = 3, backoff: float = 5.0):
                         break
 
                     # Log retry attempt
-                    logger.warning(f"Request failed (attempt {attempt + 1}/{retries + 1}): {e}")
+                    logger.warning(
+                        f"Request failed (attempt {attempt + 1}/{retries + 1}): {e}"
+                    )
                     logger.warning(f"Retrying in {backoff} seconds...")
                     await asyncio.sleep(backoff)
                 except Exception:

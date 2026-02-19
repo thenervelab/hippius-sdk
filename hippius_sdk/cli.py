@@ -42,7 +42,8 @@ def generate_encryption_key(copy_to_clipboard=False):
             click.secho("Key copied to clipboard!", fg="green")
         except ImportError:
             click.echo(
-                click.style("Warning:", fg="yellow") + " Could not copy to clipboard. Install pyperclip with: pip install pyperclip"
+                click.style("Warning:", fg="yellow")
+                + " Could not copy to clipboard. Install pyperclip with: pip install pyperclip"
             )
 
     return encoded_key
@@ -266,7 +267,8 @@ def main():
                     "encryption", "encryption_key", encryption_key
                 )
                 click.echo(
-                    click.style("Encryption key saved.", fg="green") + " Files will not be automatically encrypted unless you set encryption.encrypt_by_default to true"
+                    click.style("Encryption key saved.", fg="green")
+                    + " Files will not be automatically encrypted unless you set encryption.encrypt_by_default to true"
                 )
             return 0
 
@@ -283,7 +285,9 @@ def main():
                 return cli_handlers.handle_config_reset()
             elif args.config_action == "import-env":
                 initialize_from_env()
-                click.echo("Successfully imported configuration from environment variables")
+                click.echo(
+                    "Successfully imported configuration from environment variables"
+                )
                 return 0
             else:
                 # Display the Hippius logo banner with Rich formatting
@@ -510,7 +514,8 @@ def standalone_key_generation_cli():
         cli_handlers.handle_config_set("encryption", "encryption_key", key)
         click.echo()
         click.echo(
-            click.style("Encryption key saved to configuration.", fg="green") + " Files will not be automatically encrypted unless you set encryption.encrypt_by_default to true."
+            click.style("Encryption key saved to configuration.", fg="green")
+            + " Files will not be automatically encrypted unless you set encryption.encrypt_by_default to true."
         )
 
 

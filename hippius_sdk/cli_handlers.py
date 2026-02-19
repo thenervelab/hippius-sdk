@@ -684,7 +684,14 @@ async def handle_files(
 
     # --- CSV mode ---
     if output_format == "csv":
-        fieldnames = ["cid", "original_name", "size_bytes", "status", "active_replica_count", "updated_at"]
+        fieldnames = [
+            "cid",
+            "original_name",
+            "size_bytes",
+            "status",
+            "active_replica_count",
+            "updated_at",
+        ]
         buf = io.StringIO()
         writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
@@ -2150,12 +2157,18 @@ def handle_account_login() -> int:
         # Display the login banner
         draw_logo()
         click.echo()
-        click.echo(click.style("Welcome to Hippius!", fg=BRAND_COLOR, bold=True) + " Let's set up your account.")
+        click.echo(
+            click.style("Welcome to Hippius!", fg=BRAND_COLOR, bold=True)
+            + " Let's set up your account."
+        )
         click.echo()
 
         # Step 1: Account name
         draw_step(1, "Choose a name for your account")
-        click.secho("This name will be used to identify your account in the Hippius system.", dim=True)
+        click.secho(
+            "This name will be used to identify your account in the Hippius system.",
+            dim=True,
+        )
         name = click.prompt(click.style("Account name", fg="cyan", bold=True)).strip()
 
         if not name:
@@ -2173,9 +2186,16 @@ def handle_account_login() -> int:
         # Step 2: HIPPIUS_KEY
         click.echo()
         draw_step(2, "Enter your HIPPIUS_KEY")
-        click.secho("Your HIPPIUS_KEY is the master API key for your Hippius account.", dim=True)
-        click.secho("You can find this in your account settings at https://console.hippius.com/dashboard/settings", dim=True)
-        hippius_key = click.prompt(click.style("HIPPIUS_KEY", fg="cyan", bold=True)).strip()
+        click.secho(
+            "Your HIPPIUS_KEY is the master API key for your Hippius account.", dim=True
+        )
+        click.secho(
+            "You can find this in your account settings at https://console.hippius.com/dashboard/settings",
+            dim=True,
+        )
+        hippius_key = click.prompt(
+            click.style("HIPPIUS_KEY", fg="cyan", bold=True)
+        ).strip()
 
         if not hippius_key:
             error("HIPPIUS_KEY cannot be empty")
@@ -2184,8 +2204,12 @@ def handle_account_login() -> int:
         # Step 3: Encryption
         click.echo()
         draw_step(3, "Secure your account")
-        click.secho("Encrypting your HIPPIUS_KEY adds an extra layer of security.", dim=True)
-        click.secho("Strongly recommended to protect your account.", fg="yellow", dim=True)
+        click.secho(
+            "Encrypting your HIPPIUS_KEY adds an extra layer of security.", dim=True
+        )
+        click.secho(
+            "Strongly recommended to protect your account.", fg="yellow", dim=True
+        )
         encrypt = click.confirm("Encrypt HIPPIUS_KEY?", default=True)
 
         # Set up encryption if requested
@@ -2193,8 +2217,13 @@ def handle_account_login() -> int:
         if encrypt:
             click.echo()
             draw_step(4, "Set encryption password")
-            click.secho("This password will be required whenever you use your account for operations.", dim=True)
-            password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
+            click.secho(
+                "This password will be required whenever you use your account for operations.",
+                dim=True,
+            )
+            password = click.prompt(
+                "Password", hide_input=True, confirmation_prompt=True
+            )
 
             if not password:
                 error("Password cannot be empty for encryption")
@@ -2250,10 +2279,15 @@ def handle_account_login() -> int:
 
         if encrypt:
             click.echo()
-            click.secho("You'll need your password when using this account for operations.", dim=True)
+            click.secho(
+                "You'll need your password when using this account for operations.",
+                dim=True,
+            )
         else:
             click.echo()
-            click.secho("For better security, consider encrypting your HIPPIUS_KEY:", dim=True)
+            click.secho(
+                "For better security, consider encrypting your HIPPIUS_KEY:", dim=True
+            )
             click.echo(f"  hippius account encode --name {name}")
 
         # Next steps
@@ -2276,15 +2310,27 @@ def handle_account_login_seed() -> int:
         # Display the login banner
         draw_logo()
         click.echo()
-        click.echo(click.style("Welcome to Hippius Miner Setup!", fg=BRAND_COLOR, bold=True))
+        click.echo(
+            click.style("Welcome to Hippius Miner Setup!", fg=BRAND_COLOR, bold=True)
+        )
         click.echo()
-        click.secho("Note: This command is for miners who need to sign blockchain transactions.", fg="yellow", dim=True)
-        click.secho("For regular file operations, use 'hippius account login' with your HIPPIUS_KEY.", dim=True)
+        click.secho(
+            "Note: This command is for miners who need to sign blockchain transactions.",
+            fg="yellow",
+            dim=True,
+        )
+        click.secho(
+            "For regular file operations, use 'hippius account login' with your HIPPIUS_KEY.",
+            dim=True,
+        )
         click.echo()
 
         # Step 1: Account name
         draw_step(1, "Choose a name for your miner account")
-        click.secho("This name will be used to identify your account in the Hippius system.", dim=True)
+        click.secho(
+            "This name will be used to identify your account in the Hippius system.",
+            dim=True,
+        )
         name = click.prompt(click.style("Account name", fg="cyan", bold=True)).strip()
 
         if not name:
@@ -2302,9 +2348,18 @@ def handle_account_login_seed() -> int:
         # Step 2: Seed phrase
         click.echo()
         draw_step(2, "Enter your seed phrase")
-        click.secho("Your seed phrase gives access to your blockchain account and funds.", dim=True)
-        click.secho("Important: Must be 12 or 24 words separated by spaces.", fg="yellow", dim=True)
-        seed_phrase = click.prompt(click.style("Seed phrase", fg="cyan", bold=True)).strip()
+        click.secho(
+            "Your seed phrase gives access to your blockchain account and funds.",
+            dim=True,
+        )
+        click.secho(
+            "Important: Must be 12 or 24 words separated by spaces.",
+            fg="yellow",
+            dim=True,
+        )
+        seed_phrase = click.prompt(
+            click.style("Seed phrase", fg="cyan", bold=True)
+        ).strip()
 
         # Validate the seed phrase
         if not seed_phrase or len(seed_phrase.split()) not in [12, 24]:
@@ -2314,8 +2369,12 @@ def handle_account_login_seed() -> int:
         # Step 3: Encryption
         click.echo()
         draw_step(3, "Secure your account")
-        click.secho("Encrypting your seed phrase adds an extra layer of security.", dim=True)
-        click.secho("Strongly recommended to protect your account.", fg="yellow", dim=True)
+        click.secho(
+            "Encrypting your seed phrase adds an extra layer of security.", dim=True
+        )
+        click.secho(
+            "Strongly recommended to protect your account.", fg="yellow", dim=True
+        )
         encrypt = click.confirm("Encrypt seed phrase?", default=True)
 
         # Set up encryption if requested
@@ -2323,8 +2382,13 @@ def handle_account_login_seed() -> int:
         if encrypt:
             click.echo()
             draw_step(4, "Set encryption password")
-            click.secho("This password will be required whenever you use your account for blockchain operations.", dim=True)
-            password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
+            click.secho(
+                "This password will be required whenever you use your account for blockchain operations.",
+                dim=True,
+            )
+            password = click.prompt(
+                "Password", hide_input=True, confirmation_prompt=True
+            )
 
             if not password:
                 error("Password cannot be empty for encryption")
@@ -2390,10 +2454,16 @@ def handle_account_login_seed() -> int:
 
         if encrypt:
             click.echo()
-            click.secho("You'll need your password when using this account for blockchain operations.", dim=True)
+            click.secho(
+                "You'll need your password when using this account for blockchain operations.",
+                dim=True,
+            )
         else:
             click.echo()
-            click.secho("For better security, consider re-running this command and encrypting your seed phrase.", dim=True)
+            click.secho(
+                "For better security, consider re-running this command and encrypting your seed phrase.",
+                dim=True,
+            )
 
         # Next steps
         click.echo()

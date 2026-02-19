@@ -21,11 +21,16 @@ class TestDefaultAddressSet:
     )
     def test_address_set_valid(self, mock_load, mock_save):
         """Address starting with '5' is saved."""
-        result = handle_default_address_set("5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY")
+        result = handle_default_address_set(
+            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+        )
         assert result == 0
         mock_save.assert_called_once()
         saved_config = mock_save.call_args[0][0]
-        assert saved_config["substrate"]["default_address"] == "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+        assert (
+            saved_config["substrate"]["default_address"]
+            == "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+        )
 
     @patch("builtins.input", return_value="n")
     def test_address_set_invalid_declined(self, mock_input):

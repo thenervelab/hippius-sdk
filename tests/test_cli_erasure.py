@@ -92,7 +92,5 @@ async def test_reconstruct_failure(mock_client):
         "No metadata found for CID"
     )
 
-    result = await handle_reconstruct(
-        mock_client, "QmBadMeta", "/tmp/output.bin"
-    )
+    result = await handle_reconstruct(mock_client, "QmBadMeta", "/tmp/output.bin")
     assert result == 1

@@ -195,7 +195,10 @@ async def test_files_search_passthrough(mock_client):
     await handle_files(mock_client, search="myfile")
 
     call_kwargs = mock_client.api_client.list_files_paginated.call_args
-    assert call_kwargs.kwargs.get("search") == "myfile" or call_kwargs[1].get("search") == "myfile"
+    assert (
+        call_kwargs.kwargs.get("search") == "myfile"
+        or call_kwargs[1].get("search") == "myfile"
+    )
 
 
 @pytest.mark.asyncio
