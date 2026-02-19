@@ -107,7 +107,7 @@ class IPFSClient:
         try:
             self.client = AsyncIPFSClient(api_url=self.api_url)
         except httpx.ConnectError:
-            print(f"Warning: Falling back to local IPFS daemon at {self.api_url}")
+            logger.warning("Falling back to local IPFS daemon at %s", self.api_url)
             self.client = AsyncIPFSClient(api_url=self.api_url)
 
         self._initialize_encryption(encrypt_by_default, encryption_key)
@@ -146,8 +146,8 @@ class IPFSClient:
 
         # If encryption is requested but not available, warn the user
         if self.encrypt_by_default and not self.encryption_available:
-            print(
-                "Warning: Encryption requested but not available. Check that PyNaCl is installed and a valid encryption key is provided."
+            logger.warning(
+                "Encryption requested but not available. Check that PyNaCl is installed and a valid encryption key is provided."
             )
 
     def encrypt_data(self, data: bytes) -> bytes:
@@ -580,8 +580,8 @@ class IPFSClient:
 
                     if retries < max_retries:
                         wait_time = 2**retries
-                        print(f"Download attempt {retries} failed: {str(e)}")
-                        print(f"Retrying in {wait_time} seconds...")
+                        logger.warning("Download attempt %d failed: %s", retries, str(e))
+                        logger.warning("Retrying in %d seconds...", wait_time)
                         time.sleep(wait_time)
                     else:
                         raise
@@ -848,13 +848,12 @@ class IPFSClient:
         # Generate a unique ID for this file
         file_id = str(uuid.uuid4())
 
-        if verbose:
-            print(f"Processing file: {file_name} ({file_size / 1024 / 1024:.2f} MB)")
-            print(
-                f"Erasure coding parameters: k={k}, m={m} (need {k}/{m} chunks to reconstruct)"
-            )
-            if should_encrypt:
-                print("Encryption: Enabled")
+        logger.info("Processing file: %s (%.2f MB)", file_name, file_size / 1024 / 1024)
+        logger.info(
+            "Erasure coding parameters: k=%d, m=%d (need %d/%d chunks to reconstruct)", k, m, k, m
+        )
+        if should_encrypt:
+            logger.debug("Encryption: Enabled")
 
         # Step 1: Read and potentially encrypt the file
         with open(file_path, "rb") as f:
@@ -865,8 +864,7 @@ class IPFSClient:
 
         # Encrypt if requested
         if should_encrypt:
-            if verbose:
-                print("Encrypting file data...")
+            logger.debug("Encrypting file data...")
             file_data = self.encrypt_data(file_data)
 
         # Step 2: Split the file into chunks for erasure coding
@@ -887,34 +885,29 @@ class IPFSClient:
 
         # If we don't have enough chunks for the requested parameters, adjust
         if len(chunks) < k:
-            if verbose:
-                print(
-                    f"Warning: File has fewer chunks ({len(chunks)}) than k={k}. Adjusting parameters."
-                )
+            logger.debug(
+                "Warning: File has fewer chunks (%d) than k=%d. Adjusting parameters.", len(chunks), k
+            )
 
             # If we have a very small file, we'll just use a single chunk
             # but will still split it into k sub-blocks during encoding
             if len(chunks) == 1:
-                if verbose:
-                    print(
-                        f"Small file (single chunk): will split into {k} sub-blocks for encoding"
-                    )
+                logger.debug(
+                    "Small file (single chunk): will split into %d sub-blocks for encoding", k
+                )
             else:
                 # If we have multiple chunks but fewer than k, adjust k to match
                 old_k = k
                 k = max(1, len(chunks))
-                if verbose:
-                    print(f"Adjusting k from {old_k} to {k} to match available chunks")
+                logger.debug("Adjusting k from %d to %d to match available chunks", old_k, k)
 
             # Ensure m is greater than k for redundancy
             if m <= k:
                 old_m = m
                 m = k + 2  # Ensure we have at least 2 redundant chunks
-                if verbose:
-                    print(f"Adjusting m from {old_m} to {m} to ensure redundancy")
+                logger.debug("Adjusting m from %d to %d to ensure redundancy", old_m, m)
 
-            if verbose:
-                print(f"New parameters: k={k}, m={m}")
+            logger.debug("New parameters: k=%d, m=%d", k, m)
 
         # Ensure we have at least one chunk to process
         if not chunks:
@@ -946,8 +939,7 @@ class IPFSClient:
         }
 
         # Step 3: Apply erasure coding to each chunk
-        if verbose:
-            print(f"Applying erasure coding to {len(chunks)} chunks...")
+        logger.info("Applying erasure coding to %d chunks...", len(chunks))
 
         all_encoded_chunks = []
         for i, chunk in enumerate(chunks):
@@ -985,22 +977,21 @@ class IPFSClient:
                 # Add to our collection
                 all_encoded_chunks.append(encoded_chunks)
 
-                if verbose and (i + 1) % 10 == 0:
-                    print(f"  Encoded {i + 1}/{len(chunks)} chunks")
+                if (i + 1) % 10 == 0:
+                    logger.debug("  Encoded %d/%d chunks", i + 1, len(chunks))
             except Exception as e:
                 # If encoding fails, provide more helpful error message
                 error_msg = f"Error encoding chunk {i}: {str(e)}"
-                print(f"Error details: chunk size={len(chunk)}, k={k}, m={m}")
-                print(
-                    f"Sub-blocks created: {len(sub_blocks) if 'sub_blocks' in locals() else 'None'}"
+                logger.error("Error details: chunk size=%d, k=%d, m=%d", len(chunk), k, m)
+                logger.error(
+                    "Sub-blocks created: %s", len(sub_blocks) if 'sub_blocks' in locals() else 'None'
                 )
                 raise RuntimeError(f"{error_msg}")
 
         # Step 4: Upload all chunks to IPFS
-        if verbose:
-            print(
-                f"Uploading {len(chunks) * m} erasure-coded chunks to IPFS in parallel..."
-            )
+        logger.info(
+            "Uploading %d erasure-coded chunks to IPFS in parallel...", len(chunks) * m
+        )
 
         chunk_uploads = 0
         chunk_data = []
@@ -1042,8 +1033,7 @@ class IPFSClient:
             if progress_callback:
                 progress_callback("upload", 0, total_chunks)
 
-            if verbose:
-                print(f"Uploading {total_chunks} erasure-coded chunks to IPFS...")
+            logger.info("Uploading %d erasure-coded chunks to IPFS...", total_chunks)
 
             # Define upload task for a single chunk
             async def upload_chunk(chunk_info):
@@ -1070,10 +1060,10 @@ class IPFSClient:
                     if progress_callback:
                         progress_callback("upload", chunk_uploads, total_chunks)
 
-                    if verbose and chunk_uploads % 10 == 0:
+                    if chunk_uploads % 10 == 0:
                         action = "pinned" if pin_chunks else "uploaded"
-                        print(
-                            f"  {action.capitalize()} {chunk_uploads}/{total_chunks} chunks"
+                        logger.debug(
+                            "  %s %d/%d chunks", action.capitalize(), chunk_uploads, total_chunks
                         )
 
                     return chunk_info
@@ -1103,9 +1093,8 @@ class IPFSClient:
             if os.path.getsize(metadata_path) == 0:
                 raise ValueError("Failed to write metadata file (file size is 0)")
 
-            if verbose:
-                print("Uploading metadata file...")
-                print(f"Metadata file size: {os.path.getsize(metadata_path)} bytes")
+            logger.info("Uploading metadata file...")
+            logger.info("Metadata file size: %d bytes", os.path.getsize(metadata_path))
 
             # Upload the metadata file to IPFS
             metadata_cid_result = await self.upload_file(
@@ -1116,12 +1105,11 @@ class IPFSClient:
             metadata_cid = metadata_cid_result["cid"]
             metadata["metadata_cid"] = metadata_cid
 
-            if verbose:
-                print("Erasure coding complete!")
-                print(f"Metadata CID: {metadata_cid}")
-                print(f"Original file size: {file_size / 1024 / 1024:.2f} MB")
-                print(f"Total chunks: {len(chunks) * m}")
-                print(f"Minimum chunks needed: {k * len(chunks)}")
+            logger.info("Erasure coding complete!")
+            logger.info("Metadata CID: %s", metadata_cid)
+            logger.info("Original file size: %.2f MB", file_size / 1024 / 1024)
+            logger.info("Total chunks: %d", len(chunks) * m)
+            logger.info("Minimum chunks needed: %d", k * len(chunks))
 
             return metadata
 
@@ -1167,8 +1155,7 @@ class IPFSClient:
 
         try:
             # Step 1: Download and parse the metadata file
-            if verbose:
-                print(f"Downloading metadata file (CID: {metadata_cid})...")
+            logger.info("Downloading metadata file (CID: %s)...", metadata_cid)
 
             metadata_path = os.path.join(temp_dir, "metadata.json")
             await self.download_file(
@@ -1177,10 +1164,9 @@ class IPFSClient:
                 max_retries=max_retries,
             )
 
-            if verbose:
-                metadata_download_time = time.time() - start_time
-                print(f"Metadata downloaded in {metadata_download_time:.2f} seconds")
-                print(f"Metadata file size: {os.path.getsize(metadata_path)} bytes")
+            metadata_download_time = time.time() - start_time
+            logger.info("Metadata downloaded in %.2f seconds", metadata_download_time)
+            logger.info("Metadata file size: %d bytes", os.path.getsize(metadata_path))
 
             # Read using binary mode to avoid any encoding issues
             with open(metadata_path, "rb") as f:
@@ -1198,18 +1184,18 @@ class IPFSClient:
             chunk_size = erasure_params.get("chunk_size", 1024 * 1024)
             total_original_size = original_file["size"]
 
-            if verbose:
-                print(
-                    f"File: {original_file['name']} ({original_file['size'] / 1024 / 1024:.2f} MB)"
-                )
-                print(
-                    f"Erasure coding parameters: k={k}, m={m} (need {k} of {m} chunks to reconstruct)"
-                )
-                if is_encrypted:
-                    print("Encrypted: Yes")
-                print(
-                    f"Using parallel download with max {PARALLEL_ORIGINAL_CHUNKS} original chunks and {PARALLEL_EC_CHUNKS} chunk downloads concurrently"
-                )
+            logger.info(
+                "File: %s (%.2f MB)", original_file['name'], original_file['size'] / 1024 / 1024
+            )
+            logger.info(
+                "Erasure coding parameters: k=%d, m=%d (need %d of %d chunks to reconstruct)", k, m, k, m
+            )
+            if is_encrypted:
+                logger.info("Encrypted: Yes")
+            logger.info(
+                "Using parallel download with max %d original chunks and %d chunk downloads concurrently",
+                PARALLEL_ORIGINAL_CHUNKS, PARALLEL_EC_CHUNKS
+            )
 
             # Step 3: Group chunks by their original chunk index
             chunks_by_original = {}
@@ -1220,12 +1206,11 @@ class IPFSClient:
                 chunks_by_original[orig_idx].append(chunk)
 
             # Step 4: Process all original chunks in parallel
-            if verbose:
-                total_original_chunks = len(chunks_by_original)
-                total_chunks_needed = total_original_chunks * k
-                print(
-                    f"Downloading and reconstructing {total_chunks_needed} chunks in parallel..."
-                )
+            total_original_chunks = len(chunks_by_original)
+            total_chunks_needed = total_original_chunks * k
+            logger.info(
+                "Downloading and reconstructing %d chunks in parallel...", total_chunks_needed
+            )
 
             # Create semaphores to limit concurrency
             encoded_chunks_semaphore = asyncio.Semaphore(PARALLEL_EC_CHUNKS)
@@ -1235,8 +1220,7 @@ class IPFSClient:
             async def process_original_chunk(orig_idx, available_chunks):
                 # Limit number of original chunks processing at once
                 async with original_chunks_semaphore:
-                    if verbose:
-                        print(f"Processing original chunk {orig_idx}...")
+                    logger.info("Processing original chunk %d...", orig_idx)
 
                     if len(available_chunks) < k:
                         raise ValueError(
@@ -1285,10 +1269,9 @@ class IPFSClient:
                                         "name": chunk_info["name"],
                                     }
                                 except Exception as e:
-                                    if verbose:
-                                        print(
-                                            f"Error downloading chunk {chunk_info['name']}: {str(e)}"
-                                        )
+                                    logger.debug(
+                                        "Error downloading chunk %s: %s", chunk_info['name'], str(e)
+                                    )
                                     return {
                                         "success": False,
                                         "error": str(e),
@@ -1366,8 +1349,7 @@ class IPFSClient:
                 )
 
             # Wait for all chunks to be reconstructed
-            if verbose:
-                print(f"Waiting for {len(chunk_tasks)} chunk tasks to complete...")
+            logger.info("Waiting for %d chunk tasks to complete...", len(chunk_tasks))
 
             # Track progress
             start_chunks_time = time.time()
@@ -1375,23 +1357,21 @@ class IPFSClient:
             # Wait for all chunks to complete (preserves ordering)
             reconstructed_chunks = await asyncio.gather(*chunk_tasks)
 
-            if verbose:
-                print(
-                    f"All chunks downloaded and decoded successfully in {time.time() - start_chunks_time:.2f} seconds"
-                )
+            logger.info(
+                "All chunks downloaded and decoded successfully in %.2f seconds",
+                time.time() - start_chunks_time
+            )
 
-            if verbose:
-                download_time = time.time() - start_time
-                print(f"Chunk reconstruction completed in {download_time:.2f} seconds")
-                print(
-                    f"Received {len(reconstructed_chunks)} of {len(chunk_tasks)} expected chunks"
-                )
+            download_time = time.time() - start_time
+            logger.info("Chunk reconstruction completed in %.2f seconds", download_time)
+            logger.info(
+                "Received %d of %d expected chunks", len(reconstructed_chunks), len(chunk_tasks)
+            )
 
             # Step 5: Combine the reconstructed chunks into a file
-            print("Combining reconstructed chunks...")
+            logger.info("Combining reconstructed chunks...")
 
-            if verbose:
-                print(f"Processing {len(reconstructed_chunks)} reconstructed chunks...")
+            logger.info("Processing %d reconstructed chunks...", len(reconstructed_chunks))
 
             # Process chunks to remove padding correctly
             processed_chunks = []
@@ -1405,8 +1385,8 @@ class IPFSClient:
             chunk_process_start = time.time()
 
             for i, chunk in enumerate(reconstructed_chunks):
-                if verbose and i % 10 == 0:
-                    print(f"Processing chunk {i + 1}/{len(reconstructed_chunks)}...")
+                if i % 10 == 0:
+                    logger.info("Processing chunk %d/%d...", i + 1, len(reconstructed_chunks))
 
                 # For all chunks except the last one, use full chunk size
                 if i < len(reconstructed_chunks) - 1:
@@ -1422,32 +1402,31 @@ class IPFSClient:
                     processed_chunks.append(chunk[:remaining_bytes])
                     size_processed += remaining_bytes
 
-            if verbose:
-                print(
-                    f"Chunk processing completed in {time.time() - chunk_process_start:.2f} seconds"
-                )
-                print(f"Concatenating {len(processed_chunks)} processed chunks...")
+            logger.info(
+                "Chunk processing completed in %.2f seconds", time.time() - chunk_process_start
+            )
+            logger.info("Concatenating %d processed chunks...", len(processed_chunks))
 
             # Concatenate all processed chunks
             concat_start = time.time()
             file_data = b"".join(processed_chunks)
-            if verbose:
-                print(
-                    f"Concatenation completed in {time.time() - concat_start:.2f} seconds"
-                )
+            logger.info(
+                "Concatenation completed in %.2f seconds", time.time() - concat_start
+            )
 
             # Double-check the final size matches the original
             if len(file_data) != original_file["size"]:
-                print(
-                    f"Warning: Reconstructed size ({len(file_data)}) differs from original ({original_file['size']})"
+                logger.warning(
+                    "Reconstructed size (%d) differs from original (%d)",
+                    len(file_data), original_file['size']
                 )
                 # Ensure we have exactly the right size
                 if len(file_data) > original_file["size"]:
                     file_data = file_data[: original_file["size"]]
                 else:
                     # If we're short, pad with zeros (shouldn't happen with proper reconstruction)
-                    print(
-                        "Warning: Reconstructed file is smaller than original, padding with zeros"
+                    logger.warning(
+                        "Reconstructed file is smaller than original, padding with zeros"
                     )
                     file_data += b"\0" * (original_file["size"] - len(file_data))
 
@@ -1459,41 +1438,38 @@ class IPFSClient:
                         "Install PyNaCl and configure an encryption key."
                     )
 
-                if verbose:
-                    print("Decrypting file data...")
+                logger.info("Decrypting file data...")
 
                 file_data = self.decrypt_data(file_data)
 
             # Step 7: Write to the output file
-            print(f"Writing {len(file_data)} bytes to {output_file}...")
+            logger.info("Writing %d bytes to %s...", len(file_data), output_file)
             write_start = time.time()
             with open(output_file, "wb") as f:
                 f.write(file_data)
-            if verbose:
-                print(
-                    f"File writing completed in {time.time() - write_start:.2f} seconds"
-                )
+            logger.info(
+                "File writing completed in %.2f seconds", time.time() - write_start
+            )
 
             # Step 8: Verify hash if available
             if "hash" in original_file:
-                print("Verifying file hash...")
+                logger.info("Verifying file hash...")
                 hash_start = time.time()
                 actual_hash = hashlib.sha256(file_data).hexdigest()
                 expected_hash = original_file["hash"]
 
                 if actual_hash != expected_hash:
-                    print("Warning: File hash mismatch!")
-                    print(f"  Expected: {expected_hash}")
-                    print(f"  Actual:   {actual_hash}")
+                    logger.warning("File hash mismatch!")
+                    logger.warning("  Expected: %s", expected_hash)
+                    logger.warning("  Actual:   %s", actual_hash)
                 else:
-                    print(
-                        f"Hash verification successful in {time.time() - hash_start:.2f} seconds!"
+                    logger.info(
+                        "Hash verification successful in %.2f seconds!", time.time() - hash_start
                     )
 
             total_time = time.time() - start_time
-            if verbose:
-                print(f"Reconstruction complete in {total_time:.2f} seconds!")
-                print(f"File saved to: {output_file}")
+            logger.info("Reconstruction complete in %.2f seconds!", total_time)
+            logger.info("File saved to: %s", output_file)
 
             return {
                 "output_path": output_file,
@@ -1576,9 +1552,8 @@ class IPFSClient:
         original_file = metadata["original_file"]
         metadata_cid = metadata["metadata_cid"]
 
-        if verbose:
-            print(f"Erasure coding complete. Metadata CID: {metadata_cid}")
-            print(f"Total chunks: {len(metadata['chunks'])}")
+        logger.info("Erasure coding complete. Metadata CID: %s", metadata_cid)
+        logger.info("Total chunks: %d", len(metadata['chunks']))
 
         result = {
             "metadata": metadata,
@@ -1587,8 +1562,7 @@ class IPFSClient:
         }
 
         if pin_metadata and api_client:
-            if verbose:
-                print("Pinning metadata file to Hippius API...")
+            logger.info("Pinning metadata file to Hippius API...")
 
             pin_result = await api_client.pin_file(
                 cid=metadata_cid,
@@ -1601,10 +1575,9 @@ class IPFSClient:
                 "request_id"
             )
 
-            if verbose:
-                print(
-                    f"Metadata pinned successfully. Request ID: {result['metadata_pin_request_id']}"
-                )
+            logger.info(
+                "Metadata pinned successfully. Request ID: %s", result['metadata_pin_request_id']
+            )
         else:
             result["metadata_pinned"] = False
 
@@ -1649,7 +1622,7 @@ class IPFSClient:
 
             # If it's a directory, recursively unpin all contained files first
             if is_directory:
-                print(f"Detected directory: {cid}")
+                logger.info("Detected directory: %s", cid)
                 links = []
 
                 # Extract all links from the directory listing
@@ -1682,59 +1655,59 @@ class IPFSClient:
                                 if unpin:
                                     try:
                                         await self.client.unpin(link_hash)
-                                        print(
-                                            f"Unpinned file: {link_name} (CID: {link_hash})"
+                                        logger.info(
+                                            "Unpinned file: %s (CID: %s)", link_name, link_hash
                                         )
                                     except Exception as unpin_error:
                                         # Just note the error but don't let it stop the whole process
                                         # This is common with IPFS servers that may return 500 errors for
                                         # unpinning content that was never explicitly pinned
-                                        print(
-                                            f"Note: Could not unpin {link_name}: {str(unpin_error).split('For more information')[0]}"
+                                        logger.warning(
+                                            "Could not unpin %s: %s", link_name, str(unpin_error).split('For more information')[0]
                                         )
                                 else:
-                                    print(
-                                        f"Skipped unpinning file: {link_name} (CID: {link_hash})"
+                                    logger.info(
+                                        "Skipped unpinning file: %s (CID: %s)", link_name, link_hash
                                     )
                         except Exception as e:
-                            print(
-                                f"Warning: Problem processing child item {link_name}: {str(e).split('For more information')[0]}"
+                            logger.warning(
+                                "Problem processing child item %s: %s", link_name, str(e).split('For more information')[0]
                             )
 
                 # Record the child files that were processed
                 result["child_files"] = child_files
         except Exception as e:
-            print(
-                f"Warning: Failed to check if CID is a directory: {e}"
+            logger.warning(
+                "Failed to check if CID is a directory: %s", e
             )  # Continue with regular file unpin
 
         # Now unpin the main file/directory
         if unpin:
             try:
-                print(f"Unpinning from IPFS: {cid}")
+                logger.info("Unpinning from IPFS: %s", cid)
                 unpin_result = await self.client.unpin(cid)
                 result["unpin_result"] = unpin_result
                 result["success"] = True
-                print("Successfully unpinned from IPFS")
+                logger.info("Successfully unpinned from IPFS")
             except Exception as e:
                 # Handle 500 errors from IPFS server gracefully - they often occur
                 # when the content wasn't explicitly pinned or was already unpinned
                 error_str = str(e)
                 if "500 Internal Server Error" in error_str:
-                    print(
-                        f"Note: IPFS server reported content may already be unpinned: {cid}"
+                    logger.warning(
+                        "IPFS server reported content may already be unpinned: %s", cid
                     )
                     result["unpin_result"] = {
                         "Pins": [cid]
                     }  # Simulate successful unpin
                     result["success"] = True
                 else:
-                    print(
-                        f"Warning: Failed to unpin from IPFS: {error_str.split('For more information')[0]}"
+                    logger.error(
+                        "Failed to unpin from IPFS: %s", error_str.split('For more information')[0]
                     )
                     result["success"] = False
         else:
-            print(f"Skipped unpinning from IPFS: {cid}")
+            logger.info("Skipped unpinning from IPFS: %s", cid)
             result["unpin_result"] = {"skipped": True}
             result["success"] = True
 
@@ -1766,22 +1739,22 @@ class IPFSClient:
         Returns:
             bool: True if the deletion was successful, False otherwise
         """
-        print(f"Starting deletion process for metadata CID: {metadata_cid}")
+        logger.info("Starting deletion process for metadata CID: %s", metadata_cid)
 
         chunks = []
 
         try:
             # First download the metadata to get chunk CIDs with timeout
             try:
-                print("Attempting to fetch metadata file...")
+                logger.info("Attempting to fetch metadata file...")
                 # Create a task for fetching metadata with timeout
                 metadata_task = asyncio.create_task(self.cat(metadata_cid))
                 try:
                     metadata_result = await asyncio.wait_for(
                         metadata_task, timeout=metadata_timeout
                     )
-                    print(
-                        f"Successfully fetched metadata (size: {len(metadata_result['content'])} bytes)"
+                    logger.info(
+                        "Successfully fetched metadata (size: %d bytes)", len(metadata_result['content'])
                     )
 
                     # Parse the metadata JSON
@@ -1789,17 +1762,17 @@ class IPFSClient:
                         metadata_result["content"].decode("utf-8")
                     )
                     chunks = metadata_json.get("chunks", [])
-                    print(f"Found {len(chunks)} chunks in metadata")
+                    logger.info("Found %d chunks in metadata", len(chunks))
                 except asyncio.TimeoutError:
-                    print(
-                        f"Timed out after {metadata_timeout}s waiting for metadata download"
+                    logger.warning(
+                        "Timed out after %ds waiting for metadata download", metadata_timeout
                     )  # We'll continue with blockchain cancellation even without metadata
             except json.JSONDecodeError as e:
                 # If we can't parse the metadata JSON, record the error but continue
-                print(f"Error parsing metadata JSON: {e}")
+                logger.error("Error parsing metadata JSON: %s", e)
             except Exception as e:
                 # Any other metadata error
-                print(f"Error retrieving or processing metadata: {e}")
+                logger.error("Error retrieving or processing metadata: %s", e)
 
             # Extract all chunk CIDs
             chunk_cids = []
@@ -1810,7 +1783,7 @@ class IPFSClient:
                 elif isinstance(chunk_cid, str):
                     chunk_cids.append(chunk_cid)
 
-            print(f"Extracted {len(chunk_cids)} CIDs from chunks")
+            logger.info("Extracted %d CIDs from chunks", len(chunk_cids))
 
             # Create a semaphore to limit concurrent operations
             semaphore = asyncio.Semaphore(parallel_limit)
@@ -1826,41 +1799,41 @@ class IPFSClient:
                         )  # 10-second timeout per unpin
                         return {"success": True, "cid": cid}
                     except asyncio.TimeoutError:
-                        print(f"Unpin operation timed out for CID: {cid}")
+                        logger.warning("Unpin operation timed out for CID: %s", cid)
                         return {"success": False, "cid": cid, "error": "timeout"}
                     except Exception as e:
                         # Record failure but continue with other chunks
-                        print(f"Error unpinning CID {cid}: {str(e)}")
+                        logger.error("Error unpinning CID %s: %s", cid, str(e))
                         return {"success": False, "cid": cid, "error": str(e)}
 
             # Unpin all chunks in parallel
             if chunk_cids:
-                print(f"Starting parallel unpin of {len(chunk_cids)} chunks...")
+                logger.info("Starting parallel unpin of %d chunks...", len(chunk_cids))
                 unpin_tasks = [unpin_chunk(cid) for cid in chunk_cids]
                 results = await asyncio.gather(*unpin_tasks)
 
                 # Count failures
                 failures = [r for r in results if not r["success"]]
                 if failures:
-                    print(f"Failed to unpin {len(failures)} chunks")
+                    logger.error("Failed to unpin %d chunks", len(failures))
                 else:
-                    print("Successfully unpinned all chunks")
+                    logger.info("Successfully unpinned all chunks")
         except Exception as e:
             # If we can't process chunks at all, record the failure
-            print(f"Exception during chunks processing: {e}")
+            logger.error("Exception during chunks processing: %s", e)
 
         # Unpin the metadata file itself, regardless of whether we could process chunks
         try:
-            print(f"Unpinning metadata file: {metadata_cid}")
+            logger.info("Unpinning metadata file: %s", metadata_cid)
             unpin_task = asyncio.create_task(self.client.unpin(metadata_cid))
             await asyncio.wait_for(unpin_task, timeout=10)  # 10-second timeout
-            print("Successfully unpinned metadata file")
+            logger.info("Successfully unpinned metadata file")
         except Exception as e:
             # Record the failure but continue with blockchain cancellation
-            print(f"Error unpinning metadata file: {e}")
+            logger.error("Error unpinning metadata file: %s", e)
 
         # Delete operation completed successfully
-        print("Delete EC file operation completed successfully")
+        logger.info("Delete EC file operation completed successfully")
         return True
 
     async def _get_ipfs_stream(

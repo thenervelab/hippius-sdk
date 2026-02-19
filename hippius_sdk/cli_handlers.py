@@ -8,7 +8,8 @@ file operations, marketplace interactions, configuration management, etc.
 
 import asyncio
 import base64
-import getpass
+import csv
+import io
 import json
 import math
 import os
@@ -16,6 +17,7 @@ import tempfile
 import time
 from typing import Any, List, Optional
 
+import click
 from substrateinterface import Keypair, SubstrateInterface
 
 from hippius_sdk import (
@@ -34,9 +36,17 @@ from hippius_sdk import (
     set_active_account,
     set_config_value,
 )
+from hippius_sdk.cli_assets import (
+    BRAND_COLOR,
+    draw_key_value,
+    draw_logo,
+    draw_panel,
+    draw_step,
+    draw_success_box,
+)
 from hippius_sdk.cli_parser import get_default_address
 from hippius_sdk.cli_rich import (
-    console,
+    _console,
     create_progress,
     error,
     info,
@@ -78,10 +88,10 @@ def create_client(args: Any) -> HippiusClient:
         try:
             encryption_key = base64.b64decode(args.encryption_key)
             if hasattr(args, "verbose") and args.verbose:
-                print("Using provided encryption key")
+                click.secho("Using provided encryption key", dim=True)
         except Exception as e:
-            print(f"Warning: Could not decode encryption key: {e}")
-            print("Using default encryption key from configuration if available")
+            warning(f"Could not decode encryption key: {e}")
+            click.echo("Using default encryption key from configuration if available")
 
     # Get API URL based on local_ipfs flag if the flag exists
     api_url = None
@@ -231,9 +241,9 @@ async def handle_cat(
                 f"\nContent (first [bold]{min(max_size, file_size):,}[/bold] bytes):",
                 style="blue",
             )
-            console.print("--------------------------------------------", style="dim")
-            console.print(decoded)
-            console.print("--------------------------------------------", style="dim")
+            click.secho("--------------------------------------------", dim=True)
+            click.echo(decoded)
+            click.secho("--------------------------------------------", dim=True)
         except UnicodeDecodeError:
             log("\nBinary content (showing size information only):", style="yellow")
             log(
@@ -629,11 +639,17 @@ async def handle_files(
     search: Optional[str] = None,
     ordering: Optional[str] = None,
     page: Optional[int] = None,
+    output_format: str = "table",
+    quiet: bool = False,
+    limit: int = 25,
+    no_truncate: bool = False,
 ) -> int:
     """Handle the files command"""
     # Always use API client for listing files
-    info("Fetching files from API...")
-    files = await client.api_client.list_files(
+    if not quiet:
+        info("Fetching files from API...")
+
+    paginated = await client.api_client.list_files_paginated(
         cid=file_cid,
         include_pending=include_pending,
         search=search,
@@ -641,20 +657,77 @@ async def handle_files(
         page=page,
     )
 
+    files = paginated["results"]
+    total_count = paginated["count"]
+
     if not files:
-        info("No files found")
+        if not quiet:
+            info("No files found")
         return 0
 
-    success(f"Found [bold]{len(files)}[/bold] files")
+    # Apply client-side limit
+    limited = False
+    if limit > 0 and len(files) > limit:
+        files = files[:limit]
+        limited = True
 
-    for file in files:
-        log(f"\n[bold cyan]CID:[/bold cyan] {file.get('cid', 'N/A')}")
-        log(f"[bold]File ID:[/bold] {file.get('file_id', 'N/A')}")
-        log(f"[bold]Name:[/bold] {file.get('original_name', 'N/A')}")
-        log(f"[bold]Size:[/bold] {file.get('size_bytes', 0)} bytes")
-        log(f"[bold]Status:[/bold] {file.get('status', 'N/A')}")
-        log(f"[bold]Active Replicas:[/bold] {file.get('active_replica_count', 0)}")
-        log(f"[bold]Updated:[/bold] {file.get('updated_at', 'N/A')}")
+    # --- Quiet mode: one CID per line ---
+    if quiet:
+        for f in files:
+            click.echo(f.get("cid", ""))
+        return 0
+
+    # --- JSON mode ---
+    if output_format == "json":
+        click.echo(json.dumps(files, indent=2))
+        return 0
+
+    # --- CSV mode ---
+    if output_format == "csv":
+        fieldnames = ["cid", "original_name", "size_bytes", "status", "active_replica_count", "updated_at"]
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for f in files:
+            writer.writerow(f)
+        click.echo(buf.getvalue(), nl=False)
+        return 0
+
+    # --- Table mode (default) ---
+    def _truncate(val: str, max_len: int) -> str:
+        if no_truncate or len(val) <= max_len:
+            return val
+        return val[: max_len - 1] + "…"
+
+    def _format_date(iso_str: str) -> str:
+        if not iso_str or iso_str == "N/A":
+            return "N/A"
+        return iso_str[:10]
+
+    rows = []
+    for f in files:
+        size_bytes = f.get("size_bytes", 0) or 0
+        rows.append(
+            {
+                "Name": _truncate(f.get("original_name") or "N/A", 30),
+                "CID": _truncate(f.get("cid") or "N/A", 16),
+                "Size": format_size(size_bytes) if size_bytes else "N/A",
+                "Status": f.get("status", "N/A"),
+                "Replicas": str(f.get("active_replica_count", 0)),
+                "Updated": _format_date(f.get("updated_at", "N/A")),
+            }
+        )
+
+    columns = ["Name", "CID", "Size", "Status", "Replicas", "Updated"]
+    print_table("Stored Files", rows, columns)
+
+    # Pagination footer
+    showing = len(files)
+    if total_count > showing or limited:
+        click.echo(
+            click.style(f"Showing {showing} of {total_count} files.", dim=True)
+            + " Use --limit 0 to show all."
+        )
 
     return 0
 
@@ -1397,7 +1470,7 @@ async def handle_delete(client: HippiusClient, cid: str, force: bool = False) ->
             return 0
 
     # Show spinner during deletion
-    with console.status("[cyan]Deleting content...[/cyan]", spinner="dots") as status:
+    with _console.status("[cyan]Deleting content...[/cyan]", spinner="dots") as status:
         result = await client.delete_file(cid)
 
     # Display results
@@ -1465,7 +1538,6 @@ async def handle_pin(
     client: HippiusClient, cid: str, publish: bool = True, miner_ids=None
 ) -> int:
     """Handle the pin command to pin a CID to IPFS and optionally publish to blockchain"""
-    from rich.panel import Panel
 
     # First check if this CID exists
     try:
@@ -1504,7 +1576,7 @@ async def handle_pin(
             warning("Will continue with pinning but blockchain publishing may fail")
 
     # Show spinner during pinning
-    with console.status(
+    with _console.status(
         "[cyan]Pinning content to IPFS...[/cyan]", spinner="dots"
     ) as status:
         try:
@@ -1531,13 +1603,7 @@ async def handle_pin(
                     "\nThis content is now pinned to your IPFS node.",
                     "It will remain available as long as your node is running.",
                 ]
-                console.print(
-                    Panel(
-                        "\n".join(panel_details),
-                        title="Pinning Complete",
-                        border_style="green",
-                    )
-                )
+                draw_success_box(panel_details)
 
             return 0
         except Exception as e:
@@ -1578,7 +1644,7 @@ async def handle_ec_delete(
         info("Deleting erasure-coded file from marketplace...")
 
         # Create a more detailed spinner with phases
-        with console.status(
+        with _console.status(
             "[cyan]Processing file metadata and chunks...[/cyan]", spinner="dots"
         ) as status:
             try:
@@ -1821,22 +1887,14 @@ def handle_account_create(
     client: HippiusClient, name: str, encrypt: bool = False
 ) -> int:
     """DEPRECATED: This command has been removed. Use 'hippius account login' instead."""
-    error(
-        "[bold red]DEPRECATED:[/bold red] The 'account create' command has been removed."
-    )
-    console.print(
-        "\n[bold]Account creation with seed phrases is no longer supported.[/bold]"
-    )
-    console.print("\nTo use Hippius, please:")
-    console.print(
-        "  1. Create an account at [bold cyan]https://hippius.com[/bold cyan]"
-    )
-    console.print(
-        "  2. Get your HIPPIUS_KEY from [bold cyan]https://hippius.com/account/api-keys[/bold cyan]"
-    )
-    console.print(
-        "  3. Run: [bold green underline]hippius account login[/bold green underline]\n"
-    )
+    error("DEPRECATED: The 'account create' command has been removed.")
+    click.echo()
+    click.secho("Account creation with seed phrases is no longer supported.", bold=True)
+    click.echo("\nTo use Hippius, please:")
+    click.echo("  1. Create an account at https://hippius.com")
+    click.echo("  2. Get your HIPPIUS_KEY from https://hippius.com/account/api-keys")
+    click.echo("  3. Run: hippius account login")
+    click.echo()
     return 1
 
 
@@ -1850,7 +1908,7 @@ def handle_account_export(
 
         if not account_name:
             error("No account specified and no active account found")
-            console.print("Use --name to specify an account to export")
+            click.echo("Use --name to specify an account to export")
             return 1
 
         info(f"Exporting account: [bold]{account_name}[/bold]")
@@ -1889,10 +1947,9 @@ def handle_account_export(
 
         # Security warning
         if not export_data.get("hippius_key_encoded"):
-            console.print(
-                "\n[bold yellow]WARNING:[/bold yellow] This export file contains an unencrypted HIPPIUS_KEY."
-            )
-            console.print("Keep this file secure and never share it with anyone.")
+            click.echo()
+            warning("This export file contains an unencrypted HIPPIUS_KEY.")
+            click.echo("Keep this file secure and never share it with anyone.")
 
         return 0
 
@@ -1943,11 +2000,8 @@ def handle_account_import(
         # Check if account already exists
         accounts = list_accounts()
         if account_name in accounts:
-            console.print(
-                f"[yellow]Warning: Account '{account_name}' already exists[/yellow]"
-            )
-            overwrite = input("Overwrite existing account? (y/n): ").strip().lower()
-            if overwrite != "y":
+            warning(f"Account '{account_name}' already exists")
+            if not click.confirm("Overwrite existing account?", default=False):
                 info("Import cancelled")
                 return 0
 
@@ -2056,21 +2110,21 @@ def handle_account_switch(account_name: str) -> int:
         # Check if account exists
         accounts = list_accounts()
         if account_name not in accounts:
-            print(f"Error: Account '{account_name}' not found")
-            print("Available accounts:")
+            error(f"Account '{account_name}' not found")
+            click.echo("Available accounts:")
             for account in accounts:
-                print(f"  {account}")
+                click.echo(f"  {account}")
             return 1
 
         # Set as active account
         set_active_account(account_name)
 
-        print(f"Switched to account: {account_name}")
+        success(f"Switched to account: {account_name}")
 
         # Show account address if possible
         try:
             address = get_account_address(account_name)
-            print(f"Address: {address}")
+            draw_key_value("Address", address)
         except Exception as e:
             # Check if encrypted
             config = load_config()
@@ -2079,14 +2133,14 @@ def handle_account_switch(account_name: str) -> int:
             )
 
             if account_config.get("encrypted", False):
-                print("Address: Encrypted (password required to view)")
+                click.secho("Address: Encrypted (password required to view)", dim=True)
             else:
-                print(f"Note: Unable to display address ({str(e)})")
+                click.echo(f"Note: Unable to display address ({str(e)})")
 
         return 0
 
     except Exception as e:
-        print(f"Error switching account: {e}")
+        error(f"Error switching account: {e}")
         return 1
 
 
@@ -2094,105 +2148,60 @@ def handle_account_login() -> int:
     """Handle the account login command - prompts for account details and creates an account"""
     try:
         # Display the login banner
-        from hippius_sdk.cli_assets import HERO_TITLE
+        draw_logo()
+        click.echo()
+        click.echo(click.style("Welcome to Hippius!", fg=BRAND_COLOR, bold=True) + " Let's set up your account.")
+        click.echo()
 
-        console.print(HERO_TITLE, style="bold cyan")
-        console.print(
-            "\n[bold blue]Welcome to Hippius![/bold blue] Let's set up your account.\n"
-        )
-
-        # Create a style for prompts
-        prompt_style = "bold green"
-        input_style = "bold cyan"
-
-        # Prompt for account name with nice formatting
-        console.print(
-            "[bold]Step 1:[/bold] Choose a name for your account", style=prompt_style
-        )
-        console.print(
-            "This name will be used to identify your account in the Hippius system.",
-            style="dim",
-        )
-        console.print("Account name:", style=input_style, end=" ")
-        name = input().strip()
+        # Step 1: Account name
+        draw_step(1, "Choose a name for your account")
+        click.secho("This name will be used to identify your account in the Hippius system.", dim=True)
+        name = click.prompt(click.style("Account name", fg="cyan", bold=True)).strip()
 
         if not name:
-            error("[bold red]Account name cannot be empty[/bold red]")
+            error("Account name cannot be empty")
             return 1
 
         # Check if account already exists
         accounts = list_accounts()
         if name in accounts:
-            warning(f"Account '[bold]{name}[/bold]' already exists")
-            console.print(
-                "Do you want to overwrite it? (y/n):", style=input_style, end=" "
-            )
-            confirm = input().strip().lower()
-            if confirm != "y":
+            warning(f"Account '{name}' already exists")
+            if not click.confirm("Do you want to overwrite it?", default=False):
                 info("Login cancelled")
                 return 0
 
-        # Prompt for HIPPIUS_KEY
-        console.print(
-            "\n[bold]Step 2:[/bold] Enter your HIPPIUS_KEY", style=prompt_style
-        )
-        console.print(
-            "Your HIPPIUS_KEY is the master API key for your Hippius account.",
-            style="dim",
-        )
-        console.print(
-            "[dim]You can find this in your account settings at https://console.hippius.com/dashboard/settings[/dim]"
-        )
-        console.print("HIPPIUS_KEY:", style=input_style, end=" ")
-        hippius_key = input().strip()
+        # Step 2: HIPPIUS_KEY
+        click.echo()
+        draw_step(2, "Enter your HIPPIUS_KEY")
+        click.secho("Your HIPPIUS_KEY is the master API key for your Hippius account.", dim=True)
+        click.secho("You can find this in your account settings at https://console.hippius.com/dashboard/settings", dim=True)
+        hippius_key = click.prompt(click.style("HIPPIUS_KEY", fg="cyan", bold=True)).strip()
 
         if not hippius_key:
-            error("[bold red]HIPPIUS_KEY cannot be empty[/bold red]")
+            error("HIPPIUS_KEY cannot be empty")
             return 1
 
-        # Prompt for encryption with security explanation
-        console.print("\n[bold]Step 3:[/bold] Secure your account", style=prompt_style)
-        console.print(
-            "Encrypting your HIPPIUS_KEY adds an extra layer of security.", style="dim"
-        )
-        console.print(
-            "[bold yellow]Strongly recommended[/bold yellow] to protect your account.",
-            style="dim",
-        )
-
-        credential_name = "HIPPIUS_KEY"
-        console.print(
-            f"Encrypt {credential_name}? [bold green](Y/n)[/bold green]:",
-            style=input_style,
-            end=" ",
-        )
-        encrypt_input = input().strip().lower()
-        encrypt = encrypt_input == "y" or encrypt_input == "" or encrypt_input == "yes"
+        # Step 3: Encryption
+        click.echo()
+        draw_step(3, "Secure your account")
+        click.secho("Encrypting your HIPPIUS_KEY adds an extra layer of security.", dim=True)
+        click.secho("Strongly recommended to protect your account.", fg="yellow", dim=True)
+        encrypt = click.confirm("Encrypt HIPPIUS_KEY?", default=True)
 
         # Set up encryption if requested
         password = None
         if encrypt:
-            console.print(
-                "\n[bold]Step 4:[/bold] Set encryption password", style=prompt_style
-            )
-            console.print(
-                "This password will be required whenever you use your account for operations.",
-                style="dim",
-            )
-
-            password = getpass.getpass("Enter a password: ")
-            confirm = getpass.getpass("Confirm password: ")
-
-            if password != confirm:
-                error("[bold red]Passwords do not match[/bold red]")
-                return 1
+            click.echo()
+            draw_step(4, "Set encryption password")
+            click.secho("This password will be required whenever you use your account for operations.", dim=True)
+            password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
 
             if not password:
-                error("[bold red]Password cannot be empty for encryption[/bold red]")
+                error("Password cannot be empty for encryption")
                 return 1
 
         # Create and store the account
-        with console.status("[cyan]Setting up your account...[/cyan]", spinner="dots"):
+        with _console.status("[cyan]Setting up your account...[/cyan]", spinner="dots"):
             # First, directly modify the config to ensure account is created
             config = load_config()
 
@@ -2223,53 +2232,41 @@ def handle_account_login() -> int:
 
             time.sleep(0.5)  # Small delay for visual feedback
 
-        # Success panel with account information
-        account_info = [
-            f"[bold]Account Name:[/bold] [bold magenta]{name}[/bold magenta]",
-            "[bold]Authentication:[/bold] [bold green]HIPPIUS_KEY[/bold green]",
+        # Success box with account information
+        result_lines = [
+            f"Account Name: {name}",
+            "Authentication: HIPPIUS_KEY",
             "",
-            "[bold green]✓ Login successful![/bold green]",
-            "[bold green]✓ Account set as active[/bold green]",
+            "Login successful!",
+            "Account set as active",
         ]
 
         if encrypt:
-            account_info.append("[bold green]✓ HIPPIUS_KEY encrypted[/bold green]")
-            account_info.append("")
-            account_info.append(
-                "[dim]You'll need your password when using this account for operations.[/dim]"
-            )
+            result_lines.append("HIPPIUS_KEY encrypted")
         else:
-            account_info.append(
-                "[bold yellow]⚠ HIPPIUS_KEY not encrypted[/bold yellow]"
-            )
-            account_info.append("")
-            account_info.append(
-                "[dim]For better security, consider encrypting your HIPPIUS_KEY:[/dim]"
-            )
-            account_info.append(
-                f"[dim]  [bold green underline]hippius account encode --name {name}[/bold green underline][/dim]"
-            )
+            result_lines.append("HIPPIUS_KEY not encrypted")
 
-        # Add next steps
-        account_info.append("")
-        account_info.append("[bold blue]Next steps:[/bold blue]")
-        account_info.append(
-            "• [bold green underline]hippius credits[/bold green underline] - Check your account balance"
-        )
-        account_info.append(
-            "• [bold green underline]hippius files[/bold green underline] - View your stored files"
-        )
-        account_info.append(
-            "• [bold green underline]hippius store <file>[/bold green underline] - Upload a file to IPFS"
-        )
+        draw_success_box(result_lines)
 
-        print_panel(
-            "\n".join(account_info), title="[bold green]Account Ready[/bold green]"
-        )
+        if encrypt:
+            click.echo()
+            click.secho("You'll need your password when using this account for operations.", dim=True)
+        else:
+            click.echo()
+            click.secho("For better security, consider encrypting your HIPPIUS_KEY:", dim=True)
+            click.echo(f"  hippius account encode --name {name}")
+
+        # Next steps
+        click.echo()
+        click.secho("Next steps:", fg=BRAND_COLOR, bold=True)
+        click.echo("  hippius credits       - Check your account balance")
+        click.echo("  hippius files         - View your stored files")
+        click.echo("  hippius store <file>  - Upload a file to IPFS")
+
         return 0
 
     except Exception as e:
-        error(f"[bold red]Error logging in:[/bold red] {e}")
+        error(f"Error logging in: {e}")
         return 1
 
 
@@ -2277,116 +2274,67 @@ def handle_account_login_seed() -> int:
     """Handle the account login-seed command - prompts for seed phrase for miner/blockchain operations"""
     try:
         # Display the login banner
-        from hippius_sdk.cli_assets import HERO_TITLE
+        draw_logo()
+        click.echo()
+        click.echo(click.style("Welcome to Hippius Miner Setup!", fg=BRAND_COLOR, bold=True))
+        click.echo()
+        click.secho("Note: This command is for miners who need to sign blockchain transactions.", fg="yellow", dim=True)
+        click.secho("For regular file operations, use 'hippius account login' with your HIPPIUS_KEY.", dim=True)
+        click.echo()
 
-        console.print(HERO_TITLE, style="bold cyan")
-        console.print("\n[bold blue]Welcome to Hippius Miner Setup![/bold blue]\n")
-        console.print(
-            "[bold yellow]Note:[/bold yellow] This command is for miners who need to sign blockchain transactions.",
-            style="dim",
-        )
-        console.print(
-            "[dim]For regular file operations, use [bold green underline]hippius account login[/bold green underline] with your HIPPIUS_KEY.[/dim]\n"
-        )
-
-        # Create a style for prompts
-        prompt_style = "bold green"
-        input_style = "bold cyan"
-
-        # Prompt for account name with nice formatting
-        console.print(
-            "[bold]Step 1:[/bold] Choose a name for your miner account",
-            style=prompt_style,
-        )
-        console.print(
-            "This name will be used to identify your account in the Hippius system.",
-            style="dim",
-        )
-        console.print("Account name:", style=input_style, end=" ")
-        name = input().strip()
+        # Step 1: Account name
+        draw_step(1, "Choose a name for your miner account")
+        click.secho("This name will be used to identify your account in the Hippius system.", dim=True)
+        name = click.prompt(click.style("Account name", fg="cyan", bold=True)).strip()
 
         if not name:
-            error("[bold red]Account name cannot be empty[/bold red]")
+            error("Account name cannot be empty")
             return 1
 
         # Check if account already exists
         accounts = list_accounts()
         if name in accounts:
-            warning(f"Account '[bold]{name}[/bold]' already exists")
-            console.print(
-                "Do you want to overwrite it? (y/n):", style=input_style, end=" "
-            )
-            confirm = input().strip().lower()
-            if confirm != "y":
+            warning(f"Account '{name}' already exists")
+            if not click.confirm("Do you want to overwrite it?", default=False):
                 info("Login cancelled")
                 return 0
 
-        # Prompt for seed phrase with detailed explanation
-        console.print(
-            "\n[bold]Step 2:[/bold] Enter your seed phrase", style=prompt_style
-        )
-        console.print(
-            "Your seed phrase gives access to your blockchain account and funds.",
-            style="dim",
-        )
-        console.print(
-            "[yellow]Important:[/yellow] Must be 12 or 24 words separated by spaces.",
-            style="dim",
-        )
-        console.print("Seed phrase:", style=input_style, end=" ")
-        seed_phrase = input().strip()
+        # Step 2: Seed phrase
+        click.echo()
+        draw_step(2, "Enter your seed phrase")
+        click.secho("Your seed phrase gives access to your blockchain account and funds.", dim=True)
+        click.secho("Important: Must be 12 or 24 words separated by spaces.", fg="yellow", dim=True)
+        seed_phrase = click.prompt(click.style("Seed phrase", fg="cyan", bold=True)).strip()
 
         # Validate the seed phrase
         if not seed_phrase or len(seed_phrase.split()) not in [12, 24]:
-            error(
-                "[bold red]Invalid seed phrase[/bold red] - must be 12 or 24 words separated by spaces"
-            )
+            error("Invalid seed phrase - must be 12 or 24 words separated by spaces")
             return 1
 
-        # Prompt for encryption with security explanation
-        console.print("\n[bold]Step 3:[/bold] Secure your account", style=prompt_style)
-        console.print(
-            "Encrypting your seed phrase adds an extra layer of security.", style="dim"
-        )
-        console.print(
-            "[bold yellow]Strongly recommended[/bold yellow] to protect your account.",
-            style="dim",
-        )
-        console.print(
-            "Encrypt seed phrase? [bold green](Y/n)[/bold green]:",
-            style=input_style,
-            end=" ",
-        )
-        encrypt_input = input().strip().lower()
-        encrypt = encrypt_input == "y" or encrypt_input == "" or encrypt_input == "yes"
+        # Step 3: Encryption
+        click.echo()
+        draw_step(3, "Secure your account")
+        click.secho("Encrypting your seed phrase adds an extra layer of security.", dim=True)
+        click.secho("Strongly recommended to protect your account.", fg="yellow", dim=True)
+        encrypt = click.confirm("Encrypt seed phrase?", default=True)
 
         # Set up encryption if requested
         password = None
         if encrypt:
-            console.print(
-                "\n[bold]Step 4:[/bold] Set encryption password", style=prompt_style
-            )
-            console.print(
-                "This password will be required whenever you use your account for blockchain operations.",
-                style="dim",
-            )
-
-            password = getpass.getpass("Enter a password: ")
-            confirm_pw = getpass.getpass("Confirm password: ")
-
-            if password != confirm_pw:
-                error("[bold red]Passwords do not match[/bold red]")
-                return 1
+            click.echo()
+            draw_step(4, "Set encryption password")
+            click.secho("This password will be required whenever you use your account for blockchain operations.", dim=True)
+            password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
 
             if not password:
-                error("[bold red]Password cannot be empty for encryption[/bold red]")
+                error("Password cannot be empty for encryption")
                 return 1
 
         # Initialize address variable
         address = None
 
         # Create and store the account
-        with console.status("[cyan]Setting up your account...[/cyan]", spinner="dots"):
+        with _console.status("[cyan]Setting up your account...[/cyan]", spinner="dots"):
             # First, directly modify the config to ensure account is created
             config = load_config()
 
@@ -2424,51 +2372,40 @@ def handle_account_login_seed() -> int:
 
             time.sleep(0.5)  # Small delay for visual feedback
 
-        # Success panel with account information
-        account_info = [
-            f"[bold]Account Name:[/bold] [bold magenta]{name}[/bold magenta]",
-            f"[bold]Blockchain Address:[/bold] [bold cyan]{address}[/bold cyan]",
+        # Success box with account information
+        result_lines = [
+            f"Account Name: {name}",
+            f"Blockchain Address: {address}",
             "",
-            "[bold green]✓ Login successful![/bold green]",
-            "[bold green]✓ Account set as active[/bold green]",
+            "Login successful!",
+            "Account set as active",
         ]
 
         if encrypt:
-            account_info.append("[bold green]✓ Seed phrase encrypted[/bold green]")
-            account_info.append("")
-            account_info.append(
-                "[dim]You'll need your password when using this account for blockchain operations.[/dim]"
-            )
+            result_lines.append("Seed phrase encrypted")
         else:
-            account_info.append(
-                "[bold yellow]⚠ Seed phrase not encrypted[/bold yellow]"
-            )
-            account_info.append("")
-            account_info.append(
-                "[dim]For better security, consider re-running this command and encrypting your seed phrase.[/dim]"
-            )
+            result_lines.append("Seed phrase not encrypted")
 
-        # Add next steps
-        account_info.append("")
-        account_info.append("[bold blue]Next steps:[/bold blue]")
-        account_info.append(
-            "• [bold green underline]hippius miner register-coldkey[/bold green underline] - Register your miner node"
-        )
-        account_info.append(
-            "• [bold green underline]hippius miner register-hotkey[/bold green underline] - Register with a hotkey"
-        )
-        account_info.append(
-            "• [bold green underline]hippius account balance[/bold green underline] - Check your account balance"
-        )
+        draw_success_box(result_lines)
 
-        print_panel(
-            "\n".join(account_info),
-            title="[bold green]Miner Account Ready[/bold green]",
-        )
+        if encrypt:
+            click.echo()
+            click.secho("You'll need your password when using this account for blockchain operations.", dim=True)
+        else:
+            click.echo()
+            click.secho("For better security, consider re-running this command and encrypting your seed phrase.", dim=True)
+
+        # Next steps
+        click.echo()
+        click.secho("Next steps:", fg=BRAND_COLOR, bold=True)
+        click.echo("  hippius miner register-coldkey  - Register your miner node")
+        click.echo("  hippius miner register-hotkey   - Register with a hotkey")
+        click.echo("  hippius account balance         - Check your account balance")
+
         return 0
 
     except Exception as e:
-        error(f"[bold red]Error logging in:[/bold red] {e}")
+        error(f"Error logging in: {e}")
         return 1
 
 
@@ -2478,39 +2415,37 @@ def handle_account_delete(account_name: str) -> int:
         # Check if account exists
         accounts = list_accounts()
         if account_name not in accounts:
-            print(f"Error: Account '{account_name}' not found")
+            error(f"Account '{account_name}' not found")
             return 1
 
         # Confirm deletion
-        print(f"Warning: You are about to delete account '{account_name}'")
-        print("This action cannot be undone unless you have exported the account.")
-        confirm = input("Delete this account? (y/n): ").strip().lower()
-
-        if confirm != "y":
-            print("Deletion cancelled")
+        warning(f"You are about to delete account '{account_name}'")
+        click.echo("This action cannot be undone unless you have exported the account.")
+        if not click.confirm("Delete this account?", default=False):
+            click.echo("Deletion cancelled")
             return 0
 
         # Delete the account
         delete_account(account_name)
 
-        print(f"Account '{account_name}' deleted successfully")
+        success(f"Account '{account_name}' deleted successfully")
 
         # If this was the active account, notify user
         active_account = get_active_account()
         if active_account == account_name:
-            print("This was the active account. No account is currently active.")
+            warning("This was the active account. No account is currently active.")
 
             # If there are other accounts, suggest one
             remaining_accounts = list_accounts()
             if remaining_accounts:
-                print(
+                click.echo(
                     f"You can switch to another account with: hippius account switch {remaining_accounts[0]}"
                 )
 
         return 0
 
     except Exception as e:
-        print(f"Error deleting account: {e}")
+        error(f"Error deleting account: {e}")
         return 1
 
 
@@ -2885,7 +2820,7 @@ def handle_register_coldkey(
                 "call_function": "register_node_with_coldkey",
                 "call_params": call_params,
             }
-            console.print(json.dumps(payload, indent=2))
+            click.echo(json.dumps(payload, indent=2))
             return 0
 
         seed_phrase = get_seed_phrase()
@@ -2923,7 +2858,7 @@ def handle_register_coldkey(
             error(f"Registration failed: {receipt.error_message}")
 
         log("Full result:")
-        console.print(json.dumps(result, indent=2))
+        click.echo(json.dumps(result, indent=2))
 
         return 0 if receipt.is_success else 1
 
@@ -3100,7 +3035,7 @@ def handle_register_hotkey(
                 "call_function": "register_node_with_hotkey",
                 "call_params": call_params,
             }
-            console.print(json.dumps(payload, indent=2))
+            click.echo(json.dumps(payload, indent=2))
             return 0
 
         seed_phrase = get_seed_phrase()
@@ -3135,7 +3070,7 @@ def handle_register_hotkey(
             error(f"Registration failed: {receipt.error_message}")
 
         log("Full result:")
-        console.print(json.dumps(result, indent=2))
+        click.echo(json.dumps(result, indent=2))
 
         return 0 if receipt.is_success else 1
 
@@ -3298,7 +3233,7 @@ def handle_verify_node(
                 "call_function": "verify_existing_node",
                 "call_params": call_params,
             }
-            console.print(json.dumps(payload, indent=2))
+            click.echo(json.dumps(payload, indent=2))
             return 0
 
         seed_phrase = get_seed_phrase()
@@ -3336,7 +3271,7 @@ def handle_verify_node(
             error(f"Node verification failed: {receipt.error_message}")
 
         log("Full result:")
-        console.print(json.dumps(result, indent=2))
+        click.echo(json.dumps(result, indent=2))
 
         return 0 if receipt.is_success else 1
 
@@ -3500,7 +3435,7 @@ def handle_verify_coldkey_node(
                 "call_function": "verify_existing_coldkey_node",
                 "call_params": call_params,
             }
-            console.print(json.dumps(payload, indent=2))
+            click.echo(json.dumps(payload, indent=2))
             return 0
 
         seed_phrase = get_seed_phrase()
@@ -3535,7 +3470,7 @@ def handle_verify_coldkey_node(
             error(f"Coldkey node verification failed: {receipt.error_message}")
 
         log("Full result:")
-        console.print(json.dumps(result, indent=2))
+        click.echo(json.dumps(result, indent=2))
 
         return 0 if receipt.is_success else 1
 

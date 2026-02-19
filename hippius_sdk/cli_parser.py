@@ -352,6 +352,30 @@ def add_market_commands(subparsers):
         default=None,
         nargs="?",
     )
+    files_parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=["table", "json", "csv"],
+        default="table",
+        help="Output format (default: table)",
+    )
+    files_parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Output one CID per line (for piping)",
+    )
+    files_parser.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        help="Maximum number of files to display (0 = no limit, default: 25)",
+    )
+    files_parser.add_argument(
+        "--no-truncate",
+        action="store_true",
+        help="Show full CIDs and names in table mode",
+    )
 
 
 def add_erasure_coding_commands(subparsers):

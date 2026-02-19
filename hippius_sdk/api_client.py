@@ -57,8 +57,8 @@ def retry_on_error(retries: int = 3, backoff: float = 5.0):
                         break
 
                     # Log retry attempt
-                    print(f"Request failed (attempt {attempt + 1}/{retries + 1}): {e}")
-                    print(f"Retrying in {backoff} seconds...")
+                    logger.warning(f"Request failed (attempt {attempt + 1}/{retries + 1}): {e}")
+                    logger.warning(f"Retrying in {backoff} seconds...")
                     await asyncio.sleep(backoff)
                 except Exception:
                     # Don't retry on unexpected errors
@@ -303,6 +303,78 @@ class HippiusApiClient:
             return data["results"]
 
         return data if isinstance(data, list) else []
+
+    @retry_on_error(retries=3, backoff=5.0)
+    async def list_files_paginated(
+        self,
+        hippius_key: Optional[str] = None,
+        cid: Optional[str] = None,
+        include_pending: bool = False,
+        search: Optional[str] = None,
+        ordering: Optional[str] = None,
+        page: Optional[int] = None,
+        page_size: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        List files with full pagination metadata.
+
+        Same parameters as list_files(), but returns the raw paginated
+        response dict instead of just the results list.
+
+        Args:
+            hippius_key: Optional HIPPIUS_KEY (uses config if None)
+            cid: Optional CID filter
+            include_pending: Include files with pending status
+            search: A search term to filter files
+            ordering: Which field to use when ordering the results
+            page: A page number within the paginated result set
+            page_size: Number of results per page
+
+        Returns:
+            Dict with keys: results, count, next, previous
+        """
+        headers = self._get_headers(hippius_key)
+
+        params = {}
+        if cid:
+            params["cid"] = cid
+        if include_pending:
+            params["include_pending"] = "true"
+        if search:
+            params["search"] = search
+        if ordering:
+            params["ordering"] = ordering
+        if page:
+            params["page"] = str(page)
+        if page_size:
+            params["page_size"] = str(page_size)
+
+        response = await self._client.get(
+            "/storage-control/files/",
+            headers=headers,
+            params=params,
+        )
+
+        response.raise_for_status()
+        data = response.json()
+
+        # API returns paginated results
+        if isinstance(data, dict) and "results" in data:
+            return {
+                "results": data["results"],
+                "count": data.get("count", len(data["results"])),
+                "next": data.get("next"),
+                "previous": data.get("previous"),
+            }
+
+        # Fallback for non-paginated responses
+        items = data if isinstance(data, list) else []
+        return {
+            "results": items,
+            "count": len(items),
+            "next": None,
+            "previous": None,
+        }
 
     @retry_on_error(retries=3, backoff=5.0)
     async def get_file_details(

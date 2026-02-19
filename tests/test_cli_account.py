@@ -77,10 +77,10 @@ class TestCLIAccountCommands:
     @patch("hippius_sdk.cli_handlers.list_accounts")
     @patch("hippius_sdk.cli_handlers.load_config")
     @patch("hippius_sdk.cli_handlers.save_config")
-    @patch("builtins.input", return_value="y")
+    @patch("hippius_sdk.cli_handlers.click.confirm", return_value=True)
     def test_handle_account_import(
         self,
-        mock_input,
+        mock_confirm,
         mock_save_config,
         mock_load_config,
         mock_list_accounts,

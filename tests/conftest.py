@@ -36,13 +36,13 @@ def event_loop():
     loop.close()
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def docker_ipfs_node():
     """
     Start a Docker IPFS node for testing and tear it down after tests complete.
 
-    This fixture automatically starts at the beginning of the test session,
-    ensuring IPFS is available for all tests.
+    Only runs when HIPPIUS_E2E=1 is set. E2E test files that need Docker
+    request this fixture explicitly.
 
     This fixture:
     - Starts IPFS Kubo container via docker-compose.test.yml
@@ -53,6 +53,8 @@ def docker_ipfs_node():
     Yields:
         str: IPFS API URL (http://localhost:5001)
     """
+    if not os.getenv("HIPPIUS_E2E"):
+        pytest.skip("Set HIPPIUS_E2E=1 to run Docker-dependent tests")
     compose_file = "docker-compose.test.yml"
     ipfs_api_url = "http://localhost:5001"
 
@@ -103,12 +105,16 @@ def test_hippius_key() -> str:
     """
     Get HIPPIUS_KEY from environment (.env.test).
 
+    Only runs when HIPPIUS_E2E=1 is set. Unit tests don't need this.
+
     Returns:
         The test HIPPIUS_KEY
 
     Raises:
         RuntimeError: If HIPPIUS_KEY is not set
     """
+    if not os.getenv("HIPPIUS_E2E"):
+        pytest.skip("Set HIPPIUS_E2E=1 to run tests requiring HIPPIUS_KEY")
     key = os.getenv("HIPPIUS_KEY")
     if not key:
         raise RuntimeError(

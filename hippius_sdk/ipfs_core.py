@@ -28,14 +28,14 @@ class AsyncIPFSClient:
                     host = parts[2]
                     port = parts[4]
                     api_url = f"https://{host}:{port}"
-                    print(f"Converted multiaddr {api_url} to HTTP URL {api_url}")
+                    logger.info(f"Converted multiaddr {api_url} to HTTP URL {api_url}")
                 else:
-                    print(f"Warning: Unsupported multiaddr format: {api_url}")
-                    print("Falling back to default: http://localhost:5001")
+                    logger.warning(f"Unsupported multiaddr format: {api_url}")
+                    logger.warning("Falling back to default: http://localhost:5001")
                     api_url = "http://localhost:5001"
             except Exception as e:
-                print(f"Error parsing multiaddr: {e}")
-                print("Falling back to default: http://localhost:5001")
+                logger.error(f"Error parsing multiaddr: {e}")
+                logger.warning("Falling back to default: http://localhost:5001")
                 api_url = "http://localhost:5001"
         # Normalize URLs and avoid trailing slash to prevent "//" when joining paths
         self.api_url = api_url.rstrip("/")
@@ -323,7 +323,7 @@ class AsyncIPFSClient:
                         with open(target_path, "wb") as f:
                             f.write(content)
                     except Exception as file_error:
-                        print(f"Failed to download file {link_name}: {str(file_error)}")
+                        logger.error(f"Failed to download file {link_name}: {str(file_error)}")
 
             return output_path
 

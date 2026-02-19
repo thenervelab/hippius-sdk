@@ -1,9 +1,12 @@
 """Rich UI components for the Hippius SDK CLI."""
 
 import argparse
+import io
+import re
 import sys
 from typing import Any, Dict, List, Optional, Union
 
+import click
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (
@@ -17,8 +20,19 @@ from rich.progress import (
 from rich.table import Table
 from rich.text import Text
 
-# Create a global console instance
-console = Console()
+# Brand color RGB
+BRAND_COLOR = (49, 103, 221)
+
+# Rich console — kept for tables, progress bars, and status spinners only
+_console = Console()
+
+# Backward-compat alias (deprecated — use _console directly)
+console = _console
+
+
+def _strip_rich_markup(text: str) -> str:
+    """Strip Rich markup tags like [bold cyan]...[/bold cyan] from a string."""
+    return re.sub(r"\[/?[^\]]+\]", "", text)
 
 
 def log(message: str, style: Optional[str] = None) -> None:
@@ -28,7 +42,15 @@ def log(message: str, style: Optional[str] = None) -> None:
         message: The message to log
         style: Optional style to apply to the message
     """
-    console.print(message, style=style)
+    cleaned = _strip_rich_markup(message)
+    if style == "dim":
+        click.secho(cleaned, dim=True)
+    elif style == "bold":
+        click.secho(cleaned, bold=True)
+    elif style:
+        click.echo(cleaned)
+    else:
+        click.echo(cleaned)
 
 
 def info(message: str) -> None:
@@ -37,7 +59,8 @@ def info(message: str) -> None:
     Args:
         message: The info message to log
     """
-    console.print(f"[blue]INFO:[/blue] {message}")
+    cleaned = _strip_rich_markup(message)
+    click.echo(click.style("INFO:", fg=BRAND_COLOR, bold=True) + " " + cleaned)
 
 
 def success(message: str) -> None:
@@ -46,7 +69,8 @@ def success(message: str) -> None:
     Args:
         message: The success message to log
     """
-    console.print(f"[green]SUCCESS:[/green] {message}")
+    cleaned = _strip_rich_markup(message)
+    click.echo(click.style("SUCCESS:", fg="green", bold=True) + " " + cleaned)
 
 
 def warning(message: str) -> None:
@@ -55,7 +79,8 @@ def warning(message: str) -> None:
     Args:
         message: The warning message to log
     """
-    console.print(f"[yellow]WARNING:[/yellow] {message}")
+    cleaned = _strip_rich_markup(message)
+    click.echo(click.style("WARNING:", fg="yellow", bold=True) + " " + cleaned)
 
 
 def error(message: str) -> None:
@@ -64,7 +89,8 @@ def error(message: str) -> None:
     Args:
         message: The error message to log
     """
-    console.print(f"[bold red]ERROR:[/bold red] {message}")
+    cleaned = _strip_rich_markup(message)
+    click.echo(click.style("ERROR:", fg="red", bold=True) + " " + cleaned, err=True)
 
 
 def print_table(
@@ -99,7 +125,7 @@ def print_table(
             table.add_row(*values)
 
     # Print the table
-    console.print(table)
+    _console.print(table)
 
 
 def print_panel(content: str, title: Optional[str] = None) -> None:
@@ -109,7 +135,7 @@ def print_panel(content: str, title: Optional[str] = None) -> None:
         content: The content to display in the panel
         title: Optional title for the panel
     """
-    console.print(Panel(content, title=title))
+    _console.print(Panel(content, title=title))
 
 
 def create_progress() -> Progress:
@@ -125,19 +151,17 @@ def create_progress() -> Progress:
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
         TimeElapsedColumn(),
         TimeRemainingColumn(),
-        console=console,
+        console=_console,
     )
 
 
 def print_help_text(parser: "argparse.ArgumentParser"):
-    """Print help text with Rich formatting.
+    """Print help text with Click formatting.
 
     Args:
         parser: The argparse parser to display help for
     """
     # Get the help text from the parser
-    import io
-
     buffer = io.StringIO()
     parser.print_help(buffer)
     help_text = buffer.getvalue()
@@ -151,29 +175,33 @@ def print_help_text(parser: "argparse.ArgumentParser"):
             lines = section.split("\n")
             title = lines[0]
             usage = "\n".join(lines[1:]) if len(lines) > 1 else ""
-            console.print(f"[bold cyan]{title}[/bold cyan]")
+            click.secho(title, fg=BRAND_COLOR, bold=True)
             if usage:
-                console.print(f"[yellow]{usage}[/yellow]")
+                click.secho(usage, fg="yellow")
         elif "positional arguments:" in section:
             lines = section.split("\n")
             title = lines[0]
-            args = "\n".join(lines[1:])
-            console.print(f"\n[bold green]{title}[/bold green]")
-            console.print(args)
+            args_text = "\n".join(lines[1:])
+            click.echo()
+            click.secho(title, fg="green", bold=True)
+            click.echo(args_text)
         elif "options:" in section:
             lines = section.split("\n")
             title = lines[0]
             opts = "\n".join(lines[1:])
-            console.print(f"\n[bold green]{title}[/bold green]")
-            console.print(opts)
+            click.echo()
+            click.secho(title, fg="green", bold=True)
+            click.echo(opts)
         elif "examples:" in section:
             lines = section.split("\n")
             title = lines[0]
             examples = "\n".join(lines[1:])
-            console.print(f"\n[bold magenta]{title}[/bold magenta]")
-            console.print(f"[cyan]{examples}[/cyan]")
+            click.echo()
+            click.secho(title, fg="magenta", bold=True)
+            click.secho(examples, fg="cyan")
         else:
-            console.print(f"\n{section}")
+            click.echo()
+            click.echo(section)
 
 
 class RichHelpAction(argparse.Action):
@@ -196,9 +224,9 @@ class RichHelpAction(argparse.Action):
 
     def __call__(self, parser, namespace, values, option_string=None):
         # Display the Hippius logo banner when help is requested
-        from hippius_sdk.cli_assets import HERO_TITLE
+        from hippius_sdk.cli_assets import draw_logo
 
-        console.print(HERO_TITLE, style="bold cyan")
+        draw_logo()
 
         # Use our print_help_text function instead of the default formatter
         print_help_text(parser)

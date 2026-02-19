@@ -14,10 +14,12 @@ from typing import Callable
 
 from dotenv import load_dotenv
 
+import click
+
 from hippius_sdk import cli_handlers, initialize_from_env
-from hippius_sdk.cli_assets import HERO_TITLE
+from hippius_sdk.cli_assets import draw_logo
 from hippius_sdk.cli_parser import create_parser, get_subparser, parse_arguments
-from hippius_sdk.cli_rich import console, error
+from hippius_sdk.cli_rich import error
 from hippius_sdk.utils import generate_key
 
 # Import SDK components
@@ -37,37 +39,39 @@ def generate_encryption_key(copy_to_clipboard=False):
             import pyperclip
 
             pyperclip.copy(encoded_key)
-            console.print("[green]Key copied to clipboard![/green]")
+            click.secho("Key copied to clipboard!", fg="green")
         except ImportError:
-            console.print(
-                "[yellow]Warning:[/yellow] Could not copy to clipboard. Install pyperclip with: [bold]pip install pyperclip[/bold]"
+            click.echo(
+                click.style("Warning:", fg="yellow") + " Could not copy to clipboard. Install pyperclip with: pip install pyperclip"
             )
 
     return encoded_key
 
 
 def key_generation_cli():
-    """Standalone CLI tool for encryption key generation with Rich formatting."""
-    # Display the Hippius logo banner with Rich formatting
-    console.print(HERO_TITLE, style="bold cyan")
-    console.print("[bold]Encryption Key Generator[/bold]", style="blue")
+    """Standalone CLI tool for encryption key generation with Click formatting."""
+    # Display the Hippius logo banner
+    draw_logo()
+    click.secho("Encryption Key Generator", fg="blue", bold=True)
 
     try:
         # Generate the key
         encoded_key = generate_encryption_key(copy_to_clipboard=True)
 
-        # Display the key with Rich formatting
-        console.print("\n[bold green]Your encryption key:[/bold green]")
-        console.print(f"[yellow]{encoded_key}[/yellow]")
-        console.print("\n[dim]This key has been copied to your clipboard.[/dim]")
-        console.print("[bold blue]Usage instructions:[/bold blue]")
-        console.print("1. Store this key securely")
-        console.print("2. Use it to encrypt/decrypt files with the Hippius SDK")
-        console.print("3. [yellow]Never share this key with others[/yellow]")
+        # Display the key
+        click.echo()
+        click.secho("Your encryption key:", fg="green", bold=True)
+        click.secho(encoded_key, fg="yellow")
+        click.echo()
+        click.secho("This key has been copied to your clipboard.", dim=True)
+        click.secho("Usage instructions:", fg="blue", bold=True)
+        click.echo("1. Store this key securely")
+        click.echo("2. Use it to encrypt/decrypt files with the Hippius SDK")
+        click.secho("3. Never share this key with others", fg="yellow")
 
         return 0
     except Exception as e:
-        console.print(f"[bold red]Error:[/bold red] {e}")
+        error(f"{e}")
         return 1
 
 
@@ -78,7 +82,7 @@ def main():
 
     if not args.command:
         # Display the Hippius logo banner with Rich formatting
-        console.print(HERO_TITLE, style="bold cyan")
+        draw_logo()
 
         # Use Rich formatting for help text
         from hippius_sdk.cli_rich import print_help_text
@@ -177,6 +181,10 @@ def main():
                 search=args.search if hasattr(args, "search") else None,
                 ordering=args.ordering if hasattr(args, "ordering") else None,
                 page=args.page if hasattr(args, "page") else None,
+                output_format=getattr(args, "output_format", "table"),
+                quiet=getattr(args, "quiet", False),
+                limit=getattr(args, "limit", 25),
+                no_truncate=getattr(args, "no_truncate", False),
             )
 
         elif args.command == "ec-files":
@@ -246,19 +254,19 @@ def main():
                 copy_to_clipboard=copy_to_clipboard
             )
 
-            # Display the key with Rich formatting
-            console.print("\n[bold green]Your encryption key:[/bold green]")
-            console.print(f"[yellow]{encryption_key}[/yellow]")
+            # Display the key
+            click.echo()
+            click.secho("Your encryption key:", fg="green", bold=True)
+            click.secho(encryption_key, fg="yellow")
 
             if hasattr(args, "save") and args.save:
-                console.print(
-                    "\n[bold]Saving encryption key to configuration...[/bold]"
-                )
+                click.echo()
+                click.secho("Saving encryption key to configuration...", bold=True)
                 cli_handlers.handle_config_set(
                     "encryption", "encryption_key", encryption_key
                 )
-                console.print(
-                    "[green]Encryption key saved.[/green] Files will not be automatically encrypted unless you set [cyan]encryption.encrypt_by_default[/cyan] to [cyan]true[/cyan]"
+                click.echo(
+                    click.style("Encryption key saved.", fg="green") + " Files will not be automatically encrypted unless you set encryption.encrypt_by_default to true"
                 )
             return 0
 
@@ -275,11 +283,11 @@ def main():
                 return cli_handlers.handle_config_reset()
             elif args.config_action == "import-env":
                 initialize_from_env()
-                print("Successfully imported configuration from environment variables")
+                click.echo("Successfully imported configuration from environment variables")
                 return 0
             else:
                 # Display the Hippius logo banner with Rich formatting
-                console.print(HERO_TITLE, style="bold cyan")
+                draw_logo()
 
                 config_parser = get_subparser("config")
                 from hippius_sdk.cli_rich import print_help_text
@@ -336,7 +344,7 @@ def main():
                 )
             else:
                 # Display the Hippius logo banner with Rich formatting
-                console.print(HERO_TITLE, style="bold cyan")
+                draw_logo()
 
                 account_parser = get_subparser("account")
                 from hippius_sdk.cli_rich import print_help_text
@@ -354,7 +362,7 @@ def main():
                 return cli_handlers.handle_default_address_clear()
             else:
                 # Display the Hippius logo banner with Rich formatting
-                console.print(HERO_TITLE, style="bold cyan")
+                draw_logo()
 
                 address_parser = get_subparser("address")
                 from hippius_sdk.cli_rich import print_help_text
@@ -431,7 +439,7 @@ def main():
                 )
             else:
                 # Display the Hippius logo banner with Rich formatting
-                console.print(HERO_TITLE, style="bold cyan")
+                draw_logo()
 
                 miner_parser = get_subparser("miner")
                 from hippius_sdk.cli_rich import print_help_text
@@ -452,7 +460,8 @@ def main():
         if args.verbose:
             import traceback
 
-            console.print("\n[bold red]Traceback:[/bold red]")
+            click.echo()
+            click.secho("Traceback:", fg="red", bold=True)
             traceback.print_exc()
         return 1
 
@@ -462,7 +471,7 @@ def standalone_key_generation_cli():
     # Check if help flag is present
     if "--help" in sys.argv or "-h" in sys.argv:
         # Display the logo and help text with nice formatting
-        console.print(HERO_TITLE, style="bold cyan")
+        draw_logo()
 
     # Parse arguments
     import argparse
@@ -483,22 +492,25 @@ def standalone_key_generation_cli():
     args = parser.parse_args()
 
     # Display encryption key generator title
-    console.print("[bold blue]Encryption Key Generator[/bold blue]\n")
+    click.secho("Encryption Key Generator", fg="blue", bold=True)
+    click.echo()
 
     # Generate and display the key
     key = generate_encryption_key(copy_to_clipboard=args.clipboard)
 
-    # Display the key in a panel with formatting
-    console.print("\n[bold]Your encryption key:[/bold]")
-    console.print(f"[yellow]{key}[/yellow]", highlight=False)
+    # Display the key
+    click.echo()
+    click.secho("Your encryption key:", bold=True)
+    click.secho(key, fg="yellow")
 
     # Save to config if requested
     if args.save:
         from hippius_sdk import cli_handlers
 
         cli_handlers.handle_config_set("encryption", "encryption_key", key)
-        console.print(
-            "\n[green]Encryption key saved to configuration.[/green] Files will not be automatically encrypted unless you set [bold]encryption.encrypt_by_default[/bold] to [bold]true[/bold]."
+        click.echo()
+        click.echo(
+            click.style("Encryption key saved to configuration.", fg="green") + " Files will not be automatically encrypted unless you set encryption.encrypt_by_default to true."
         )
 
 
