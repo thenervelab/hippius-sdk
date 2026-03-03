@@ -232,8 +232,6 @@ def add_account_commands(subparsers):
     )
 
 
-
-
 def add_miner_commands(subparsers):
     """Add miner registration/verification commands to the parser."""
     miner_parser = subparsers.add_parser(
