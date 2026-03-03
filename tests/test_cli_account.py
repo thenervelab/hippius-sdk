@@ -1,14 +1,13 @@
 """
 Unit tests for the CLI account management commands.
 
-Updated for v0.3.0 - HIPPIUS_KEY authentication only.
+Updated for Arion migration - API token authentication.
 """
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
 from hippius_sdk.cli_handlers import (
-    handle_account_create,
     handle_account_export,
     handle_account_import,
     handle_account_list,
@@ -18,36 +17,28 @@ from hippius_sdk.cli_handlers import (
 class TestCLIAccountCommands:
     """Tests for the CLI account management commands."""
 
-    def test_handle_account_create_deprecated(self):
-        """Test that handle_account_create returns deprecation error."""
-        mock_client = MagicMock()
-
-        # handle_account_create should now return 1 (error) with deprecation message
-        result = handle_account_create(mock_client, "test_account", encrypt=False)
-
-        # Should return error code
-        assert result == 1
-
     @patch("builtins.open", new_callable=mock_open)
     @patch("json.dump")
-    @patch("hippius_sdk.cli_handlers.load_config")
-    @patch("hippius_sdk.cli_handlers.get_active_account")
+    @patch("hippius_sdk.cli_handlers_account.load_config")
+    @patch("hippius_sdk.cli_handlers_account.get_active_account")
     def test_handle_account_export(
         self, mock_get_active, mock_load_config, mock_json_dump, mock_file
     ):
-        """Test the handle_account_export function with HIPPIUS_KEY."""
+        """Test the handle_account_export function with API token."""
         mock_client = MagicMock()
 
-        # Mock configuration
+        # Mock configuration (new format)
         mock_config = {
-            "substrate": {
+            "accounts": {
+                "active_account": "test_account",
                 "accounts": {
                     "test_account": {
-                        "hippius_key": "test_key_123",
-                        "hippius_key_encoded": False,
-                        "hippius_key_salt": None,
+                        "api_token": "test_token_123",
+                        "api_token_encoded": False,
+                        "api_token_salt": None,
+                        "account_address": "5TestAddr",
                     }
-                }
+                },
             }
         }
         mock_load_config.return_value = mock_config
@@ -62,22 +53,22 @@ class TestCLIAccountCommands:
         assert result == 0
         mock_json_dump.assert_called_once()
 
-        # Verify exported data structure (HIPPIUS_KEY format)
+        # Verify exported data structure
         exported_data = mock_json_dump.call_args[0][0]
         assert exported_data["name"] == "test_account"
-        assert exported_data["hippius_key"] == "test_key_123"
-        assert exported_data["hippius_key_encoded"] is False
+        assert exported_data["api_token"] == "test_token_123"
+        assert exported_data["api_token_encoded"] is False
 
     @patch(
         "builtins.open",
         new_callable=mock_open,
-        read_data='{"name":"test_account","hippius_key":"test_key_123","hippius_key_encoded":false}',
+        read_data='{"name":"test_account","api_token":"test_token_123","api_token_encoded":false,"account_address":"5TestAddr"}',
     )
     @patch("os.path.exists", return_value=True)
-    @patch("hippius_sdk.cli_handlers.list_accounts")
-    @patch("hippius_sdk.cli_handlers.load_config")
-    @patch("hippius_sdk.cli_handlers.save_config")
-    @patch("hippius_sdk.cli_handlers.click.confirm", return_value=True)
+    @patch("hippius_sdk.cli_handlers_account.list_accounts")
+    @patch("hippius_sdk.cli_handlers_account.load_config")
+    @patch("hippius_sdk.cli_handlers_account.save_config")
+    @patch("hippius_sdk.cli_handlers_account.click.confirm", return_value=True)
     def test_handle_account_import(
         self,
         mock_confirm,
@@ -87,14 +78,19 @@ class TestCLIAccountCommands:
         mock_exists,
         mock_file,
     ):
-        """Test the handle_account_import function with HIPPIUS_KEY."""
+        """Test the handle_account_import function with API token."""
         mock_client = MagicMock()
 
         # Mock existing accounts (account exists, will prompt for overwrite)
         mock_list_accounts.return_value = {"test_account": {}}
 
-        # Mock configuration
-        mock_config = {"substrate": {"accounts": {}}}
+        # Mock configuration (new format)
+        mock_config = {
+            "accounts": {
+                "active_account": None,
+                "accounts": {},
+            }
+        }
         mock_load_config.return_value = mock_config
 
         # Test importing account
@@ -106,22 +102,22 @@ class TestCLIAccountCommands:
         assert result == 0
         mock_save_config.assert_called_once()
 
-        # Verify account was added to config with HIPPIUS_KEY
+        # Verify account was added to config with API token
         saved_config = mock_save_config.call_args[0][0]
-        assert "test_account" in saved_config["substrate"]["accounts"]
-        account_data = saved_config["substrate"]["accounts"]["test_account"]
-        assert account_data["hippius_key"] == "test_key_123"
-        assert account_data["hippius_key_encoded"] is False
+        assert "test_account" in saved_config["accounts"]["accounts"]
+        account_data = saved_config["accounts"]["accounts"]["test_account"]
+        assert account_data["api_token"] == "test_token_123"
+        assert account_data["api_token_encoded"] is False
 
     @patch(
         "builtins.open",
         new_callable=mock_open,
-        read_data='{"name":"new_account","hippius_key":"new_key_456","hippius_key_encoded":false}',
+        read_data='{"name":"new_account","api_token":"new_token_456","api_token_encoded":false,"account_address":"5NewAddr"}',
     )
     @patch("os.path.exists", return_value=True)
-    @patch("hippius_sdk.cli_handlers.list_accounts")
-    @patch("hippius_sdk.cli_handlers.load_config")
-    @patch("hippius_sdk.cli_handlers.save_config")
+    @patch("hippius_sdk.cli_handlers_account.list_accounts")
+    @patch("hippius_sdk.cli_handlers_account.load_config")
+    @patch("hippius_sdk.cli_handlers_account.save_config")
     def test_handle_account_import_new_account(
         self,
         mock_save_config,
@@ -136,8 +132,13 @@ class TestCLIAccountCommands:
         # Mock no existing accounts
         mock_list_accounts.return_value = {}
 
-        # Mock configuration
-        mock_config = {"substrate": {"accounts": {}}}
+        # Mock configuration (new format)
+        mock_config = {
+            "accounts": {
+                "active_account": None,
+                "accounts": {},
+            }
+        }
         mock_load_config.return_value = mock_config
 
         # Test importing new account
@@ -149,9 +150,9 @@ class TestCLIAccountCommands:
         assert result == 0
         mock_save_config.assert_called_once()
 
-    @patch("hippius_sdk.cli_handlers.list_accounts")
-    @patch("hippius_sdk.cli_handlers.get_active_account")
-    @patch("hippius_sdk.cli_handlers.load_config")
+    @patch("hippius_sdk.cli_handlers_account.list_accounts")
+    @patch("hippius_sdk.cli_handlers_account.get_active_account")
+    @patch("hippius_sdk.cli_handlers_account.load_config")
     def test_handle_account_list(
         self, mock_load_config, mock_get_active, mock_list_accounts
     ):
@@ -160,13 +161,22 @@ class TestCLIAccountCommands:
         mock_list_accounts.return_value = {"account1": {}, "account2": {}}
         mock_get_active.return_value = "account1"
 
-        # Mock config with account details
+        # Mock config with account details (new format)
         mock_config = {
-            "substrate": {
+            "accounts": {
+                "active_account": "account1",
                 "accounts": {
-                    "account1": {"hippius_key": "key1", "hippius_key_encoded": False},
-                    "account2": {"hippius_key": "key2", "hippius_key_encoded": True},
-                }
+                    "account1": {
+                        "api_token": "token1",
+                        "api_token_encoded": False,
+                        "account_address": "5Addr1",
+                    },
+                    "account2": {
+                        "api_token": "token2",
+                        "api_token_encoded": True,
+                        "account_address": "5Addr2",
+                    },
+                },
             }
         }
         mock_load_config.return_value = mock_config
@@ -177,7 +187,7 @@ class TestCLIAccountCommands:
         # Verify success
         assert result == 0
 
-    @patch("hippius_sdk.cli_handlers.list_accounts")
+    @patch("hippius_sdk.cli_handlers_account.list_accounts")
     def test_handle_account_list_no_accounts(self, mock_list_accounts):
         """Test the handle_account_list function with no accounts."""
         # Mock no accounts

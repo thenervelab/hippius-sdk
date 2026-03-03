@@ -15,72 +15,27 @@ import nacl.secret
 import nacl.utils
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from dotenv import load_dotenv
 from substrateinterface import Keypair
 
 # Define constants
 CONFIG_DIR = os.path.expanduser("~/.hippius")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
-# Deprecated IPFS URL that should not be used
-DEPRECATED_IPFS_URL = "https://store.hippius.network"
-
-# Flag to track if we've already warned about deprecated IPFS URL
-_DEPRECATION_WARNING_SHOWN = False
-DEPRECATION_ERROR_MESSAGE = """
-Public https://store.hippius.network has been deprecated.
-Please provide a custom IPFS node URL via one of these methods:
-
-1. Environment variable:
-   export IPFS_NODE_URL=http://your-ipfs-node:5001
-
-2. Config file (~/.hippius/config.json):
-   hippius config set ipfs api_url http://your-ipfs-node:5001
-
-3. Use local IPFS node:
-   hippius config set ipfs local_ipfs true
-
-If none of this makes sense to you, we suggest you use our S3 endpoint
-instead of the CLI app to interact with Hippius.
-Documentation: https://docs.hippius.com/storage/s3/integration
-"""
-
 DEFAULT_CONFIG = {
-    "ipfs": {
-        "api_url": None,
-        "local_ipfs": True,
+    "arion": {
+        "base_url": "https://arion.hippius.com",
+        "api_url": "https://api.hippius.com/api",
+    },
+    "accounts": {
+        "active_account": None,
+        "accounts": {},
     },
     "substrate": {
         "url": "wss://rpc.hippius.network",
-        "seed_phrase": None,
-        "seed_phrase_encoded": False,
-        "seed_phrase_salt": None,  # Salt for password-based encryption
-        "default_miners": [],
-        "active_account": None,  # Name of the active account
-        "accounts": {},  # Dictionary of accounts with names as keys
-    },
-    "hippius": {
-        "api_url": "https://api.hippius.com/api",
-        "hippius_key": None,
-        "hippius_key_encoded": False,
-        "hippius_key_salt": None,  # Salt for password-based encryption
-    },
-    "encryption": {
-        "encrypt_by_default": False,
-        "encryption_key": None,
-    },
-    "erasure_coding": {
-        "default_k": 3,
-        "default_m": 5,
-        "default_chunk_size": 1024 * 1024,  # 1MB
     },
     "cli": {
         "verbose": False,
         "max_retries": 3,
-    },
-    "key_storage": {
-        "database_url": "postgresql://postgres:password@localhost:5432/hippius_keys",
-        "enabled": False,
     },
 }
 
@@ -95,26 +50,53 @@ def ensure_config_dir() -> None:
             print(f"Warning: Could not create configuration directory: {e}")
 
 
-def validate_ipfs_node_url(api_url: Optional[str]) -> Optional[str]:
+def _migrate_old_config(config: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Validate IPFS node URL and check for deprecated values.
+    Detect old config format (has 'ipfs' key) and migrate to new format.
 
-    Args:
-        api_url: The IPFS node URL to validate
-
-    Returns:
-        The URL if valid
-
-    Raises:
-        ValueError: If the URL is deprecated or missing
+    Preserves accounts and substrate settings where possible.
     """
-    if api_url and DEPRECATED_IPFS_URL in api_url:
-        raise ValueError(DEPRECATION_ERROR_MESSAGE)
+    if "ipfs" not in config and "hippius" not in config:
+        return config
 
-    if not api_url:
-        raise ValueError(DEPRECATION_ERROR_MESSAGE)
+    print("\nWARNING: Old configuration format detected.")
+    print("Migrating to new Arion-based configuration...")
+    print("You will need to re-login with: hippius account login\n")
 
-    return api_url
+    new_config = DEFAULT_CONFIG.copy()
+    new_config["arion"] = dict(DEFAULT_CONFIG["arion"])
+    new_config["accounts"] = {"active_account": None, "accounts": {}}
+    new_config["substrate"] = dict(DEFAULT_CONFIG["substrate"])
+    new_config["cli"] = dict(DEFAULT_CONFIG["cli"])
+
+    # Preserve substrate URL if set
+    if "substrate" in config and "url" in config["substrate"]:
+        new_config["substrate"]["url"] = config["substrate"]["url"]
+
+    # Migrate accounts from old format - preserve seed phrases for miner commands
+    old_accounts = config.get("substrate", {}).get("accounts", {})
+    old_active = config.get("substrate", {}).get("active_account")
+
+    for name, data in old_accounts.items():
+        migrated = {}
+        # Preserve seed phrase data for miner operations
+        if "seed_phrase" in data:
+            migrated["seed_phrase"] = data["seed_phrase"]
+            migrated["seed_phrase_encoded"] = data.get("seed_phrase_encoded", False)
+            migrated["seed_phrase_salt"] = data.get("seed_phrase_salt")
+        if "ss58_address" in data:
+            migrated["account_address"] = data["ss58_address"]
+        if migrated:
+            new_config["accounts"]["accounts"][name] = migrated
+
+    if old_active and old_active in new_config["accounts"]["accounts"]:
+        new_config["accounts"]["active_account"] = old_active
+
+    # Preserve CLI settings
+    if "cli" in config:
+        new_config["cli"].update(config["cli"])
+
+    return new_config
 
 
 def load_config() -> Dict[str, Any]:
@@ -122,6 +104,7 @@ def load_config() -> Dict[str, Any]:
     Load configuration from the config file.
 
     If the file doesn't exist, create it with default values.
+    If old format is detected, migrate to new format.
 
     Returns:
         Dict[str, Any]: The configuration dictionary
@@ -136,22 +119,15 @@ def load_config() -> Dict[str, Any]:
         with open(CONFIG_FILE, "r") as f:
             config = json.load(f)
 
+        # Migrate old config format if detected
+        if "ipfs" in config or "hippius" in config:
+            config = _migrate_old_config(config)
+            save_config(config)
+
         # Ensure all config sections exist (for backward compatibility)
         for section, defaults in DEFAULT_CONFIG.items():
             if section not in config:
                 config[section] = defaults
-
-        # Warn if deprecated IPFS URL is configured (unless local_ipfs is enabled)
-        # Only show warning once per process
-        global _DEPRECATION_WARNING_SHOWN
-        if not _DEPRECATION_WARNING_SHOWN and not config.get("ipfs", {}).get(
-            "local_ipfs", False
-        ):
-            api_url = config.get("ipfs", {}).get("api_url")
-            if api_url and DEPRECATED_IPFS_URL in api_url:
-                print("\nWARNING: Deprecated IPFS node URL detected in config!")
-                print(DEPRECATION_ERROR_MESSAGE)
-                _DEPRECATION_WARNING_SHOWN = True
 
         return config
     except Exception as e:
@@ -216,41 +192,6 @@ def set_config_value(section: str, key: str, value: Any) -> bool:
 
     config[section][key] = value
     return save_config(config)
-
-
-def get_encryption_key() -> Optional[bytes]:
-    """
-    Get the encryption key from the configuration.
-
-    Returns:
-        Optional[bytes]: The encryption key or None if not set
-    """
-    key_str = get_config_value("encryption", "encryption_key")
-    if not key_str:
-        return None
-
-    try:
-        return base64.b64decode(key_str)
-    except Exception as e:
-        print(f"Warning: Could not decode encryption key from config: {e}")
-        return None
-
-
-def set_encryption_key(key: Union[bytes, str]) -> bool:
-    """
-    Set the encryption key in the configuration.
-
-    Args:
-        key: The encryption key (bytes or base64-encoded string)
-
-    Returns:
-        bool: True if save was successful, False otherwise
-    """
-    # Convert bytes to base64 string if needed
-    if isinstance(key, bytes):
-        key = base64.b64encode(key).decode()
-
-    return set_config_value("encryption", "encryption_key", key)
 
 
 def _derive_key_from_password(
@@ -371,14 +312,14 @@ def decrypt_with_password(encrypted_data: str, salt: str, password: str) -> str:
     return decrypted_data.decode("utf-8")
 
 
-def encrypt_hippius_key(
-    hippius_key: str, password: Optional[str] = None, account_name: Optional[str] = None
+def encrypt_api_token(
+    api_token: str, password: Optional[str] = None, account_name: Optional[str] = None
 ) -> bool:
     """
-    Encrypt the HIPPIUS_KEY using password-based encryption.
+    Encrypt the API token using password-based encryption.
 
     Args:
-        hippius_key: The plain text HIPPIUS_KEY to encrypt
+        api_token: The plain text API token to encrypt
         password: Optional password (if None, will prompt)
         account_name: Optional name for the account (if None, uses active account)
 
@@ -387,84 +328,81 @@ def encrypt_hippius_key(
     """
     # Get password from user if not provided
     if password is None:
-        password = getpass.getpass("Enter password to encrypt HIPPIUS_KEY: ")
+        password = getpass.getpass("Enter password to encrypt API token: ")
         password_confirm = getpass.getpass("Confirm password: ")
 
         if password != password_confirm:
             raise ValueError("Passwords do not match")
 
-    # Encrypt the HIPPIUS_KEY
-    encrypted_data, salt = encrypt_with_password(hippius_key, password)
+    # Encrypt the API token
+    encrypted_data, salt = encrypt_with_password(api_token, password)
 
     config = load_config()
 
-    # Use multi-account mode
     # Use active account if no account specified
     name_to_use = account_name
     if name_to_use is None:
-        name_to_use = config["substrate"].get("active_account")
+        name_to_use = config["accounts"].get("active_account")
         if not name_to_use:
-            # If no active account, we need a name
             print("Error: No account name specified and no active account")
             return False
 
     # Ensure accounts structure exists
-    if "accounts" not in config["substrate"]:
-        config["substrate"]["accounts"] = {}
+    if "accounts" not in config["accounts"]:
+        config["accounts"]["accounts"] = {}
 
     # Get or create account data
-    if name_to_use not in config["substrate"]["accounts"]:
-        config["substrate"]["accounts"][name_to_use] = {}
+    if name_to_use not in config["accounts"]["accounts"]:
+        config["accounts"]["accounts"][name_to_use] = {}
 
-    # Store the HIPPIUS_KEY data
-    config["substrate"]["accounts"][name_to_use]["hippius_key"] = encrypted_data
-    config["substrate"]["accounts"][name_to_use]["hippius_key_encoded"] = True
-    config["substrate"]["accounts"][name_to_use]["hippius_key_salt"] = salt
+    # Store the API token data
+    config["accounts"]["accounts"][name_to_use]["api_token"] = encrypted_data
+    config["accounts"]["accounts"][name_to_use]["api_token_encoded"] = True
+    config["accounts"]["accounts"][name_to_use]["api_token_salt"] = salt
 
     # Set as active account if no active account exists
-    if not config["substrate"].get("active_account"):
-        config["substrate"]["active_account"] = name_to_use
+    if not config["accounts"].get("active_account"):
+        config["accounts"]["active_account"] = name_to_use
 
     return save_config(config)
 
 
-def decrypt_hippius_key(
+def decrypt_api_token(
     password: Optional[str] = None, account_name: Optional[str] = None
 ) -> Optional[str]:
     """
-    Decrypt the HIPPIUS_KEY using password-based decryption.
+    Decrypt the API token using password-based decryption.
 
     Args:
         password: Optional password (if None, will prompt; if empty string, will skip password for read-only operations)
         account_name: Optional account name (if None, uses active account)
 
     Returns:
-        Optional[str]: The decrypted HIPPIUS_KEY, or None if decryption failed
+        Optional[str]: The decrypted API token, or None if decryption failed
     """
     config = load_config()
 
-    # Only use the multi-account system
-    name_to_use = account_name or config["substrate"].get("active_account")
+    name_to_use = account_name or config["accounts"].get("active_account")
 
     if not name_to_use:
         print("Error: No account specified and no active account")
         return None
 
-    if name_to_use not in config["substrate"].get("accounts", {}):
+    if name_to_use not in config["accounts"].get("accounts", {}):
         print(f"Error: Account '{name_to_use}' not found")
         return None
 
-    account_data = config["substrate"]["accounts"][name_to_use]
-    is_encoded = account_data.get("hippius_key_encoded", False)
+    account_data = config["accounts"]["accounts"][name_to_use]
+    is_encoded = account_data.get("api_token_encoded", False)
 
     if not is_encoded:
-        return account_data.get("hippius_key")
+        return account_data.get("api_token")
 
-    encrypted_data = account_data.get("hippius_key")
-    salt = account_data.get("hippius_key_salt")
+    encrypted_data = account_data.get("api_token")
+    salt = account_data.get("api_token_salt")
 
     if not encrypted_data or not salt:
-        print("Error: No encrypted HIPPIUS_KEY found or missing salt")
+        print("Error: No encrypted API token found or missing salt")
         return None
 
     # Check if we're in skip-password mode (empty string)
@@ -474,17 +412,17 @@ def decrypt_hippius_key(
 
     # Get password from user if not provided
     if password is None:
-        password = getpass.getpass("Enter password to decrypt HIPPIUS_KEY: \n\n")
+        password = getpass.getpass("Enter password to decrypt API token: \n\n")
 
-    # Decrypt the HIPPIUS_KEY
+    # Decrypt the API token
     return decrypt_with_password(encrypted_data, salt, password)
 
 
-def get_hippius_key(
+def get_api_token(
     password: Optional[str] = None, account_name: Optional[str] = None
 ) -> Optional[str]:
     """
-    Get the HIPPIUS_KEY from configuration, decrypting if necessary.
+    Get the API token from configuration, decrypting if necessary.
 
     Args:
         password: Optional password for decryption (if None and needed, will prompt;
@@ -492,47 +430,46 @@ def get_hippius_key(
         account_name: Optional account name (if None, uses active account)
 
     Returns:
-        Optional[str]: The HIPPIUS_KEY, or None if not available
+        Optional[str]: The API token, or None if not available
     """
     config = load_config()
 
-    # Only use the multi-account system
-    name_to_use = account_name or config["substrate"].get("active_account")
+    name_to_use = account_name or config["accounts"].get("active_account")
 
     if not name_to_use:
         print("Error: No account specified and no active account")
         return None
 
-    if name_to_use not in config["substrate"].get("accounts", {}):
+    if name_to_use not in config["accounts"].get("accounts", {}):
         print(f"Error: Account '{name_to_use}' not found")
         return None
 
-    account_data = config["substrate"]["accounts"][name_to_use]
-    is_encoded = account_data.get("hippius_key_encoded", False)
+    account_data = config["accounts"]["accounts"][name_to_use]
+    is_encoded = account_data.get("api_token_encoded", False)
 
     # If password is an empty string, this indicates we're doing a read-only operation
-    # that doesn't require the HIPPIUS_KEY, so we can return None
+    # that doesn't require the API token, so we can return None
     if password == "" and is_encoded:
         return None
 
     if is_encoded:
-        return decrypt_hippius_key(password, name_to_use)
+        return decrypt_api_token(password, name_to_use)
     else:
-        return account_data.get("hippius_key")
+        return account_data.get("api_token")
 
 
-def set_hippius_key(
-    hippius_key: str,
+def set_api_token(
+    api_token: str,
     encode: bool = False,
     password: Optional[str] = None,
     account_name: Optional[str] = None,
 ) -> bool:
     """
-    Set the HIPPIUS_KEY in configuration, with optional encryption.
+    Set the API token in configuration, with optional encryption.
 
     Args:
-        hippius_key: The HIPPIUS_KEY to store
-        encode: Whether to encrypt the HIPPIUS_KEY (requires password)
+        api_token: The API token to store
+        encode: Whether to encrypt the API token (requires password)
         password: Optional password for encryption (if None and encode=True, will prompt)
         account_name: Optional name for the account (if None, uses active account)
 
@@ -540,36 +477,34 @@ def set_hippius_key(
         bool: True if saving was successful, False otherwise
     """
     if encode:
-        return encrypt_hippius_key(hippius_key, password, account_name)
+        return encrypt_api_token(api_token, password, account_name)
     else:
         config = load_config()
 
-        # Only use multi-account mode
         # Use active account if no account specified
         name_to_use = account_name
         if name_to_use is None:
-            name_to_use = config["substrate"].get("active_account")
+            name_to_use = config["accounts"].get("active_account")
             if not name_to_use:
-                # If no active account, we need a name
                 print("Error: No account name specified and no active account")
                 return False
 
         # Ensure accounts structure exists
-        if "accounts" not in config["substrate"]:
-            config["substrate"]["accounts"] = {}
+        if "accounts" not in config["accounts"]:
+            config["accounts"]["accounts"] = {}
 
         # Get or create account data
-        if name_to_use not in config["substrate"]["accounts"]:
-            config["substrate"]["accounts"][name_to_use] = {}
+        if name_to_use not in config["accounts"]["accounts"]:
+            config["accounts"]["accounts"][name_to_use] = {}
 
-        # Store the HIPPIUS_KEY data
-        config["substrate"]["accounts"][name_to_use]["hippius_key"] = hippius_key
-        config["substrate"]["accounts"][name_to_use]["hippius_key_encoded"] = False
-        config["substrate"]["accounts"][name_to_use]["hippius_key_salt"] = None
+        # Store the API token data
+        config["accounts"]["accounts"][name_to_use]["api_token"] = api_token
+        config["accounts"]["accounts"][name_to_use]["api_token_encoded"] = False
+        config["accounts"]["accounts"][name_to_use]["api_token_salt"] = None
 
         # Set as active account if no active account exists
-        if not config["substrate"].get("active_account"):
-            config["substrate"]["active_account"] = name_to_use
+        if not config["accounts"].get("active_account"):
+            config["accounts"]["active_account"] = name_to_use
 
         return save_config(config)
 
@@ -581,7 +516,7 @@ def get_active_account() -> Optional[str]:
     Returns:
         Optional[str]: The name of the active account, or None if not set
     """
-    return get_config_value("substrate", "active_account")
+    return get_config_value("accounts", "active_account")
 
 
 def set_active_account(account_name: str) -> bool:
@@ -597,12 +532,12 @@ def set_active_account(account_name: str) -> bool:
     config = load_config()
 
     # Check if the account exists
-    if account_name not in config["substrate"].get("accounts", {}):
+    if account_name not in config["accounts"].get("accounts", {}):
         print(f"Error: Account '{account_name}' not found")
         return False
 
     # Set as active account
-    config["substrate"]["active_account"] = account_name
+    config["accounts"]["active_account"] = account_name
     return save_config(config)
 
 
@@ -614,10 +549,10 @@ def list_accounts() -> Dict[str, Dict[str, Any]]:
         Dict[str, Dict[str, Any]]: Dictionary of account names to account data
     """
     config = load_config()
-    accounts = config["substrate"].get("accounts", {})
+    accounts = config["accounts"].get("accounts", {})
 
     # Mark the active account
-    active_account = config["substrate"].get("active_account")
+    active_account = config["accounts"].get("active_account")
     if active_account and active_account in accounts:
         accounts[active_account]["is_active"] = True
 
@@ -637,114 +572,50 @@ def delete_account(account_name: str) -> bool:
     config = load_config()
 
     # Check if the account exists
-    if account_name not in config["substrate"].get("accounts", {}):
+    if account_name not in config["accounts"].get("accounts", {}):
         print(f"Error: Account '{account_name}' not found")
         return False
 
     # Delete the account
-    del config["substrate"]["accounts"][account_name]
+    del config["accounts"]["accounts"][account_name]
 
     # Update active account if needed
-    if config["substrate"].get("active_account") == account_name:
-        if config["substrate"]["accounts"]:
+    if config["accounts"].get("active_account") == account_name:
+        if config["accounts"]["accounts"]:
             # Set the first remaining account as active
-            config["substrate"]["active_account"] = next(
-                iter(config["substrate"]["accounts"])
+            config["accounts"]["active_account"] = next(
+                iter(config["accounts"]["accounts"])
             )
         else:
             # No more accounts
-            config["substrate"]["active_account"] = None
+            config["accounts"]["active_account"] = None
 
     return save_config(config)
 
 
 def get_account_address(account_name: Optional[str] = None) -> Optional[str]:
     """
-    Get the SS58 address for an account.
+    Get the account address for an account.
 
     Args:
-        account_name: Optional name of the account (if None, uses active account or legacy mode)
+        account_name: Optional name of the account (if None, uses active account)
 
     Returns:
-        Optional[str]: The SS58 address, or None if not available
+        Optional[str]: The account address, or None if not available
     """
     config = load_config()
 
-    # Determine if we're using multi-account mode
-    if account_name is not None or config["substrate"].get("active_account"):
-        # Multi-account mode
-        name_to_use = account_name or config["substrate"].get("active_account")
+    name_to_use = account_name or config["accounts"].get("active_account")
 
-        if not name_to_use:
-            print("Error: No account specified and no active account")
-            return None
+    if not name_to_use:
+        print("Error: No account specified and no active account")
+        return None
 
-        if name_to_use not in config["substrate"].get("accounts", {}):
-            print(f"Error: Account '{name_to_use}' not found")
-            return None
+    if name_to_use not in config["accounts"].get("accounts", {}):
+        print(f"Error: Account '{name_to_use}' not found")
+        return None
 
-        return config["substrate"]["accounts"][name_to_use].get("ss58_address")
-    else:
-        # Legacy mode - single account
-        return config["substrate"].get("ss58_address")
-
-
-def initialize_from_env() -> None:
-    """
-    Initialize configuration from environment variables.
-
-    This is useful for maintaining backward compatibility with .env files.
-    """
-    load_dotenv()
-
-    config = load_config()
-    changed = False
-
-    # IPFS settings
-    # Check for new IPFS_NODE_URL first, then fall back to old IPFS_API_URL for backward compatibility
-    node_url = os.getenv("IPFS_NODE_URL") or os.getenv("IPFS_API_URL")
-    if node_url:
-        if os.getenv("IPFS_API_URL") and not os.getenv("IPFS_NODE_URL"):
-            print(
-                "\nWARNING: IPFS_API_URL is deprecated. Please use IPFS_NODE_URL instead."
-            )
-
-        if DEPRECATED_IPFS_URL in node_url:
-            print("\nERROR: Cannot use deprecated IPFS node URL!")
-            print(DEPRECATION_ERROR_MESSAGE)
-        else:
-            config["ipfs"]["api_url"] = node_url
-            changed = True
-
-    # Substrate settings
-    if os.getenv("SUBSTRATE_URL"):
-        config["substrate"]["url"] = os.getenv("SUBSTRATE_URL")
-        changed = True
-
-    if os.getenv("SUBSTRATE_SEED_PHRASE"):
-        # Don't encrypt from env variables by default
-        config["substrate"]["seed_phrase"] = os.getenv("SUBSTRATE_SEED_PHRASE")
-        config["substrate"]["seed_phrase_encoded"] = False
-        config["substrate"]["seed_phrase_salt"] = None
-        changed = True
-
-    if os.getenv("SUBSTRATE_DEFAULT_MINERS"):
-        miners = os.getenv("SUBSTRATE_DEFAULT_MINERS").split(",")
-        config["substrate"]["default_miners"] = [m.strip() for m in miners if m.strip()]
-        changed = True
-
-    # Encryption settings
-    if os.getenv("HIPPIUS_ENCRYPTION_KEY"):
-        config["encryption"]["encryption_key"] = os.getenv("HIPPIUS_ENCRYPTION_KEY")
-        changed = True
-
-    if os.getenv("HIPPIUS_ENCRYPT_BY_DEFAULT"):
-        value = os.getenv("HIPPIUS_ENCRYPT_BY_DEFAULT").lower()
-        config["encryption"]["encrypt_by_default"] = value in ("true", "1", "yes")
-        changed = True
-
-    if changed:
-        save_config(config)
+    return config["accounts"]["accounts"][name_to_use].get("account_address")
 
 
 def get_all_config() -> Dict[str, Any]:
@@ -798,31 +669,32 @@ def set_seed_phrase(
         except Exception as e:
             print(f"Warning: Could not derive SS58 address: {e}")
 
-        # Only use multi-account mode
         # Use active account if no account specified
         name_to_use = account_name
         if name_to_use is None:
-            name_to_use = config["substrate"].get("active_account")
+            name_to_use = config["accounts"].get("active_account")
             if not name_to_use:
-                # If no active account, we need a name
                 print("Error: No account name specified and no active account")
                 return False
 
         # Ensure accounts structure exists
-        if "accounts" not in config["substrate"]:
-            config["substrate"]["accounts"] = {}
+        if "accounts" not in config["accounts"]:
+            config["accounts"]["accounts"] = {}
+
+        # Get or create account data
+        if name_to_use not in config["accounts"]["accounts"]:
+            config["accounts"]["accounts"][name_to_use] = {}
 
         # Store the account data
-        config["substrate"]["accounts"][name_to_use] = {
-            "seed_phrase": seed_phrase,
-            "seed_phrase_encoded": False,
-            "seed_phrase_salt": None,
-            "ss58_address": ss58_address,
-        }
+        account = config["accounts"]["accounts"][name_to_use]
+        account["seed_phrase"] = seed_phrase
+        account["seed_phrase_encoded"] = False
+        account["seed_phrase_salt"] = None
+        account["account_address"] = ss58_address
 
         # Set as active account if no active account exists
-        if not config["substrate"].get("active_account"):
-            config["substrate"]["active_account"] = name_to_use
+        if not config["accounts"].get("active_account"):
+            config["accounts"]["active_account"] = name_to_use
 
         return save_config(config)
 
@@ -863,31 +735,32 @@ def encrypt_seed_phrase(
 
         config = load_config()
 
-        # Only use multi-account mode
         # Use active account if no account specified
         name_to_use = account_name
         if name_to_use is None:
-            name_to_use = config["substrate"].get("active_account")
+            name_to_use = config["accounts"].get("active_account")
             if not name_to_use:
-                # If no active account, we need a name
                 print("Error: No account name specified and no active account")
                 return False
 
         # Ensure accounts structure exists
-        if "accounts" not in config["substrate"]:
-            config["substrate"]["accounts"] = {}
+        if "accounts" not in config["accounts"]:
+            config["accounts"]["accounts"] = {}
+
+        # Get or create account data
+        if name_to_use not in config["accounts"]["accounts"]:
+            config["accounts"]["accounts"][name_to_use] = {}
 
         # Store the account data
-        config["substrate"]["accounts"][name_to_use] = {
-            "seed_phrase": encrypted_data,
-            "seed_phrase_encoded": True,
-            "seed_phrase_salt": salt,
-            "ss58_address": ss58_address,
-        }
+        account = config["accounts"]["accounts"][name_to_use]
+        account["seed_phrase"] = encrypted_data
+        account["seed_phrase_encoded"] = True
+        account["seed_phrase_salt"] = salt
+        account["account_address"] = ss58_address
 
         # Set as active account if no active account exists
-        if not config["substrate"].get("active_account"):
-            config["substrate"]["active_account"] = name_to_use
+        if not config["accounts"].get("active_account"):
+            config["accounts"]["active_account"] = name_to_use
 
         return save_config(config)
 
@@ -911,18 +784,17 @@ def decrypt_seed_phrase(
     """
     config = load_config()
 
-    # Only use the multi-account system
-    name_to_use = account_name or config["substrate"].get("active_account")
+    name_to_use = account_name or config["accounts"].get("active_account")
 
     if not name_to_use:
         print("Error: No account specified and no active account")
         return None
 
-    if name_to_use not in config["substrate"].get("accounts", {}):
+    if name_to_use not in config["accounts"].get("accounts", {}):
         print(f"Error: Account '{name_to_use}' not found")
         return None
 
-    account_data = config["substrate"]["accounts"][name_to_use]
+    account_data = config["accounts"]["accounts"][name_to_use]
     is_encoded = account_data.get("seed_phrase_encoded", False)
 
     if not is_encoded:
@@ -965,18 +837,17 @@ def get_seed_phrase(
     """
     config = load_config()
 
-    # Only use the multi-account system
-    name_to_use = account_name or config["substrate"].get("active_account")
+    name_to_use = account_name or config["accounts"].get("active_account")
 
     if not name_to_use:
         print("Error: No account specified and no active account")
         return None
 
-    if name_to_use not in config["substrate"].get("accounts", {}):
+    if name_to_use not in config["accounts"].get("accounts", {}):
         print(f"Error: Account '{name_to_use}' not found")
         return None
 
-    account_data = config["substrate"]["accounts"][name_to_use]
+    account_data = config["accounts"]["accounts"][name_to_use]
     is_encoded = account_data.get("seed_phrase_encoded", False)
 
     # If password is an empty string, this indicates we're doing a read-only operation

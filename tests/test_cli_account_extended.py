@@ -19,16 +19,17 @@ from hippius_sdk.cli_handlers import (
 
 
 class TestAccountInfo:
-    @patch("hippius_sdk.cli_handlers.get_active_account", return_value="myaccount")
+    @patch("hippius_sdk.cli_handlers_account.get_active_account", return_value="myaccount")
     @patch(
-        "hippius_sdk.cli_handlers.load_config",
+        "hippius_sdk.cli_handlers_account.load_config",
         return_value={
-            "substrate": {
+            "accounts": {
                 "active_account": "myaccount",
                 "accounts": {
                     "myaccount": {
-                        "hippius_key": "abc123xyz789",
-                        "hippius_key_encoded": False,
+                        "api_token": "abc123xyz789",
+                        "api_token_encoded": False,
+                        "account_address": "5TestAddress",
                     }
                 },
             }
@@ -39,24 +40,25 @@ class TestAccountInfo:
         assert result == 0
 
     @patch(
-        "hippius_sdk.cli_handlers.load_config",
-        return_value={"substrate": {}},
+        "hippius_sdk.cli_handlers_account.load_config",
+        return_value={"accounts": {}},
     )
     def test_account_info_no_account(self, mock_load):
         """Returns 1 when no active account and none specified."""
         result = handle_account_info()
         assert result == 1
 
-    @patch("hippius_sdk.cli_handlers.get_active_account", return_value="myaccount")
+    @patch("hippius_sdk.cli_handlers_account.get_active_account", return_value="myaccount")
     @patch(
-        "hippius_sdk.cli_handlers.load_config",
+        "hippius_sdk.cli_handlers_account.load_config",
         return_value={
-            "substrate": {
+            "accounts": {
                 "active_account": "myaccount",
                 "accounts": {
                     "myaccount": {
-                        "hippius_key": "abc123xyz789",
-                        "hippius_key_encoded": False,
+                        "api_token": "abc123xyz789",
+                        "api_token_encoded": False,
+                        "account_address": "5TestAddress",
                     }
                 },
             }
@@ -68,9 +70,9 @@ class TestAccountInfo:
         assert result == 0
 
     @patch(
-        "hippius_sdk.cli_handlers.load_config",
+        "hippius_sdk.cli_handlers_account.load_config",
         return_value={
-            "substrate": {
+            "accounts": {
                 "active_account": "myaccount",
                 "accounts": {},
             }
@@ -86,10 +88,10 @@ class TestAccountInfo:
 
 
 class TestAccountSwitch:
-    @patch("hippius_sdk.cli_handlers.get_account_address", return_value="5SomeAddress")
-    @patch("hippius_sdk.cli_handlers.set_active_account")
+    @patch("hippius_sdk.cli_handlers_account.get_account_address", return_value="5SomeAddress")
+    @patch("hippius_sdk.cli_handlers_account.set_active_account")
     @patch(
-        "hippius_sdk.cli_handlers.list_accounts",
+        "hippius_sdk.cli_handlers_account.list_accounts",
         return_value={"acct1": {}, "acct2": {}},
     )
     def test_account_switch_success(self, mock_list, mock_set, mock_addr):
@@ -98,7 +100,7 @@ class TestAccountSwitch:
         mock_set.assert_called_once_with("acct1")
 
     @patch(
-        "hippius_sdk.cli_handlers.list_accounts",
+        "hippius_sdk.cli_handlers_account.list_accounts",
         return_value={"acct1": {}},
     )
     def test_account_switch_not_found(self, mock_list):
@@ -110,11 +112,11 @@ class TestAccountSwitch:
 
 
 class TestAccountDelete:
-    @patch("hippius_sdk.cli_handlers.get_active_account", return_value="other")
-    @patch("hippius_sdk.cli_handlers.delete_account")
-    @patch("hippius_sdk.cli_handlers.click.confirm", return_value=True)
+    @patch("hippius_sdk.cli_handlers_account.get_active_account", return_value="other")
+    @patch("hippius_sdk.cli_handlers_account.delete_account")
+    @patch("hippius_sdk.cli_handlers_account.click.confirm", return_value=True)
     @patch(
-        "hippius_sdk.cli_handlers.list_accounts",
+        "hippius_sdk.cli_handlers_account.list_accounts",
         return_value={"myaccount": {}, "other": {}},
     )
     def test_account_delete_success(
@@ -126,16 +128,16 @@ class TestAccountDelete:
         mock_delete.assert_called_once_with("myaccount")
 
     @patch(
-        "hippius_sdk.cli_handlers.list_accounts",
+        "hippius_sdk.cli_handlers_account.list_accounts",
         return_value={"acct1": {}},
     )
     def test_account_delete_not_found(self, mock_list):
         result = handle_account_delete("nonexistent")
         assert result == 1
 
-    @patch("hippius_sdk.cli_handlers.click.confirm", return_value=False)
+    @patch("hippius_sdk.cli_handlers_account.click.confirm", return_value=False)
     @patch(
-        "hippius_sdk.cli_handlers.list_accounts",
+        "hippius_sdk.cli_handlers_account.list_accounts",
         return_value={"myaccount": {}},
     )
     def test_account_delete_cancelled(self, mock_list, mock_confirm):
@@ -148,29 +150,43 @@ class TestAccountDelete:
 
 
 class TestAccountLogin:
-    @patch("hippius_sdk.cli_handlers.save_config")
+    @patch("hippius_sdk.cli_handlers_account.save_config")
     @patch(
-        "hippius_sdk.cli_handlers.load_config",
-        return_value={"substrate": {"accounts": {}}},
+        "hippius_sdk.cli_handlers_account.load_config",
+        return_value={"accounts": {"active_account": None, "accounts": {}}},
     )
-    @patch("hippius_sdk.cli_handlers.list_accounts", return_value={})
-    @patch("hippius_sdk.cli_handlers.click.confirm", return_value=False)
+    @patch("hippius_sdk.cli_handlers_account.list_accounts", return_value={})
+    @patch("hippius_sdk.cli_handlers_account.click.confirm", return_value=False)
+    @patch("hippius_sdk.cli_handlers_account.HippiusApiClient")
     @patch(
-        "hippius_sdk.cli_handlers.click.prompt",
-        side_effect=["testaccount", "my_hippius_key_123"],
+        "hippius_sdk.cli_handlers_account.click.prompt",
+        side_effect=["testaccount", "my_api_token_123"],
     )
-    @patch("hippius_sdk.cli_handlers.draw_logo")
+    @patch("hippius_sdk.cli_handlers_account.draw_logo")
     def test_account_login_success(
-        self, mock_logo, mock_prompt, mock_confirm, mock_list, mock_load, mock_save
+        self, mock_logo, mock_prompt, mock_api_class, mock_confirm, mock_list, mock_load, mock_save
     ):
+        # Set up mock API client for token validation
+        mock_api_instance = MagicMock()
+        mock_token_result = MagicMock()
+        mock_token_result.valid = True
+        mock_token_result.account_address = "5TestAddress123"
+        mock_api_instance.validate_token = AsyncMock(return_value=mock_token_result)
+        mock_api_instance.close = AsyncMock()
+        mock_api_class.return_value = mock_api_instance
+
         result = handle_account_login()
         assert result == 0
         mock_save.assert_called_once()
         saved_config = mock_save.call_args[0][0]
-        assert "testaccount" in saved_config["substrate"]["accounts"]
+        assert "testaccount" in saved_config["accounts"]["accounts"]
         assert (
-            saved_config["substrate"]["accounts"]["testaccount"]["hippius_key"]
-            == "my_hippius_key_123"
+            saved_config["accounts"]["accounts"]["testaccount"]["api_token"]
+            == "my_api_token_123"
+        )
+        assert (
+            saved_config["accounts"]["accounts"]["testaccount"]["account_address"]
+            == "5TestAddress123"
         )
 
 
@@ -179,26 +195,35 @@ class TestAccountLogin:
 
 class TestAccountBalance:
     @pytest.mark.asyncio
-    async def test_account_balance_success(self):
+    @patch("hippius_sdk.cli_handlers_account.HippiusApiClient")
+    @patch("hippius_sdk.cli_handlers_account.get_config_value", return_value="https://api.hippius.com/api")
+    @patch("hippius_sdk.config.get_api_token", return_value="test_token")
+    async def test_account_balance_success(self, mock_get_token, mock_get_config, mock_api_class):
         """Returns 0 with credit balance."""
-        client = MagicMock()
-        client.api_client = MagicMock()
-        client.api_client.get_account_balance = AsyncMock(
+        mock_api_instance = MagicMock()
+        mock_api_instance.get_account_balance = AsyncMock(
             return_value={"balance": 42.50, "account": "test@example.com"}
         )
+        mock_api_instance.close = AsyncMock()
+        mock_api_class.return_value = mock_api_instance
 
+        client = MagicMock()
         result = await handle_account_balance(client)
         assert result == 0
-        client.api_client.get_account_balance.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_account_balance_string_balance(self):
+    @patch("hippius_sdk.cli_handlers_account.HippiusApiClient")
+    @patch("hippius_sdk.cli_handlers_account.get_config_value", return_value="https://api.hippius.com/api")
+    @patch("hippius_sdk.config.get_api_token", return_value="test_token")
+    async def test_account_balance_string_balance(self, mock_get_token, mock_get_config, mock_api_class):
         """Balance as string is handled."""
-        client = MagicMock()
-        client.api_client = MagicMock()
-        client.api_client.get_account_balance = AsyncMock(
+        mock_api_instance = MagicMock()
+        mock_api_instance.get_account_balance = AsyncMock(
             return_value={"balance": "100.00"}
         )
+        mock_api_instance.close = AsyncMock()
+        mock_api_class.return_value = mock_api_instance
 
+        client = MagicMock()
         result = await handle_account_balance(client)
         assert result == 0

@@ -26,7 +26,6 @@ from hippius_sdk.errors import (
 )
 from hippius_sdk.utils import (
     format_size,
-    hex_to_ipfs_cid,
     initialize_substrate_connection,
 )
 
@@ -1155,13 +1154,16 @@ class SubstrateClient:
         """
         Convert a hex-encoded IPFS CID to a regular IPFS CID.
 
+        Stub: IPFS conversion was removed during Arion migration.
+        Returns the hex string as-is for backward compatibility.
+
         Args:
             hex_string: Hex string representation of an IPFS CID
 
         Returns:
-            str: Regular IPFS CID
+            str: The hex string (passthrough)
         """
-        return hex_to_ipfs_cid(hex_string)
+        return hex_string
 
     async def check_storage_request_exists(
         self, cid: str, seed_phrase: Optional[str] = None

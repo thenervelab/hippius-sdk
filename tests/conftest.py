@@ -7,21 +7,17 @@ including API client setup, test data generation, and cleanup utilities.
 
 import asyncio
 import os
-import subprocess
 import tempfile
-import time
-from typing import AsyncGenerator, Dict, Optional
+from typing import AsyncGenerator, Dict
 from unittest.mock import AsyncMock, Mock
 
-import nacl.secret
-import nacl.utils
 import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
 
 from hippius_sdk.api_client import HippiusApiClient
-from hippius_sdk.client import HippiusClient
-from hippius_sdk.config import get_hippius_key
+from hippius_sdk.arion import ArionClient
+from tests.mock_arion import MockArionClient
 
 # Load environment variables from .env first, then .env.test (which can override)
 load_dotenv(".env")
@@ -37,89 +33,25 @@ def event_loop():
 
 
 @pytest.fixture(scope="session")
-def docker_ipfs_node():
+def test_api_token() -> str:
     """
-    Start a Docker IPFS node for testing and tear it down after tests complete.
-
-    Only runs when HIPPIUS_E2E=1 is set. E2E test files that need Docker
-    request this fixture explicitly.
-
-    This fixture:
-    - Starts IPFS Kubo container via docker-compose.test.yml
-    - Waits for the node to be healthy (up to 30s)
-    - Yields the IPFS API URL
-    - Tears down the container after all tests
-
-    Yields:
-        str: IPFS API URL (http://localhost:5001)
-    """
-    if not os.getenv("HIPPIUS_E2E"):
-        pytest.skip("Set HIPPIUS_E2E=1 to run Docker-dependent tests")
-    compose_file = "docker-compose.test.yml"
-    ipfs_api_url = "http://localhost:5001"
-
-    # Start the IPFS node
-    print("\n🐳 Starting Docker IPFS node for tests...")
-    subprocess.run(
-        ["docker", "compose", "-f", compose_file, "up", "-d"],
-        check=True,
-        capture_output=True,
-    )
-
-    # Wait for IPFS to be healthy (max 30 seconds)
-    max_wait = 30
-    wait_interval = 1
-    elapsed = 0
-
-    while elapsed < max_wait:
-        result = subprocess.run(
-            ["docker", "compose", "-f", compose_file, "ps", "--format", "json"],
-            capture_output=True,
-            text=True,
-        )
-
-        if result.returncode == 0 and '"Health":"healthy"' in result.stdout:
-            print(f"✅ IPFS node is healthy ({ipfs_api_url})")
-            break
-
-        time.sleep(wait_interval)
-        elapsed += wait_interval
-    else:
-        subprocess.run(["docker", "compose", "-f", compose_file, "down", "-v"])
-        raise RuntimeError(f"IPFS node failed to become healthy within {max_wait}s")
-
-    yield ipfs_api_url
-
-    # Teardown: stop and remove the container
-    print("\n🧹 Stopping Docker IPFS node...")
-    subprocess.run(
-        ["docker", "compose", "-f", compose_file, "down", "-v"],
-        check=True,
-        capture_output=True,
-    )
-    print("✅ Docker IPFS node stopped")
-
-
-@pytest.fixture(scope="session")
-def test_hippius_key() -> str:
-    """
-    Get HIPPIUS_KEY from environment (.env.test).
+    Get API token from environment (.env.test).
 
     Only runs when HIPPIUS_E2E=1 is set. Unit tests don't need this.
 
     Returns:
-        The test HIPPIUS_KEY
+        The test API token
 
     Raises:
         RuntimeError: If HIPPIUS_KEY is not set
     """
     if not os.getenv("HIPPIUS_E2E"):
-        pytest.skip("Set HIPPIUS_E2E=1 to run tests requiring HIPPIUS_KEY")
+        pytest.skip("Set HIPPIUS_E2E=1 to run tests requiring API token")
     key = os.getenv("HIPPIUS_KEY")
     if not key:
         raise RuntimeError(
             "HIPPIUS_KEY not set in .env.test! "
-            "E2E tests require a valid HIPPIUS_KEY. "
+            "E2E tests require a valid API token. "
             "Set it in .env.test or as an environment variable."
         )
     return key
@@ -138,13 +70,13 @@ def test_api_url() -> str:
 
 @pytest_asyncio.fixture
 async def api_client(
-    test_hippius_key: str, test_api_url: str
+    test_api_token: str, test_api_url: str
 ) -> AsyncGenerator[HippiusApiClient, None]:
     """
     Create an authenticated API client for testing.
 
     Args:
-        test_hippius_key: Test HIPPIUS_KEY from environment
+        test_api_token: Test API token from environment
         test_api_url: API URL for testing
 
     Yields:
@@ -152,7 +84,7 @@ async def api_client(
     """
     client = HippiusApiClient(
         api_url=test_api_url,
-        hippius_key=test_hippius_key,
+        api_token=test_api_token,
     )
 
     yield client
@@ -163,34 +95,23 @@ async def api_client(
 
 @pytest_asyncio.fixture
 async def hippius_client(
-    test_hippius_key: str, test_api_url: str, docker_ipfs_node: str
-) -> AsyncGenerator[HippiusClient, None]:
+    test_api_token: str,
+) -> AsyncGenerator[ArionClient, None]:
     """
-    Create a full HippiusClient for integration testing.
+    Create an ArionClient for integration testing.
 
     Args:
-        test_hippius_key: Test HIPPIUS_KEY from environment
-        test_api_url: API URL for testing
-        docker_ipfs_node: Docker IPFS API URL from fixture
+        test_api_token: Test API token from environment
 
     Yields:
-        Configured HippiusClient instance
+        Configured ArionClient instance
     """
-    # Generate a test encryption key (32 bytes for NaCl SecretBox)
-    test_encryption_key = nacl.utils.random(nacl.secret.SecretBox.KEY_SIZE)
-
-    client = HippiusClient(
-        hippius_key=test_hippius_key,
-        api_url=test_api_url,
-        ipfs_api_url=docker_ipfs_node,
-        encryption_key=test_encryption_key,
+    client = ArionClient(
+        api_token=test_api_token,
+        account_address="5TestAddress",
     )
 
     yield client
-
-    # Cleanup
-    if hasattr(client.api_client, "close"):
-        await client.api_client.close()
 
 
 @pytest.fixture
@@ -215,40 +136,6 @@ def temp_test_file():
 
 
 @pytest.fixture
-def temp_test_dir():
-    """
-    Create a temporary directory with test files.
-
-    Yields:
-        Path to temporary directory
-    """
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Create some test files
-        for i in range(3):
-            file_path = os.path.join(temp_dir, f"test_file_{i}.txt")
-            with open(file_path, "w") as f:
-                f.write(f"Test file {i} content\n" * 50)
-
-        yield temp_dir
-
-
-@pytest.fixture
-def sample_cid() -> str:
-    """
-    Sample CID for testing.
-
-    Uses a real, publicly available CID that exists on IPFS.
-    This is the "Hello World" file commonly used for IPFS testing.
-
-    Returns:
-        Sample CID string
-    """
-    # This is a real CID for a simple "Hello World" text file
-    # It's widely available on the IPFS network
-    return "QmZ4tDuvesekSs4qM5ZBKpXiZGun7S2CYtEZRB3DYXkjGx"
-
-
-@pytest.fixture
 def mock_api_response() -> Dict:
     """
     Mock API response data for unit tests.
@@ -258,23 +145,11 @@ def mock_api_response() -> Dict:
     """
     return {
         "credits": {"balance": 100.50, "currency": "USD"},
-        "file": {
-            "id": "test-file-id-123",
-            "cid": "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-            "name": "test_file.txt",
-            "size": 1024,
-            "created_at": "2025-01-01T00:00:00Z",
-        },
         "upload": {
-            "id": "test-upload-id-456",
-            "status": "completed",
-            "cid": "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-        },
-        "storage_request": {
-            "id": "test-request-id-789",
-            "type": "Pin",
-            "status": "pending",
-            "cid": "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+            "upload_id": "test-upload-id-456",
+            "file_id": "abc123def456",
+            "timestamp": 1234567890,
+            "size_bytes": 1024,
         },
     }
 
@@ -296,16 +171,23 @@ def mock_httpx_client():
     return mock_client
 
 
-# Marker for tests that require IPFS (now always available via Docker)
-pytest.mark.requires_ipfs = pytest.mark.usefixtures("docker_ipfs_node")
+@pytest.fixture
+def mock_arion():
+    """
+    Create a MockArionClient for deterministic handler tests.
+
+    Returns:
+        MockArionClient instance with sensible defaults
+    """
+    return MockArionClient(
+        api_token="test-token",
+        account_address="5TestAddress",
+    )
 
 
 def pytest_configure(config):
     """Configure custom pytest markers."""
     config.addinivalue_line(
         "markers", "e2e: mark test as end-to-end test requiring API access"
-    )
-    config.addinivalue_line(
-        "markers", "requires_ipfs: mark test as requiring local IPFS node"
     )
     config.addinivalue_line("markers", "slow: mark test as slow running")

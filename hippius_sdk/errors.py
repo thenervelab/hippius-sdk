@@ -15,14 +15,14 @@ class HippiusSubstrateError(HippiusError):
     pass
 
 
-class HippiusIPFSError(HippiusError):
-    """Base exception for IPFS-related errors."""
+class HippiusAPIError(HippiusError):
+    """Base exception for API-related errors."""
 
     pass
 
 
-class HippiusAPIError(HippiusError):
-    """Base exception for API-related errors."""
+class HippiusArionError(HippiusError):
+    """Base exception for Arion storage-related errors."""
 
     pass
 
@@ -33,57 +33,7 @@ class HippiusAuthenticationError(HippiusAPIError):
     pass
 
 
-# Specific blockchain errors
-class HippiusNotFoundError(HippiusSubstrateError):
-    """Raised when a resource is not found on the blockchain."""
-
-    pass
-
-
-class HippiusAlreadyDeletedError(HippiusSubstrateError):
-    """Raised when trying to delete a file that's already deleted from the blockchain."""
-
-    pass
-
-
-class HippiusSubstrateConnectionError(HippiusSubstrateError):
-    """Raised when there's an issue connecting to the Substrate node."""
-
-    pass
-
-
-class HippiusSubstrateAuthError(HippiusSubstrateError):
-    """Raised when there's an authentication issue with the Substrate client."""
-
-    pass
-
-
 class HippiusFailedSubstrateDelete(HippiusSubstrateError):
     """Raised when deletion from blockchain storage fails."""
-
-    pass
-
-
-# IPFS-specific errors
-class HippiusIPFSConnectionError(HippiusIPFSError):
-    """Raised when there's an issue connecting to IPFS."""
-
-    pass
-
-
-class HippiusFailedIPFSUnpin(HippiusIPFSError):
-    """Raised when unpinning from IPFS fails."""
-
-    pass
-
-
-class HippiusMetadataError(HippiusIPFSError):
-    """Raised when there's an issue with the metadata file."""
-
-    pass
-
-
-class HippiusInvalidCIDError(HippiusIPFSError):
-    """Raised when an invalid CID is provided."""
 
     pass

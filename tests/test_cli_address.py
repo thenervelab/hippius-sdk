@@ -14,9 +14,9 @@ from hippius_sdk.cli_handlers import (
 
 
 class TestDefaultAddressSet:
-    @patch("hippius_sdk.cli_handlers.save_config")
+    @patch("hippius_sdk.cli_handlers_address.save_config")
     @patch(
-        "hippius_sdk.cli_handlers.load_config",
+        "hippius_sdk.cli_handlers_address.load_config",
         return_value={"substrate": {}},
     )
     def test_address_set_valid(self, mock_load, mock_save):
@@ -32,15 +32,15 @@ class TestDefaultAddressSet:
             == "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
         )
 
-    @patch("builtins.input", return_value="n")
-    def test_address_set_invalid_declined(self, mock_input):
+    @patch("hippius_sdk.cli_handlers_address.click.confirm", return_value=False)
+    def test_address_set_invalid_declined(self, mock_confirm):
         """Non-'5' address, user declines -> returns 1."""
         result = handle_default_address_set("1InvalidAddress")
         assert result == 1
 
-    @patch("hippius_sdk.cli_handlers.save_config")
+    @patch("hippius_sdk.cli_handlers_address.save_config")
     @patch(
-        "hippius_sdk.cli_handlers.load_config",
+        "hippius_sdk.cli_handlers_address.load_config",
         return_value={},
     )
     def test_address_set_creates_substrate_section(self, mock_load, mock_save):
@@ -54,7 +54,7 @@ class TestDefaultAddressSet:
 
 class TestDefaultAddressGet:
     @patch(
-        "hippius_sdk.cli_handlers.get_default_address",
+        "hippius_sdk.cli_handlers_address.get_default_address",
         return_value="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
     )
     def test_address_get_exists(self, mock_get):
@@ -62,7 +62,7 @@ class TestDefaultAddressGet:
         result = handle_default_address_get()
         assert result == 0
 
-    @patch("hippius_sdk.cli_handlers.get_default_address", return_value=None)
+    @patch("hippius_sdk.cli_handlers_address.get_default_address", return_value=None)
     def test_address_get_none(self, mock_get):
         """Returns 0 and shows warning when no address set."""
         result = handle_default_address_get()
@@ -70,9 +70,9 @@ class TestDefaultAddressGet:
 
 
 class TestDefaultAddressClear:
-    @patch("hippius_sdk.cli_handlers.save_config")
+    @patch("hippius_sdk.cli_handlers_address.save_config")
     @patch(
-        "hippius_sdk.cli_handlers.load_config",
+        "hippius_sdk.cli_handlers_address.load_config",
         return_value={"substrate": {"default_address": "5SomeAddress"}},
     )
     def test_address_clear_exists(self, mock_load, mock_save):
@@ -84,7 +84,7 @@ class TestDefaultAddressClear:
         assert "default_address" not in saved_config["substrate"]
 
     @patch(
-        "hippius_sdk.cli_handlers.load_config",
+        "hippius_sdk.cli_handlers_address.load_config",
         return_value={"substrate": {}},
     )
     def test_address_clear_not_set(self, mock_load):
