@@ -82,7 +82,9 @@ class MockArionClient:
         output_path: str,
         chunk_size: int = 65536,
     ) -> Dict[str, Any]:
-        self._record("download_file", (file_id, output_path), {"chunk_size": chunk_size})
+        self._record(
+            "download_file", (file_id, output_path), {"chunk_size": chunk_size}
+        )
         # Write real bytes to disk so callers can verify content
         with open(output_path, "wb") as f:
             f.write(self.download_bytes_content)

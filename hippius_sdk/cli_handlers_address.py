@@ -61,9 +61,7 @@ def handle_default_address_get() -> int:
         log(f"Default address: [bold cyan]{address}[/bold cyan]")
     else:
         warning("No default address set")
-        log(
-            "You can set one with: [bold]hippius address set-default <address>[/bold]"
-        )
+        log("You can set one with: [bold]hippius address set-default <address>[/bold]")
 
     return 0
 

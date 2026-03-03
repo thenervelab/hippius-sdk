@@ -31,10 +31,15 @@ async def test_files_stub(mock_client):
 
 
 @pytest.mark.asyncio
-@patch("hippius_sdk.cli_handlers_file.get_config_value", return_value="https://api.hippius.com/api")
+@patch(
+    "hippius_sdk.cli_handlers_file.get_config_value",
+    return_value="https://api.hippius.com/api",
+)
 @patch("hippius_sdk.config.get_api_token", return_value="test_token")
 @patch("hippius_sdk.cli_handlers_file.HippiusApiClient")
-async def test_credits_success(mock_api_class, mock_get_token, mock_get_config, mock_client):
+async def test_credits_success(
+    mock_api_class, mock_get_token, mock_get_config, mock_client
+):
     """handle_credits returns 0 and formats balance."""
     mock_api_instance = MagicMock()
     mock_api_instance.get_account_balance = AsyncMock(return_value={"balance": 42.50})
@@ -47,10 +52,15 @@ async def test_credits_success(mock_api_class, mock_get_token, mock_get_config, 
 
 
 @pytest.mark.asyncio
-@patch("hippius_sdk.cli_handlers_file.get_config_value", return_value="https://api.hippius.com/api")
+@patch(
+    "hippius_sdk.cli_handlers_file.get_config_value",
+    return_value="https://api.hippius.com/api",
+)
 @patch("hippius_sdk.config.get_api_token", return_value="test_token")
 @patch("hippius_sdk.cli_handlers_file.HippiusApiClient")
-async def test_credits_string_balance(mock_api_class, mock_get_token, mock_get_config, mock_client):
+async def test_credits_string_balance(
+    mock_api_class, mock_get_token, mock_get_config, mock_client
+):
     """Balance as string is handled without error."""
     mock_api_instance = MagicMock()
     mock_api_instance.get_account_balance = AsyncMock(return_value={"balance": "99.99"})

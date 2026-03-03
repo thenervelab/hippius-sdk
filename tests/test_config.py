@@ -24,8 +24,9 @@ from hippius_sdk.config import (
 def temp_config_dir(tmp_path):
     """Redirect config to a temp directory."""
     config_file = tmp_path / "config.json"
-    with patch("hippius_sdk.config.CONFIG_DIR", str(tmp_path)), \
-         patch("hippius_sdk.config.CONFIG_FILE", str(config_file)):
+    with patch("hippius_sdk.config.CONFIG_DIR", str(tmp_path)), patch(
+        "hippius_sdk.config.CONFIG_FILE", str(config_file)
+    ):
         yield tmp_path, config_file
 
 

@@ -19,7 +19,9 @@ from hippius_sdk.cli_handlers import (
 
 
 class TestAccountInfo:
-    @patch("hippius_sdk.cli_handlers_account.get_active_account", return_value="myaccount")
+    @patch(
+        "hippius_sdk.cli_handlers_account.get_active_account", return_value="myaccount"
+    )
     @patch(
         "hippius_sdk.cli_handlers_account.load_config",
         return_value={
@@ -48,7 +50,9 @@ class TestAccountInfo:
         result = handle_account_info()
         assert result == 1
 
-    @patch("hippius_sdk.cli_handlers_account.get_active_account", return_value="myaccount")
+    @patch(
+        "hippius_sdk.cli_handlers_account.get_active_account", return_value="myaccount"
+    )
     @patch(
         "hippius_sdk.cli_handlers_account.load_config",
         return_value={
@@ -88,7 +92,10 @@ class TestAccountInfo:
 
 
 class TestAccountSwitch:
-    @patch("hippius_sdk.cli_handlers_account.get_account_address", return_value="5SomeAddress")
+    @patch(
+        "hippius_sdk.cli_handlers_account.get_account_address",
+        return_value="5SomeAddress",
+    )
     @patch("hippius_sdk.cli_handlers_account.set_active_account")
     @patch(
         "hippius_sdk.cli_handlers_account.list_accounts",
@@ -164,7 +171,14 @@ class TestAccountLogin:
     )
     @patch("hippius_sdk.cli_handlers_account.draw_logo")
     def test_account_login_success(
-        self, mock_logo, mock_prompt, mock_api_class, mock_confirm, mock_list, mock_load, mock_save
+        self,
+        mock_logo,
+        mock_prompt,
+        mock_api_class,
+        mock_confirm,
+        mock_list,
+        mock_load,
+        mock_save,
     ):
         # Set up mock API client for token validation
         mock_api_instance = MagicMock()
@@ -196,9 +210,14 @@ class TestAccountLogin:
 class TestAccountBalance:
     @pytest.mark.asyncio
     @patch("hippius_sdk.cli_handlers_account.HippiusApiClient")
-    @patch("hippius_sdk.cli_handlers_account.get_config_value", return_value="https://api.hippius.com/api")
+    @patch(
+        "hippius_sdk.cli_handlers_account.get_config_value",
+        return_value="https://api.hippius.com/api",
+    )
     @patch("hippius_sdk.config.get_api_token", return_value="test_token")
-    async def test_account_balance_success(self, mock_get_token, mock_get_config, mock_api_class):
+    async def test_account_balance_success(
+        self, mock_get_token, mock_get_config, mock_api_class
+    ):
         """Returns 0 with credit balance."""
         mock_api_instance = MagicMock()
         mock_api_instance.get_account_balance = AsyncMock(
@@ -213,9 +232,14 @@ class TestAccountBalance:
 
     @pytest.mark.asyncio
     @patch("hippius_sdk.cli_handlers_account.HippiusApiClient")
-    @patch("hippius_sdk.cli_handlers_account.get_config_value", return_value="https://api.hippius.com/api")
+    @patch(
+        "hippius_sdk.cli_handlers_account.get_config_value",
+        return_value="https://api.hippius.com/api",
+    )
     @patch("hippius_sdk.config.get_api_token", return_value="test_token")
-    async def test_account_balance_string_balance(self, mock_get_token, mock_get_config, mock_api_class):
+    async def test_account_balance_string_balance(
+        self, mock_get_token, mock_get_config, mock_api_class
+    ):
         """Balance as string is handled."""
         mock_api_instance = MagicMock()
         mock_api_instance.get_account_balance = AsyncMock(

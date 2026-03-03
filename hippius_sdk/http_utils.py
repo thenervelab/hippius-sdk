@@ -27,7 +27,9 @@ def retry_on_error(
     backoff: float = 5.0,
     non_retryable_codes: Set[int] | None = None,
     base_error_class: type[Exception] = Exception,
-) -> Callable[[Callable[..., Coroutine[Any, Any, T]]], Callable[..., Coroutine[Any, Any, T]]]:
+) -> Callable[
+    [Callable[..., Coroutine[Any, Any, T]]], Callable[..., Coroutine[Any, Any, T]]
+]:
     """
     Decorator to retry HTTP requests on 4xx/5xx errors.
 
@@ -41,7 +43,9 @@ def retry_on_error(
     if non_retryable_codes is None:
         non_retryable_codes = DEFAULT_NON_RETRYABLE_CODES
 
-    def decorator(func: Callable[..., Coroutine[Any, Any, T]]) -> Callable[..., Coroutine[Any, Any, T]]:
+    def decorator(
+        func: Callable[..., Coroutine[Any, Any, T]]
+    ) -> Callable[..., Coroutine[Any, Any, T]]:
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> T:
             last_exception: Exception | None = None
@@ -70,7 +74,9 @@ def retry_on_error(
                         break
 
                     func_name = func.__name__
-                    error_msg = f"Request failed (attempt {attempt + 1}/{retries + 1}): {e}"
+                    error_msg = (
+                        f"Request failed (attempt {attempt + 1}/{retries + 1}): {e}"
+                    )
                     error_msg += f" | Function: {func_name}"
                     if hasattr(e, "response"):
                         error_msg += f" | Response body: {e.response.text}"

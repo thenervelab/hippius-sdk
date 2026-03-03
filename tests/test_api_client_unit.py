@@ -45,9 +45,7 @@ class TestApiClientUnit:
 
     async def test_get_credits_mocked(self):
         """Test get_account_balance with mocked response."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", api_token="test_key"
-        )
+        client = HippiusApiClient(api_url="https://test.api.com", api_token="test_key")
 
         # Mock the httpx client
         mock_response = Mock(spec=Response)
@@ -67,9 +65,7 @@ class TestApiClientUnit:
 
     async def test_validate_token_mocked(self):
         """Test validate_token with mocked response."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", api_token="test_key"
-        )
+        client = HippiusApiClient(api_url="https://test.api.com", api_token="test_key")
 
         mock_response = Mock(spec=Response)
         mock_response.status_code = 200
@@ -211,9 +207,7 @@ class TestApiClientContextManager:
 
     async def test_explicit_close(self):
         """Test explicit close method."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", api_token="test_key"
-        )
+        client = HippiusApiClient(api_url="https://test.api.com", api_token="test_key")
 
         await client.close()
 
@@ -227,9 +221,7 @@ class TestApiClientResponseParsing:
 
     async def test_get_credits_handles_different_response_formats(self):
         """Test that get_account_balance handles various response formats."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", api_token="test_key"
-        )
+        client = HippiusApiClient(api_url="https://test.api.com", api_token="test_key")
 
         # Test actual API format: {"balance": "1.000000000000000000", "last_updated": "..."}
         mock_response = Mock(spec=Response)

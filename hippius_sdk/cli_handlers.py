@@ -25,7 +25,11 @@ from hippius_sdk.cli_handlers_miner import *  # noqa: F401,F403
 # Client creation helper function
 def create_client(args: Any) -> ArionClient:
     """Create an ArionClient instance from command line arguments."""
-    from hippius_sdk.config import get_api_token, get_account_address, get_active_account
+    from hippius_sdk.config import (
+        get_api_token,
+        get_account_address,
+        get_active_account,
+    )
 
     # Determine if we need to use password based on the command
     password = None

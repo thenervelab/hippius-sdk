@@ -180,18 +180,14 @@ def add_config_commands(subparsers):
 
 def add_account_commands(subparsers):
     """Add account management commands to the parser."""
-    account_parser = subparsers.add_parser(
-        "account", help="Manage Hippius accounts"
-    )
+    account_parser = subparsers.add_parser("account", help="Manage Hippius accounts")
 
     account_subparsers = account_parser.add_subparsers(
         dest="account_action", help="Account commands"
     )
 
     # Account login
-    account_subparsers.add_parser(
-        "login", help="Log in with an API token"
-    )
+    account_subparsers.add_parser("login", help="Log in with an API token")
 
     # Account login-seed (for miners)
     account_subparsers.add_parser(
@@ -208,15 +204,11 @@ def add_account_commands(subparsers):
     switch_parser.add_argument("account_name", help="Account name to switch to")
 
     # Account delete
-    delete_parser = account_subparsers.add_parser(
-        "delete", help="Delete an account"
-    )
+    delete_parser = account_subparsers.add_parser("delete", help="Delete an account")
     delete_parser.add_argument("account_name", help="Account name to delete")
 
     # Account info
-    info_parser = account_subparsers.add_parser(
-        "info", help="Show account information"
-    )
+    info_parser = account_subparsers.add_parser("info", help="Show account information")
     info_parser.add_argument(
         "--name",
         help="Account name (uses active account if not specified)",
@@ -299,7 +291,9 @@ def add_miner_commands(subparsers):
 
     # Common miner arguments
     def add_common_miner_args(parser, include_node_type=True):
-        parser.add_argument("--node-id", required=True, help="Node ID (base58 or 0x hex)")
+        parser.add_argument(
+            "--node-id", required=True, help="Node ID (base58 or 0x hex)"
+        )
         parser.add_argument(
             "--node-priv-hex",
             required=True,

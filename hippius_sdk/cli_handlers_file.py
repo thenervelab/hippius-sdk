@@ -95,10 +95,14 @@ async def handle_store(
 
 
 async def handle_download(
-    client: ArionClient, file_id: str, output_path: str,
+    client: ArionClient,
+    file_id: str,
+    output_path: str,
 ) -> int:
     """Handle the download command"""
-    info(f"Downloading [bold cyan]{file_id}[/bold cyan] to [bold]{output_path}[/bold]...")
+    info(
+        f"Downloading [bold cyan]{file_id}[/bold cyan] to [bold]{output_path}[/bold]..."
+    )
 
     start_time = time.time()
     result = await client.download_file(file_id, output_path)

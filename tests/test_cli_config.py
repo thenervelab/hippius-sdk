@@ -15,7 +15,9 @@ from hippius_sdk.cli_handlers import (
 
 
 class TestConfigGet:
-    @patch("hippius_sdk.cli_handlers_config.get_config_value", return_value="some_value")
+    @patch(
+        "hippius_sdk.cli_handlers_config.get_config_value", return_value="some_value"
+    )
     def test_config_get_success(self, mock_get):
         result = handle_config_get("arion", "base_url")
         assert result == 0
@@ -27,7 +29,9 @@ class TestConfigSet:
     def test_config_set_success(self, mock_set):
         result = handle_config_set("arion", "base_url", "https://arion.hippius.com")
         assert result == 0
-        mock_set.assert_called_once_with("arion", "base_url", "https://arion.hippius.com")
+        mock_set.assert_called_once_with(
+            "arion", "base_url", "https://arion.hippius.com"
+        )
 
     @patch("hippius_sdk.cli_handlers_config.set_config_value")
     def test_config_set_boolean_true(self, mock_set):

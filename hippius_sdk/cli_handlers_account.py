@@ -89,7 +89,9 @@ def handle_account_info(account_name: Optional[str] = None) -> int:
     # Check for seed phrase (miner accounts)
     has_seed = bool(account.get("seed_phrase"))
     if has_seed:
-        account_info.append("[bold blue]Seed Phrase: Available (for miner operations)[/bold blue]")
+        account_info.append(
+            "[bold blue]Seed Phrase: Available (for miner operations)[/bold blue]"
+        )
 
     # Add suggestions based on account status
     account_info.append("")
@@ -109,9 +111,7 @@ def handle_account_info(account_name: Optional[str] = None) -> int:
         )
 
     # Print the panel
-    print_panel(
-        "\n".join(account_info), title=f"Account Information: {account_name}"
-    )
+    print_panel("\n".join(account_info), title=f"Account Information: {account_name}")
 
     return 0
 
@@ -194,8 +194,12 @@ def handle_account_import(
 
     account_name = import_data.get("name")
     api_token = import_data.get("api_token") or import_data.get("hippius_key")
-    api_token_encoded = import_data.get("api_token_encoded", import_data.get("hippius_key_encoded", False))
-    api_token_salt = import_data.get("api_token_salt", import_data.get("hippius_key_salt"))
+    api_token_encoded = import_data.get(
+        "api_token_encoded", import_data.get("hippius_key_encoded", False)
+    )
+    api_token_salt = import_data.get(
+        "api_token_salt", import_data.get("hippius_key_salt")
+    )
     account_address = import_data.get("account_address", "")
 
     if not account_name:
@@ -356,16 +360,12 @@ def handle_account_login() -> int:
     # Step 2: API Token
     click.echo()
     draw_step(2, "Enter your Hippius API Token")
-    click.secho(
-        "Your API token authenticates you with the Hippius platform.", dim=True
-    )
+    click.secho("Your API token authenticates you with the Hippius platform.", dim=True)
     click.secho(
         "You can find this at https://console.hippius.com/dashboard/settings",
         dim=True,
     )
-    api_token = click.prompt(
-        click.style("API Token", fg="cyan", bold=True)
-    ).strip()
+    api_token = click.prompt(click.style("API Token", fg="cyan", bold=True)).strip()
 
     if not api_token:
         error("API Token cannot be empty")
@@ -393,12 +393,8 @@ def handle_account_login() -> int:
     # Step 4: Encryption
     click.echo()
     draw_step(4, "Secure your account")
-    click.secho(
-        "Encrypting your API token adds an extra layer of security.", dim=True
-    )
-    click.secho(
-        "Strongly recommended to protect your account.", fg="yellow", dim=True
-    )
+    click.secho("Encrypting your API token adds an extra layer of security.", dim=True)
+    click.secho("Strongly recommended to protect your account.", fg="yellow", dim=True)
     encrypt = click.confirm("Encrypt API token?", default=True)
 
     # Set up encryption if requested
@@ -410,9 +406,7 @@ def handle_account_login() -> int:
             "This password will be required whenever you use your account for operations.",
             dim=True,
         )
-        password = click.prompt(
-            "Password", hide_input=True, confirmation_prompt=True
-        )
+        password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
 
         if not password:
             error("Password cannot be empty for encryption")
@@ -535,9 +529,7 @@ def handle_account_login_seed() -> int:
         fg="yellow",
         dim=True,
     )
-    seed_phrase = click.prompt(
-        click.style("Seed phrase", fg="cyan", bold=True)
-    ).strip()
+    seed_phrase = click.prompt(click.style("Seed phrase", fg="cyan", bold=True)).strip()
 
     # Validate the seed phrase
     if not seed_phrase or len(seed_phrase.split()) not in [12, 24]:
@@ -550,9 +542,7 @@ def handle_account_login_seed() -> int:
     click.secho(
         "Encrypting your seed phrase adds an extra layer of security.", dim=True
     )
-    click.secho(
-        "Strongly recommended to protect your account.", fg="yellow", dim=True
-    )
+    click.secho("Strongly recommended to protect your account.", fg="yellow", dim=True)
     encrypt = click.confirm("Encrypt seed phrase?", default=True)
 
     # Set up encryption if requested
@@ -564,9 +554,7 @@ def handle_account_login_seed() -> int:
             "This password will be required whenever you use your account for blockchain operations.",
             dim=True,
         )
-        password = click.prompt(
-            "Password", hide_input=True, confirmation_prompt=True
-        )
+        password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
 
         if not password:
             error("Password cannot be empty for encryption")
@@ -755,9 +743,7 @@ async def handle_account_balance(
             return 1
 
     # Try to get blockchain balance via Substrate
-    substrate_url = get_config_value(
-        "substrate", "url", "wss://rpc.hippius.network"
-    )
+    substrate_url = get_config_value("substrate", "url", "wss://rpc.hippius.network")
     substrate = SubstrateInterface(url=substrate_url)
 
     # Get account info
@@ -788,9 +774,7 @@ async def handle_account_balance(
         balance_info.append(f"[dim]Reserved: {data['reserved']:,}[/dim]")
         balance_info.append(f"[dim]Frozen: {frozen * unit:,.0f}[/dim]")
 
-        print_panel(
-            "\n".join(balance_info), title="Account Balance (Blockchain)"
-        )
+        print_panel("\n".join(balance_info), title="Account Balance (Blockchain)")
         return 0
     else:
         error(f"Could not fetch balance for address: {account_address}")

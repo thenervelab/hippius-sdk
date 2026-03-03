@@ -33,6 +33,4 @@ async def test_download_success(mock_client):
 
     result = await handle_download(mock_client, "abc123", "/tmp/output.txt")
     assert result == 0
-    mock_client.download_file.assert_awaited_once_with(
-        "abc123", "/tmp/output.txt"
-    )
+    mock_client.download_file.assert_awaited_once_with("abc123", "/tmp/output.txt")
