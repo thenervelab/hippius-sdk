@@ -51,6 +51,14 @@ examples:
         "-h", "--help", action=RichHelpAction, help="Show this help message and exit"
     )
 
+    from hippius_sdk import __version__
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"{__version__} (Hippius Python SDK)",
+    )
+
     # Optional arguments for all commands
     parser.add_argument(
         "--substrate-url",
@@ -85,7 +93,6 @@ examples:
     add_market_commands(subparsers)
     add_config_commands(subparsers)
     add_account_commands(subparsers)
-    add_address_commands(subparsers)
     add_miner_commands(subparsers)
 
     return parser
@@ -98,12 +105,6 @@ def add_file_commands(subparsers):
         "store", help="Upload a file to Hippius storage"
     )
     store_parser.add_argument("file_path", help="Path of file to upload")
-
-    # Add command (alias for store)
-    add_parser = subparsers.add_parser(
-        "add", help="Upload a file to Hippius storage (alias for store)"
-    )
-    add_parser.add_argument("file_path", help="Path of file to upload")
 
     # Download command
     download_parser = subparsers.add_parser(
@@ -128,26 +129,10 @@ def add_file_commands(subparsers):
 def add_market_commands(subparsers):
     """Add marketplace/billing commands to the parser."""
     # Credits command
-    credits_parser = subparsers.add_parser(
-        "credits", help="Check your account credit balance"
-    )
-    credits_parser.add_argument(
-        "account_address",
-        nargs="?",
-        default=None,
-        help="Account address (uses active account if not specified)",
-    )
+    subparsers.add_parser("credits", help="Check your account credit balance")
 
     # Files command
-    files_parser = subparsers.add_parser(
-        "files", help="List stored files (coming soon)"
-    )
-    files_parser.add_argument(
-        "account_address",
-        nargs="?",
-        default=None,
-        help="Account address (uses active account if not specified)",
-    )
+    subparsers.add_parser("files", help="List stored files (coming soon)")
 
 
 def add_config_commands(subparsers):
@@ -247,31 +232,6 @@ def add_account_commands(subparsers):
     )
 
 
-def add_address_commands(subparsers):
-    """Add default address commands to the parser."""
-    address_parser = subparsers.add_parser(
-        "address", help="Manage default substrate address"
-    )
-
-    address_subparsers = address_parser.add_subparsers(
-        dest="address_action", help="Address commands"
-    )
-
-    # Set default address
-    set_parser = address_subparsers.add_parser(
-        "set-default", help="Set the default substrate address"
-    )
-    set_parser.add_argument("address", help="Substrate address to set as default")
-
-    # Get default address
-    address_subparsers.add_parser(
-        "get-default", help="Show the default substrate address"
-    )
-
-    # Clear default address
-    address_subparsers.add_parser(
-        "clear-default", help="Clear the default substrate address"
-    )
 
 
 def add_miner_commands(subparsers):

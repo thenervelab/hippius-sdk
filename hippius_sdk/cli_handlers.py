@@ -18,7 +18,6 @@ from hippius_sdk import (
 from hippius_sdk.cli_handlers_file import *  # noqa: F401,F403
 from hippius_sdk.cli_handlers_account import *  # noqa: F401,F403
 from hippius_sdk.cli_handlers_config import *  # noqa: F401,F403
-from hippius_sdk.cli_handlers_address import *  # noqa: F401,F403
 from hippius_sdk.cli_handlers_miner import *  # noqa: F401,F403
 
 

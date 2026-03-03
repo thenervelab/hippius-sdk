@@ -3,7 +3,6 @@
 import asyncio
 import os
 import time
-from typing import Optional
 
 import click
 
@@ -145,9 +144,7 @@ async def handle_delete(client: ArionClient, file_id: str, force: bool = False) 
     return 0
 
 
-async def handle_credits(
-    client: ArionClient, account_address: Optional[str] = None
-) -> int:
+async def handle_credits(client: ArionClient) -> int:
     """Handle the credits command"""
     info("Checking credits for the authenticated account...")
 
@@ -182,10 +179,7 @@ async def handle_credits(
     return 0
 
 
-async def handle_files(
-    client: ArionClient,
-    account_address: Optional[str] = None,
-) -> int:
+async def handle_files(client: ArionClient) -> int:
     """Handle the files command"""
     info("File listing is coming soon.")
     info("Arion list endpoint is not yet available.")

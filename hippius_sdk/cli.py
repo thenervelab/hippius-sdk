@@ -60,7 +60,7 @@ def main():
                 args.output_path,
             )
 
-        elif args.command == "store" or args.command == "add":
+        elif args.command == "store":
             return run_async_handler(
                 cli_handlers.handle_store,
                 client,
@@ -76,16 +76,10 @@ def main():
             )
 
         elif args.command == "credits":
-            return run_async_handler(
-                cli_handlers.handle_credits, client, args.account_address
-            )
+            return run_async_handler(cli_handlers.handle_credits, client)
 
         elif args.command == "files":
-            return run_async_handler(
-                cli_handlers.handle_files,
-                client,
-                args.account_address if hasattr(args, "account_address") else None,
-            )
+            return run_async_handler(cli_handlers.handle_files, client)
 
         elif args.command == "config":
             if args.config_action == "get":
@@ -157,24 +151,6 @@ def main():
                 from hippius_sdk.cli_ui import print_help_text
 
                 print_help_text(account_parser)
-                return 1
-
-        # Handle address commands
-        elif args.command == "address":
-            if args.address_action == "set-default" and hasattr(args, "address"):
-                return cli_handlers.handle_default_address_set(args.address)
-            elif args.address_action == "get-default":
-                return cli_handlers.handle_default_address_get()
-            elif args.address_action == "clear-default":
-                return cli_handlers.handle_default_address_clear()
-            else:
-                # Display the Hippius logo banner with Rich formatting
-                draw_logo()
-
-                address_parser = get_subparser("address")
-                from hippius_sdk.cli_ui import print_help_text
-
-                print_help_text(address_parser)
                 return 1
 
         # Handle miner commands
