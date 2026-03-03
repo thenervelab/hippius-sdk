@@ -41,7 +41,7 @@ def handle_register_coldkey(
         account = get_active_account()
         if not account:
             error(
-                "No active account. Please set up an account first with 'hippius account login-seed'"
+                "No active account. Please set up an account first with 'hippius account login'"
             )
             return 1
 
@@ -251,7 +251,7 @@ def handle_register_hotkey(
         account = get_active_account()
         if not account:
             error(
-                "No active account. Please set up an account first with 'hippius account login-seed'"
+                "No active account. Please set up an account first with 'hippius account login'"
             )
             return 1
 
@@ -459,7 +459,7 @@ def handle_verify_node(
         account = get_active_account()
         if not account:
             error(
-                "No active account. Please set up an account first with 'hippius account login-seed'"
+                "No active account. Please set up an account first with 'hippius account login'"
             )
             return 1
 
@@ -657,7 +657,7 @@ def handle_verify_coldkey_node(
         account = get_active_account()
         if not account:
             error(
-                "No active account. Please set up an account first with 'hippius account login-seed'"
+                "No active account. Please set up an account first with 'hippius account login'"
             )
             return 1
 

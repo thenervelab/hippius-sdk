@@ -19,11 +19,10 @@ from hippius_sdk.http_utils import create_http_client, retry_on_error
 logger = logging.getLogger(__name__)
 
 
-class TokenAuthResponse(BaseModel):
-    valid: bool
-    status: str
-    account_address: str
-    token_type: str
+class UserProfileResponse(BaseModel):
+    substrate_address: str
+    evm_address: str | None = None
+    wallet_verified: bool = False
 
 
 class HippiusApiClient:
@@ -121,30 +120,32 @@ class HippiusApiClient:
     async def validate_token(
         self,
         api_token: str,
-    ) -> TokenAuthResponse:
+    ) -> UserProfileResponse:
         """
-        Validate an API token and get the associated account address.
+        Validate an API token and get the associated user profile.
 
-        Maps to: POST /objectstore/tokens/auth/
+        Maps to: GET /user-profile/
 
         Args:
             api_token: The API token to validate
 
         Returns:
-            TokenAuthResponse: Validation result with account_address
+            UserProfileResponse: User profile with substrate_address
 
         Raises:
             HippiusAPIError: If the API request fails
-            HippiusAuthenticationError: If the token is invalid
+            HippiusAuthenticationError: If the token is invalid (401)
         """
-        response = await self._client.post(
-            "/objectstore/tokens/auth/",
-            json={"accessKeyId": api_token},
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
+        response = await self._client.get(
+            "/user-profile/",
+            headers={
+                "Authorization": f"Token {api_token}",
+                "Accept": "application/json",
+            },
         )
 
         response.raise_for_status()
-        return TokenAuthResponse.model_validate(response.json())
+        return UserProfileResponse.model_validate(response.json())
 
     @retry_on_error(retries=3, backoff=5.0, base_error_class=HippiusAPIError)
     async def get_account_balance(

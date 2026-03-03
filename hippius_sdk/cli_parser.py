@@ -189,11 +189,6 @@ def add_account_commands(subparsers):
     # Account login
     account_subparsers.add_parser("login", help="Log in with an API token")
 
-    # Account login-seed (for miners)
-    account_subparsers.add_parser(
-        "login-seed", help="Log in with a seed phrase (for miners)"
-    )
-
     # Account list
     account_subparsers.add_parser("list", help="List all accounts")
 

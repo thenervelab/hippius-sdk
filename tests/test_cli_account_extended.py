@@ -183,10 +183,11 @@ class TestAccountLogin:
         # Set up mock API client for token validation
         mock_api_instance = MagicMock()
         mock_token_result = MagicMock()
-        mock_token_result.valid = True
-        mock_token_result.account_address = "5TestAddress123"
+        mock_token_result.substrate_address = "5TestAddress123"
         mock_api_instance.validate_token = AsyncMock(return_value=mock_token_result)
         mock_api_instance.close = AsyncMock()
+        mock_api_instance.__aenter__ = AsyncMock(return_value=mock_api_instance)
+        mock_api_instance.__aexit__ = AsyncMock(return_value=False)
         mock_api_class.return_value = mock_api_instance
 
         result = handle_account_login()

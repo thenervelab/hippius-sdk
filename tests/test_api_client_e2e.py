@@ -76,14 +76,12 @@ class TestTokenValidation:
 
     async def test_validate_token(self, api_client, test_api_token):
         """
-        Test POST /objectstore/tokens/auth/
-        Should validate a token and return account info.
+        Test GET /user-profile/
+        Should validate a token and return user profile.
         """
         result = await api_client.validate_token(test_api_token)
 
-        assert result.valid is True
-        assert result.account_address
-        assert result.token_type
+        assert result.substrate_address
 
 
 @pytest.mark.e2e

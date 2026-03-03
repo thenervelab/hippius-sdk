@@ -70,22 +70,21 @@ class TestApiClientUnit:
         mock_response = Mock(spec=Response)
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "valid": True,
-            "status": "active",
-            "account_address": "5TestAddress123",
-            "token_type": "api",
+            "substrate_address": "5TestAddress123",
+            "evm_address": "0xABC123",
+            "wallet_verified": True,
         }
         mock_response.raise_for_status = Mock()
 
-        with patch.object(client._client, "post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = mock_response
+        with patch.object(client._client, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_response
 
             result = await client.validate_token("test_token_abc")
 
-            assert result.valid is True
-            assert result.account_address == "5TestAddress123"
-            assert result.token_type == "api"
-            mock_post.assert_called_once()
+            assert result.substrate_address == "5TestAddress123"
+            assert result.evm_address == "0xABC123"
+            assert result.wallet_verified is True
+            mock_get.assert_called_once()
 
         await client.close()
 

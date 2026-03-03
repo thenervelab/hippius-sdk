@@ -22,6 +22,7 @@ from hippius_sdk import (
     set_active_account,
 )
 from hippius_sdk.api_client import HippiusApiClient
+from hippius_sdk.errors import HippiusAuthenticationError
 from hippius_sdk.cli_ui import (
     BRAND_COLOR,
     _console,
@@ -378,15 +379,18 @@ def handle_account_login() -> int:
     account_address = None
     with _console.status("[cyan]Validating token...[/cyan]", spinner="dots"):
         api_url = get_config_value("arion", "api_url", "https://api.hippius.com/api")
-        api_client = HippiusApiClient(api_url=api_url)
-        token_result = asyncio.run(api_client.validate_token(api_token))
-        asyncio.run(api_client.close())
 
-        if not token_result.valid:
-            error(f"Token validation failed: {token_result.status}")
+        async def _validate():
+            async with HippiusApiClient(api_url=api_url) as client:
+                return await client.validate_token(api_token)
+
+        try:
+            token_result = asyncio.run(_validate())
+        except HippiusAuthenticationError:
+            error("Token validation failed: invalid or expired token")
             return 1
 
-        account_address = token_result.account_address
+        account_address = token_result.substrate_address
 
     success(f"Token is valid! Account address: {account_address}")
 
@@ -477,161 +481,6 @@ def handle_account_login() -> int:
     return 0
 
 
-def handle_account_login_seed() -> int:
-    """Handle the account login-seed command - prompts for seed phrase for miner/blockchain operations"""
-    # Display the login banner
-    draw_logo()
-    click.echo()
-    click.echo(
-        click.style("Welcome to Hippius Miner Setup!", fg=BRAND_COLOR, bold=True)
-    )
-    click.echo()
-    click.secho(
-        "Note: This command is for miners who need to sign blockchain transactions.",
-        fg="yellow",
-        dim=True,
-    )
-    click.secho(
-        "For regular file operations, use 'hippius account login' with your API token.",
-        dim=True,
-    )
-    click.echo()
-
-    # Step 1: Account name
-    draw_step(1, "Choose a name for your miner account")
-    click.secho(
-        "This name will be used to identify your account in the Hippius system.",
-        dim=True,
-    )
-    name = click.prompt(click.style("Account name", fg="cyan", bold=True)).strip()
-
-    if not name:
-        error("Account name cannot be empty")
-        return 1
-
-    # Check if account already exists
-    accounts = list_accounts()
-    if name in accounts:
-        warning(f"Account '{name}' already exists")
-        if not click.confirm("Do you want to overwrite it?", default=False):
-            info("Login cancelled")
-            return 0
-
-    # Step 2: Seed phrase
-    click.echo()
-    draw_step(2, "Enter your seed phrase")
-    click.secho(
-        "Your seed phrase gives access to your blockchain account and funds.",
-        dim=True,
-    )
-    click.secho(
-        "Important: Must be 12 or 24 words separated by spaces.",
-        fg="yellow",
-        dim=True,
-    )
-    seed_phrase = click.prompt(click.style("Seed phrase", fg="cyan", bold=True)).strip()
-
-    # Validate the seed phrase
-    if not seed_phrase or len(seed_phrase.split()) not in [12, 24]:
-        error("Invalid seed phrase - must be 12 or 24 words separated by spaces")
-        return 1
-
-    # Step 3: Encryption
-    click.echo()
-    draw_step(3, "Secure your account")
-    click.secho(
-        "Encrypting your seed phrase adds an extra layer of security.", dim=True
-    )
-    click.secho("Strongly recommended to protect your account.", fg="yellow", dim=True)
-    encrypt = click.confirm("Encrypt seed phrase?", default=True)
-
-    # Set up encryption if requested
-    password = None
-    if encrypt:
-        click.echo()
-        draw_step(4, "Set encryption password")
-        click.secho(
-            "This password will be required whenever you use your account for blockchain operations.",
-            dim=True,
-        )
-        password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
-
-        if not password:
-            error("Password cannot be empty for encryption")
-            return 1
-
-    # Initialize address variable
-    address = None
-
-    # Create and store the account
-    with _console.status("[cyan]Setting up your account...[/cyan]", spinner="dots"):
-        config = load_config()
-
-        # Create keypair and get address from seed phrase
-        keypair = Keypair.create_from_mnemonic(seed_phrase)
-        address = keypair.ss58_address
-
-        # Add the new account
-        config["accounts"]["accounts"][name] = {
-            "seed_phrase": seed_phrase,
-            "seed_phrase_encoded": False,
-            "seed_phrase_salt": None,
-            "account_address": address,
-        }
-
-        # Set as active account
-        config["accounts"]["active_account"] = name
-
-        # Save the config first
-        save_config(config)
-
-        # Now encrypt if requested
-        if encrypt:
-            from hippius_sdk import encrypt_seed_phrase
-
-            encrypt_seed_phrase(seed_phrase, password, name)
-
-        time.sleep(0.5)  # Small delay for visual feedback
-
-    # Success box with account information
-    result_lines = [
-        f"Account Name: {name}",
-        f"Blockchain Address: {address}",
-        "",
-        "Login successful!",
-        "Account set as active",
-    ]
-
-    if encrypt:
-        result_lines.append("Seed phrase encrypted")
-    else:
-        result_lines.append("Seed phrase not encrypted")
-
-    draw_success_box(result_lines)
-
-    if encrypt:
-        click.echo()
-        click.secho(
-            "You'll need your password when using this account for blockchain operations.",
-            dim=True,
-        )
-    else:
-        click.echo()
-        click.secho(
-            "For better security, consider re-running this command and encrypting your seed phrase.",
-            dim=True,
-        )
-
-    # Next steps
-    click.echo()
-    click.secho("Next steps:", fg=BRAND_COLOR, bold=True)
-    click.echo("  hippius miner register-coldkey  - Register your miner node")
-    click.echo("  hippius miner register-hotkey   - Register with a hotkey")
-    click.echo("  hippius account balance         - Check your account balance")
-
-    return 0
-
-
 def handle_account_delete(account_name: str) -> int:
     """Handle the account delete command"""
     # Check if account exists
@@ -674,10 +523,8 @@ async def handle_account_balance(
     """Handle the account balance command - shows credit balance (API) or blockchain balance (Substrate)"""
     info("Checking account balance...")
 
-    # Try to get credit balance from API first
-    from hippius_sdk.config import get_api_token
-
-    api_token = get_api_token(password="")
+    # Reuse the already-decrypted token from ArionClient (avoids double password prompt)
+    api_token = client._api_token
 
     if api_token:
         api_url = get_config_value("arion", "api_url", "https://api.hippius.com/api")
@@ -735,10 +582,7 @@ async def handle_account_balance(
                 "  1. Set up an API token account: [bold green underline]hippius account login[/bold green underline]"
             )
             log(
-                "  2. Set up a seed phrase account: [bold green underline]hippius account login-seed[/bold green underline]"
-            )
-            log(
-                "  3. Provide an address: [bold green underline]hippius account balance --address <address>[/bold green underline]"
+                "  2. Provide an address: [bold green underline]hippius account balance --address <address>[/bold green underline]"
             )
             return 1
 

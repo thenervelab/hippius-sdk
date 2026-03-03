@@ -151,10 +151,8 @@ async def handle_credits(
     """Handle the credits command"""
     info("Checking credits for the authenticated account...")
 
-    from hippius_sdk.config import get_api_token
-
-    # Create API client for balance check
-    api_token = get_api_token()
+    # Reuse the already-decrypted token from ArionClient (avoids double password prompt)
+    api_token = client._api_token
     if not api_token:
         error("No API token available. Please login first with: hippius account login")
         return 1
