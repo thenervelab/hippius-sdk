@@ -3,12 +3,12 @@
 Command Line Interface tools for Hippius SDK.
 
 This module provides CLI tools for working with the Hippius SDK, including
-utilities for encryption key generation, file operations, and marketplace interactions.
+file operations, account management, and miner registration.
 """
 
 import asyncio
 import inspect
-import os
+import logging
 import sys
 from typing import Callable
 
@@ -16,445 +16,223 @@ from dotenv import load_dotenv
 
 import click
 
-from hippius_sdk import cli_handlers, initialize_from_env
-from hippius_sdk.cli_assets import draw_logo
+from hippius_sdk import cli_handlers, get_config_value
+from hippius_sdk.cli_ui import draw_logo, error
 from hippius_sdk.cli_parser import create_parser, get_subparser, parse_arguments
-from hippius_sdk.cli_rich import error
-from hippius_sdk.utils import generate_key
-
-# Import SDK components
 
 load_dotenv()
-initialize_from_env()
 
 
-def generate_encryption_key(copy_to_clipboard=False):
-    """Generate an encryption key and display it to the user."""
-    # Generate the key
-    encoded_key = generate_key()
+def _configure_logging(verbose: bool = False):
+    """Configure logging based on CLI config and --verbose flag."""
+    if verbose:
+        level = "DEBUG"
+    else:
+        level = get_config_value("cli", "log_level", "warning")
 
-    # Copy to clipboard if requested
-    if copy_to_clipboard:
-        try:
-            import pyperclip
-
-            pyperclip.copy(encoded_key)
-            click.secho("Key copied to clipboard!", fg="green")
-        except ImportError:
-            click.echo(
-                click.style("Warning:", fg="yellow")
-                + " Could not copy to clipboard. Install pyperclip with: pip install pyperclip"
-            )
-
-    return encoded_key
+    numeric_level = getattr(logging, level.upper(), logging.WARNING)
+    logging.basicConfig(
+        level=numeric_level,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    logging.getLogger("hippius_sdk").setLevel(numeric_level)
 
 
-def key_generation_cli():
-    """Standalone CLI tool for encryption key generation with Click formatting."""
-    # Display the Hippius logo banner
+def _run(handler: Callable, *args, **kwargs) -> int:
+    """Run a handler, dispatching async functions through asyncio.run."""
+    if inspect.iscoroutinefunction(handler):
+        return asyncio.run(handler(*args, **kwargs))
+    return handler(*args, **kwargs)
+
+
+def _show_subcommand_help(name: str) -> int:
+    """Show help for a subcommand."""
     draw_logo()
-    click.secho("Encryption Key Generator", fg="blue", bold=True)
+    from hippius_sdk.cli_ui import print_help_text
 
-    try:
-        # Generate the key
-        encoded_key = generate_encryption_key(copy_to_clipboard=True)
+    print_help_text(get_subparser(name))
+    return 1
 
-        # Display the key
-        click.echo()
-        click.secho("Your encryption key:", fg="green", bold=True)
-        click.secho(encoded_key, fg="yellow")
-        click.echo()
-        click.secho("This key has been copied to your clipboard.", dim=True)
-        click.secho("Usage instructions:", fg="blue", bold=True)
-        click.echo("1. Store this key securely")
-        click.echo("2. Use it to encrypt/decrypt files with the Hippius SDK")
-        click.secho("3. Never share this key with others", fg="yellow")
 
-        return 0
-    except Exception as e:
-        error(f"{e}")
-        return 1
+# --- Subcommand dispatch tables ---
+
+CONFIG_COMMANDS = {
+    "get": lambda args, _: cli_handlers.handle_config_get(args.section, args.key),
+    "set": lambda args, _: cli_handlers.handle_config_set(
+        args.section, args.key, args.value
+    ),
+    "list": lambda args, _: cli_handlers.handle_config_list(),
+    "reset": lambda args, _: cli_handlers.handle_config_reset(),
+}
+
+ACCOUNT_COMMANDS = {
+    "list": lambda args, _: cli_handlers.handle_account_list(),
+    "login": lambda args, _: cli_handlers.handle_account_login(),
+    "switch": lambda args, _: cli_handlers.handle_account_switch(args.account_name),
+    "delete": lambda args, _: cli_handlers.handle_account_delete(args.account_name),
+    "info": lambda args, _: cli_handlers.handle_account_info(
+        args.name if hasattr(args, "name") else None
+    ),
+    "export": lambda args, client: cli_handlers.handle_account_export(
+        client,
+        args.name if hasattr(args, "name") else None,
+        args.file_path if hasattr(args, "file_path") else None,
+    ),
+    "import": lambda args, client: cli_handlers.handle_account_import(
+        client,
+        args.file_path,
+        encrypt=args.encrypt if hasattr(args, "encrypt") else False,
+    ),
+    "init-encryption": lambda args, _: cli_handlers.handle_init_encryption(
+        mnemonic=args.mnemonic if hasattr(args, "mnemonic") else None,
+    ),
+    "show-mnemonic": lambda args, _: cli_handlers.handle_show_mnemonic(),
+}
+
+
+def _handle_account_balance(args, client):
+    """Handle account balance with address resolution."""
+    account_address = None
+    if hasattr(args, "address") and args.address:
+        account_address = args.address
+    elif hasattr(args, "name") and args.name:
+        account_address = cli_handlers.get_account_address(args.name)
+
+    return _run(cli_handlers.handle_account_balance, client, account_address)
+
+
+MINER_COMMANDS = {
+    "register-coldkey": lambda args, client: _run(
+        cli_handlers.handle_register_coldkey,
+        client,
+        args.node_id,
+        args.node_priv_hex,
+        args.node_type,
+        ipfs_config=getattr(args, "ipfs_config", None),
+        ipfs_priv_b64=getattr(args, "ipfs_priv_b64", None),
+        ipfs_peer_id=getattr(args, "ipfs_peer_id", None),
+        pay_in_credits=getattr(args, "pay_in_credits", False),
+        expires_in=getattr(args, "expires_in", 10),
+        block_width=getattr(args, "block_width", "u32"),
+        nonce_hex=getattr(args, "nonce_hex", None),
+        dry_run=getattr(args, "dry_run", False),
+    ),
+    "register-hotkey": lambda args, client: _run(
+        cli_handlers.handle_register_hotkey,
+        client,
+        args.coldkey,
+        args.node_id,
+        args.node_priv_hex,
+        args.node_type,
+        ipfs_config=getattr(args, "ipfs_config", None),
+        ipfs_priv_b64=getattr(args, "ipfs_priv_b64", None),
+        ipfs_peer_id=getattr(args, "ipfs_peer_id", None),
+        pay_in_credits=getattr(args, "pay_in_credits", False),
+        expires_in=getattr(args, "expires_in", 10),
+        block_width=getattr(args, "block_width", "u32"),
+        nonce_hex=getattr(args, "nonce_hex", None),
+        dry_run=getattr(args, "dry_run", False),
+    ),
+    "verify-node": lambda args, client: _run(
+        cli_handlers.handle_verify_node,
+        client,
+        args.node_id,
+        args.node_priv_hex,
+        ipfs_config=getattr(args, "ipfs_config", None),
+        ipfs_priv_b64=getattr(args, "ipfs_priv_b64", None),
+        ipfs_peer_id=getattr(args, "ipfs_peer_id", None),
+        expires_in=getattr(args, "expires_in", 10),
+        block_width=getattr(args, "block_width", "u32"),
+        nonce_hex=getattr(args, "nonce_hex", None),
+        dry_run=getattr(args, "dry_run", False),
+    ),
+    "verify-coldkey-node": lambda args, client: _run(
+        cli_handlers.handle_verify_coldkey_node,
+        client,
+        args.node_id,
+        args.node_priv_hex,
+        ipfs_config=getattr(args, "ipfs_config", None),
+        ipfs_priv_b64=getattr(args, "ipfs_priv_b64", None),
+        ipfs_peer_id=getattr(args, "ipfs_peer_id", None),
+        expires_in=getattr(args, "expires_in", 10),
+        block_width=getattr(args, "block_width", "u32"),
+        nonce_hex=getattr(args, "nonce_hex", None),
+        dry_run=getattr(args, "dry_run", False),
+    ),
+}
+
+# Top-level commands (simple ones that map directly to handlers)
+TOP_COMMANDS = {
+    "store": lambda args, client: _run(
+        cli_handlers.handle_store, client, args.file_path
+    ),
+    "download": lambda args, client: _run(
+        cli_handlers.handle_download, client, args.file_id, args.output_path
+    ),
+    "delete": lambda args, client: _run(
+        cli_handlers.handle_delete,
+        client,
+        args.file_id,
+        force=args.force if hasattr(args, "force") else False,
+    ),
+    "credits": lambda args, client: _run(cli_handlers.handle_credits, client),
+    "files": lambda args, client: _run(cli_handlers.handle_files, client),
+}
+
+# Nested command groups: command -> (action_attr, dispatch_table, help_name)
+NESTED_COMMANDS = {
+    "config": ("config_action", CONFIG_COMMANDS, "config"),
+    "account": ("account_action", ACCOUNT_COMMANDS, "account"),
+    "miner": ("miner_action", MINER_COMMANDS, "miner"),
+}
 
 
 def main():
     """Main CLI entry point for hippius command."""
     # Parse arguments
     args = parse_arguments()
+    _configure_logging(getattr(args, "verbose", False))
 
     if not args.command:
         # Display the Hippius logo banner with Rich formatting
         draw_logo()
 
-        # Use Rich formatting for help text
-        from hippius_sdk.cli_rich import print_help_text
+        from hippius_sdk.cli_ui import print_help_text
 
         print_help_text(create_parser())
+        return
 
     try:
-        # Parse miner IDs if provided
-        miner_ids = None
-        if args.miner_ids:
-            miner_ids = [miner.strip() for miner in args.miner_ids.split(",")]
-        elif os.getenv("SUBSTRATE_DEFAULT_MINERS"):
-            miner_ids = [
-                miner.strip()
-                for miner in os.getenv("SUBSTRATE_DEFAULT_MINERS").split(",")
-            ]
-
         # Create client
         client = cli_handlers.create_client(args)
 
-        # Helper function to handle async handlers
-        def run_async_handler(handler_func: Callable, *args, **kwargs) -> int:
-            # Check if the handler is async
-            if inspect.iscoroutinefunction(handler_func):
-                # Run the async handler in the event loop
-                return asyncio.run(handler_func(*args, **kwargs))
-            else:
-                # Run the handler directly
-                return handler_func(*args, **kwargs)
+        # Try top-level commands first
+        if args.command in TOP_COMMANDS:
+            return TOP_COMMANDS[args.command](args, client)
 
-        # Process encrypted flags for common parameters
-        encrypt = True if args.encrypt else (False if args.no_encrypt else None)
-        decrypt = True if args.decrypt else (False if args.no_decrypt else None)
+        # Try nested command groups
+        if args.command in NESTED_COMMANDS:
+            action_attr, dispatch_table, help_name = NESTED_COMMANDS[args.command]
+            action = getattr(args, action_attr, None)
 
-        # Substrate client has been deprecated - password handling moved to API client
+            # Special case: account balance needs address resolution
+            if args.command == "account" and action == "balance":
+                return _handle_account_balance(args, client)
 
-        # Handle commands with the helper function
-        if args.command == "download":
-            return run_async_handler(
-                cli_handlers.handle_download,
-                client,
-                args.cid,
-                args.output_path,
-                decrypt=decrypt,
-            )
+            if action in dispatch_table:
+                handler = dispatch_table[action]
+                result = handler(args, client)
+                # Wrap async results
+                if inspect.isawaitable(result):
+                    return asyncio.run(result)
+                return result
 
-        elif args.command == "exists":
-            return run_async_handler(cli_handlers.handle_exists, client, args.cid)
+            return _show_subcommand_help(help_name)
 
-        elif args.command == "cat":
-            return run_async_handler(
-                cli_handlers.handle_cat,
-                client,
-                args.cid,
-                args.max_size,
-                decrypt=decrypt,
-            )
-
-        elif args.command == "store" or args.command == "add":
-            return run_async_handler(
-                cli_handlers.handle_store,
-                client,
-                args.file_path,
-                miner_ids,
-                encrypt=encrypt,
-                publish=not args.no_publish if hasattr(args, "no_publish") else True,
-            )
-
-        elif args.command == "store-dir":
-            return run_async_handler(
-                cli_handlers.handle_store_dir,
-                client,
-                args.dir_path,
-                miner_ids,
-                encrypt=encrypt,
-                publish=not args.no_publish if hasattr(args, "no_publish") else True,
-            )
-
-        elif args.command == "credits":
-            return run_async_handler(
-                cli_handlers.handle_credits, client, args.account_address
-            )
-
-        elif args.command == "files":
-            return run_async_handler(
-                cli_handlers.handle_files,
-                client,
-                args.account_address if hasattr(args, "account_address") else None,
-                show_all_miners=(
-                    args.all_miners if hasattr(args, "all_miners") else False
-                ),
-                file_cid=args.cid if hasattr(args, "cid") else None,
-                include_pending=(
-                    args.include_pending if hasattr(args, "include_pending") else False
-                ),
-                search=args.search if hasattr(args, "search") else None,
-                ordering=args.ordering if hasattr(args, "ordering") else None,
-                page=args.page if hasattr(args, "page") else None,
-                output_format=getattr(args, "output_format", "table"),
-                quiet=getattr(args, "quiet", False),
-                limit=getattr(args, "limit", 25),
-                no_truncate=getattr(args, "no_truncate", False),
-            )
-
-        elif args.command == "ec-files":
-            return run_async_handler(
-                cli_handlers.handle_ec_files,
-                client,
-                args.account_address if hasattr(args, "account_address") else None,
-                show_all_miners=(
-                    args.all_miners if hasattr(args, "all_miners") else False
-                ),
-                show_chunks=args.show_chunks if hasattr(args, "show_chunks") else False,
-                filter_metadata_cid=args.cid if hasattr(args, "cid") else None,
-            )
-
-        elif args.command == "erasure-code":
-            return run_async_handler(
-                cli_handlers.handle_erasure_code,
-                client,
-                args.file_path,
-                args.k,
-                args.m,
-                args.chunk_size,
-                miner_ids,
-                encrypt=args.encrypt if hasattr(args, "encrypt") else None,
-                publish=not args.no_publish if hasattr(args, "no_publish") else True,
-                verbose=args.verbose,
-            )
-
-        elif args.command == "reconstruct":
-            return run_async_handler(
-                cli_handlers.handle_reconstruct,
-                client,
-                args.metadata_cid,
-                args.output_file,
-                verbose=args.verbose,
-            )
-
-        elif args.command == "delete":
-            return run_async_handler(
-                cli_handlers.handle_delete,
-                client,
-                args.cid,
-                force=args.force if hasattr(args, "force") else False,
-            )
-
-        elif args.command == "pin":
-            return run_async_handler(
-                cli_handlers.handle_pin,
-                client,
-                args.cid,
-                publish=not args.no_publish if hasattr(args, "no_publish") else True,
-                miner_ids=miner_ids,
-            )
-
-        elif args.command == "ec-delete":
-            return run_async_handler(
-                cli_handlers.handle_ec_delete,
-                client,
-                args.metadata_cid,
-                force=args.force if hasattr(args, "force") else False,
-            )
-
-        elif args.command == "keygen":
-            # Generate and save an encryption key
-            copy_to_clipboard = args.copy if hasattr(args, "copy") else False
-            encryption_key = generate_encryption_key(
-                copy_to_clipboard=copy_to_clipboard
-            )
-
-            # Display the key
-            click.echo()
-            click.secho("Your encryption key:", fg="green", bold=True)
-            click.secho(encryption_key, fg="yellow")
-
-            if hasattr(args, "save") and args.save:
-                click.echo()
-                click.secho("Saving encryption key to configuration...", bold=True)
-                cli_handlers.handle_config_set(
-                    "encryption", "encryption_key", encryption_key
-                )
-                click.echo(
-                    click.style("Encryption key saved.", fg="green")
-                    + " Files will not be automatically encrypted unless you set encryption.encrypt_by_default to true"
-                )
-            return 0
-
-        elif args.command == "config":
-            if args.config_action == "get":
-                return cli_handlers.handle_config_get(args.section, args.key)
-            elif args.config_action == "set":
-                return cli_handlers.handle_config_set(
-                    args.section, args.key, args.value
-                )
-            elif args.config_action == "list":
-                return cli_handlers.handle_config_list()
-            elif args.config_action == "reset":
-                return cli_handlers.handle_config_reset()
-            elif args.config_action == "import-env":
-                initialize_from_env()
-                click.echo(
-                    "Successfully imported configuration from environment variables"
-                )
-                return 0
-            else:
-                # Display the Hippius logo banner with Rich formatting
-                draw_logo()
-
-                config_parser = get_subparser("config")
-                from hippius_sdk.cli_rich import print_help_text
-
-                print_help_text(config_parser)
-                return 1
-
-        # Handle the account commands
-        elif args.command == "account":
-            if args.account_action == "list":
-                return cli_handlers.handle_account_list()
-            elif args.account_action == "export":
-                return cli_handlers.handle_account_export(
-                    client,
-                    args.name if hasattr(args, "name") else None,
-                    args.file_path if hasattr(args, "file_path") else None,
-                )
-            elif args.account_action == "import" and hasattr(args, "file_path"):
-                return cli_handlers.handle_account_import(
-                    client,
-                    args.file_path,
-                    encrypt=args.encrypt if hasattr(args, "encrypt") else False,
-                )
-            elif args.account_action == "switch" and hasattr(args, "account_name"):
-                return cli_handlers.handle_account_switch(args.account_name)
-            elif args.account_action == "delete" and hasattr(args, "account_name"):
-                return cli_handlers.handle_account_delete(args.account_name)
-            elif args.account_action == "login":
-                return cli_handlers.handle_account_login()
-            elif args.account_action == "login-seed":
-                return cli_handlers.handle_account_login_seed()
-            elif args.account_action == "info":
-                return cli_handlers.handle_account_info(
-                    args.name if hasattr(args, "name") else None
-                )
-            elif args.account_action == "balance":
-                # Get account address - prioritize direct address over account name
-                account_address = None
-                if hasattr(args, "address") and args.address:
-                    # If address is directly provided, use it
-                    account_address = args.address
-                elif hasattr(args, "name") and args.name:
-                    # If name is provided, get the address from the account
-                    try:
-                        account_address = cli_handlers.get_account_address(args.name)
-                    except Exception as e:
-                        error(f"Error getting address for account '{args.name}': {e}")
-                        return 1
-
-                return run_async_handler(
-                    cli_handlers.handle_account_balance,
-                    client,
-                    account_address,
-                )
-            else:
-                # Display the Hippius logo banner with Rich formatting
-                draw_logo()
-
-                account_parser = get_subparser("account")
-                from hippius_sdk.cli_rich import print_help_text
-
-                print_help_text(account_parser)
-                return 1
-
-        # Handle address commands
-        elif args.command == "address":
-            if args.address_action == "set-default" and hasattr(args, "address"):
-                return cli_handlers.handle_default_address_set(args.address)
-            elif args.address_action == "get-default":
-                return cli_handlers.handle_default_address_get()
-            elif args.address_action == "clear-default":
-                return cli_handlers.handle_default_address_clear()
-            else:
-                # Display the Hippius logo banner with Rich formatting
-                draw_logo()
-
-                address_parser = get_subparser("address")
-                from hippius_sdk.cli_rich import print_help_text
-
-                print_help_text(address_parser)
-                return 1
-
-        # Handle miner commands
-        elif args.command == "miner":
-            if args.miner_action == "register-coldkey":
-                return run_async_handler(
-                    cli_handlers.handle_register_coldkey,
-                    client,
-                    args.node_id,
-                    args.node_priv_hex,
-                    args.node_type,
-                    ipfs_config=getattr(args, "ipfs_config", None),
-                    ipfs_priv_b64=getattr(args, "ipfs_priv_b64", None),
-                    ipfs_peer_id=getattr(args, "ipfs_peer_id", None),
-                    pay_in_credits=getattr(args, "pay_in_credits", False),
-                    expires_in=getattr(args, "expires_in", 10),
-                    block_width=getattr(args, "block_width", "u32"),
-                    domain=getattr(args, "domain", "HIPPIUS::REGISTER::v1"),
-                    nonce_hex=getattr(args, "nonce_hex", None),
-                    dry_run=getattr(args, "dry_run", False),
-                )
-            elif args.miner_action == "register-hotkey":
-                return run_async_handler(
-                    cli_handlers.handle_register_hotkey,
-                    client,
-                    args.coldkey,
-                    args.node_id,
-                    args.node_priv_hex,
-                    args.node_type,
-                    ipfs_config=getattr(args, "ipfs_config", None),
-                    ipfs_priv_b64=getattr(args, "ipfs_priv_b64", None),
-                    ipfs_peer_id=getattr(args, "ipfs_peer_id", None),
-                    pay_in_credits=getattr(args, "pay_in_credits", False),
-                    expires_in=getattr(args, "expires_in", 10),
-                    block_width=getattr(args, "block_width", "u32"),
-                    domain=getattr(args, "domain", "HIPPIUS::REGISTER::v1"),
-                    nonce_hex=getattr(args, "nonce_hex", None),
-                    dry_run=getattr(args, "dry_run", False),
-                )
-            elif args.miner_action == "verify-node":
-                return run_async_handler(
-                    cli_handlers.handle_verify_node,
-                    client,
-                    args.node_id,
-                    args.node_priv_hex,
-                    ipfs_config=getattr(args, "ipfs_config", None),
-                    ipfs_priv_b64=getattr(args, "ipfs_priv_b64", None),
-                    ipfs_peer_id=getattr(args, "ipfs_peer_id", None),
-                    expires_in=getattr(args, "expires_in", 10),
-                    block_width=getattr(args, "block_width", "u32"),
-                    domain=getattr(args, "domain", "HIPPIUS::REGISTER::v1"),
-                    nonce_hex=getattr(args, "nonce_hex", None),
-                    dry_run=getattr(args, "dry_run", False),
-                )
-            elif args.miner_action == "verify-coldkey-node":
-                return run_async_handler(
-                    cli_handlers.handle_verify_coldkey_node,
-                    client,
-                    args.node_id,
-                    args.node_priv_hex,
-                    ipfs_config=getattr(args, "ipfs_config", None),
-                    ipfs_priv_b64=getattr(args, "ipfs_priv_b64", None),
-                    ipfs_peer_id=getattr(args, "ipfs_peer_id", None),
-                    expires_in=getattr(args, "expires_in", 10),
-                    block_width=getattr(args, "block_width", "u32"),
-                    domain=getattr(args, "domain", "HIPPIUS::REGISTER::v1"),
-                    nonce_hex=getattr(args, "nonce_hex", None),
-                    dry_run=getattr(args, "dry_run", False),
-                )
-            else:
-                # Display the Hippius logo banner with Rich formatting
-                draw_logo()
-
-                miner_parser = get_subparser("miner")
-                from hippius_sdk.cli_rich import print_help_text
-
-                print_help_text(miner_parser)
-                return 1
-
-        else:
-            # Command not recognized
-            error(f"Unknown command: [bold]{args.command}[/bold]")
-            return 1
+        # Command not recognized
+        error(f"Unknown command: [bold]{args.command}[/bold]")
+        return 1
 
     except KeyboardInterrupt:
         error("\nOperation cancelled by user")
@@ -468,55 +246,6 @@ def main():
             click.secho("Traceback:", fg="red", bold=True)
             traceback.print_exc()
         return 1
-
-
-def standalone_key_generation_cli():
-    """Standalone CLI tool for generating encryption keys."""
-    # Check if help flag is present
-    if "--help" in sys.argv or "-h" in sys.argv:
-        # Display the logo and help text with nice formatting
-        draw_logo()
-
-    # Parse arguments
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Generate an encryption key for Hippius SDK"
-    )
-    parser.add_argument(
-        "--clipboard",
-        "-c",
-        action="store_true",
-        help="Copy the key to clipboard",
-    )
-    parser.add_argument(
-        "--save", "-s", action="store_true", help="Save the key to configuration"
-    )
-
-    args = parser.parse_args()
-
-    # Display encryption key generator title
-    click.secho("Encryption Key Generator", fg="blue", bold=True)
-    click.echo()
-
-    # Generate and display the key
-    key = generate_encryption_key(copy_to_clipboard=args.clipboard)
-
-    # Display the key
-    click.echo()
-    click.secho("Your encryption key:", bold=True)
-    click.secho(key, fg="yellow")
-
-    # Save to config if requested
-    if args.save:
-        from hippius_sdk import cli_handlers
-
-        cli_handlers.handle_config_set("encryption", "encryption_key", key)
-        click.echo()
-        click.echo(
-            click.style("Encryption key saved to configuration.", fg="green")
-            + " Files will not be automatically encrypted unless you set encryption.encrypt_by_default to true."
-        )
 
 
 if __name__ == "__main__":

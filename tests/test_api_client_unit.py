@@ -21,7 +21,7 @@ class TestApiClientUnit:
     async def test_get_auth_headers(self):
         """Test authentication header generation."""
         client = HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="test_key_12345"
+            api_url="https://test.api.com", api_token="test_key_12345"
         )
 
         headers = client._get_headers()
@@ -33,7 +33,7 @@ class TestApiClientUnit:
 
     async def test_get_auth_headers_from_config(self):
         """Test authentication header from config."""
-        with patch("hippius_sdk.api_client.get_hippius_key") as mock_get_key:
+        with patch("hippius_sdk.api_client.get_api_token") as mock_get_key:
             mock_get_key.return_value = "key_from_config"
 
             client = HippiusApiClient(api_url="https://test.api.com")
@@ -44,10 +44,8 @@ class TestApiClientUnit:
             await client.close()
 
     async def test_get_credits_mocked(self):
-        """Test get_credits with mocked response."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="test_key"
-        )
+        """Test get_account_balance with mocked response."""
+        client = HippiusApiClient(api_url="https://test.api.com", api_token="test_key")
 
         # Mock the httpx client
         mock_response = Mock(spec=Response)
@@ -65,89 +63,28 @@ class TestApiClientUnit:
 
         await client.close()
 
-    async def test_list_files_mocked(self):
-        """Test list_files with mocked response."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="test_key"
-        )
+    async def test_validate_token_mocked(self):
+        """Test validate_token with mocked response."""
+        client = HippiusApiClient(api_url="https://test.api.com", api_token="test_key")
 
         mock_response = Mock(spec=Response)
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "results": [
-                {"id": "file1", "cid": "QmTest1", "name": "test1.txt"},
-                {"id": "file2", "cid": "QmTest2", "name": "test2.txt"},
-            ]
+            "substrate_address": "5TestAddress123",
+            "evm_address": "0xABC123",
+            "wallet_verified": True,
         }
         mock_response.raise_for_status = Mock()
 
         with patch.object(client._client, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_response
 
-            files = await client.list_files()
+            result = await client.validate_token("test_token_abc")
 
-            assert isinstance(files, list)
-            assert len(files) == 2
-            assert files[0]["cid"] == "QmTest1"
-
-        await client.close()
-
-    async def test_pin_file_mocked(self):
-        """Test pin_file with mocked response."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="test_key"
-        )
-
-        mock_response = Mock(spec=Response)
-        mock_response.status_code = 201
-        mock_response.json.return_value = {
-            "id": "request123",
-            "type": "Pin",
-            "cid": "QmTest",
-            "status": "pending",
-        }
-        mock_response.raise_for_status = Mock()
-
-        with patch.object(client._client, "post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = mock_response
-
-            result = await client.pin_file("QmTest", "test.txt")
-
-            assert result["id"] == "request123"
-            assert result["type"] == "Pin"
-            mock_post.assert_called_once()
-
-        await client.close()
-
-    async def test_unpin_file_mocked(self):
-        """Test unpin_file with mocked response."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="test_key"
-        )
-
-        mock_response = Mock(spec=Response)
-        mock_response.status_code = 201
-        mock_response.json.return_value = {
-            "id": "request456",
-            "request_type": "Unpin",
-            "cid": "QmTest",
-            "status": "pending",
-        }
-        mock_response.raise_for_status = Mock()
-
-        with patch.object(client._client, "post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = mock_response
-
-            result = await client.unpin_file("QmTest")
-
-            assert result["request_type"] == "Unpin"
-            mock_post.assert_called_once()
-
-            call_args = mock_post.call_args
-            assert "json" in call_args.kwargs
-            payload = call_args.kwargs["json"]
-            assert payload["cid"] == "QmTest"
-            assert payload["request_type"] == "Unpin"
+            assert result.substrate_address == "5TestAddress123"
+            assert result.evm_address == "0xABC123"
+            assert result.wallet_verified is True
+            mock_get.assert_called_once()
 
         await client.close()
 
@@ -235,7 +172,7 @@ class TestApiClientErrorHandling:
     async def test_auth_error_on_401(self):
         """Test that 401 raises HippiusAuthenticationError."""
         client = HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="invalid_key"
+            api_url="https://test.api.com", api_token="invalid_key"
         )
 
         from httpx import HTTPStatusError, Request, Response
@@ -252,26 +189,6 @@ class TestApiClientErrorHandling:
 
         await client.close()
 
-    async def test_api_error_on_404(self):
-        """Test that 404 raises appropriate error."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="test_key"
-        )
-
-        from httpx import HTTPStatusError, Request, Response
-
-        response = Response(404, request=Request("GET", "http://test.com"))
-
-        with patch.object(client._client, "get", new_callable=AsyncMock) as mock_get:
-            mock_get.side_effect = HTTPStatusError(
-                "Not found", request=response.request, response=response
-            )
-
-            with pytest.raises(Exception):  # Will be caught by retry, then raised
-                await client.get_file_details("nonexistent")
-
-        await client.close()
-
 
 @pytest.mark.asyncio
 class TestApiClientContextManager:
@@ -280,7 +197,7 @@ class TestApiClientContextManager:
     async def test_context_manager_closes_client(self):
         """Test that context manager properly closes the client."""
         async with HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="test_key"
+            api_url="https://test.api.com", api_token="test_key"
         ) as client:
             assert client._client is not None
 
@@ -289,9 +206,7 @@ class TestApiClientContextManager:
 
     async def test_explicit_close(self):
         """Test explicit close method."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="test_key"
-        )
+        client = HippiusApiClient(api_url="https://test.api.com", api_token="test_key")
 
         await client.close()
 
@@ -300,92 +215,12 @@ class TestApiClientContextManager:
 
 
 @pytest.mark.asyncio
-class TestApiClientParameterHandling:
-    """Test parameter handling in API client methods."""
-
-    async def test_list_files_with_cid_parameter(self):
-        """Test that list_files passes CID parameter correctly."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="test_key"
-        )
-
-        mock_response = Mock(spec=Response)
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"results": []}
-        mock_response.raise_for_status = Mock()
-
-        with patch.object(client._client, "get", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = mock_response
-
-            await client.list_files(cid="QmTest123")
-
-            # Verify the CID was passed in params
-            call_args = mock_get.call_args
-            assert "params" in call_args.kwargs
-            assert call_args.kwargs["params"]["cid"] == "QmTest123"
-
-        await client.close()
-
-    async def test_list_files_with_include_pending_parameter(self):
-        """Test that list_files passes include_pending parameter correctly."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="test_key"
-        )
-
-        mock_response = Mock(spec=Response)
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "results": [
-                {"cid": "QmTest1", "status": "Pending"},
-                {"cid": "QmTest2", "status": "Active"},
-            ]
-        }
-        mock_response.raise_for_status = Mock()
-
-        with patch.object(client._client, "get", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = mock_response
-
-            files = await client.list_files(include_pending=True)
-
-            call_args = mock_get.call_args
-            assert "params" in call_args.kwargs
-            assert call_args.kwargs["params"]["include_pending"] == "true"
-            assert len(files) == 2
-
-        await client.close()
-
-    async def test_pin_file_with_hippius_key_override(self):
-        """Test that pin_file can override HIPPIUS_KEY."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="default_key"
-        )
-
-        mock_response = Mock(spec=Response)
-        mock_response.status_code = 201
-        mock_response.json.return_value = {"id": "request123"}
-        mock_response.raise_for_status = Mock()
-
-        with patch.object(client._client, "post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = mock_response
-
-            await client.pin_file("QmTest", "test.txt", hippius_key="override_key")
-
-            # Verify override key was used
-            call_args = mock_post.call_args
-            assert call_args.kwargs["headers"]["Authorization"] == "Token override_key"
-
-        await client.close()
-
-
-@pytest.mark.asyncio
 class TestApiClientResponseParsing:
     """Test response parsing in API client."""
 
     async def test_get_credits_handles_different_response_formats(self):
-        """Test that get_credits handles various response formats."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="test_key"
-        )
+        """Test that get_account_balance handles various response formats."""
+        client = HippiusApiClient(api_url="https://test.api.com", api_token="test_key")
 
         # Test actual API format: {"balance": "1.000000000000000000", "last_updated": "..."}
         mock_response = Mock(spec=Response)
@@ -404,32 +239,5 @@ class TestApiClientResponseParsing:
             assert "balance" in result
             assert result["balance"] == "100.500000000000000000"
             assert "last_updated" in result
-
-        await client.close()
-
-    async def test_list_files_handles_pagination_response(self):
-        """Test that list_files handles paginated responses."""
-        client = HippiusApiClient(
-            api_url="https://test.api.com", hippius_key="test_key"
-        )
-
-        mock_response = Mock(spec=Response)
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "results": [{"id": "1"}, {"id": "2"}],
-            "count": 2,
-            "next": None,
-            "previous": None,
-        }
-        mock_response.raise_for_status = Mock()
-
-        with patch.object(client._client, "get", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = mock_response
-
-            files = await client.list_files()
-
-            # Should extract results array
-            assert isinstance(files, list)
-            assert len(files) == 2
 
         await client.close()

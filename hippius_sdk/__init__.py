@@ -1,51 +1,47 @@
 """
-Hippius SDK - Python interface for Hippius blockchain storage
+Hippius SDK - Python interface for Hippius storage
 """
 
-from hippius_sdk.client import HippiusClient
-from hippius_sdk.config import (
-    decrypt_hippius_key,
+from hippius_sdk.arion import ArionClient
+from hippius_sdk.accounts import (
+    decrypt_api_token,
     delete_account,
-    encrypt_hippius_key,
+    encrypt_api_token,
     encrypt_seed_phrase,
     get_account_address,
     get_active_account,
+    get_api_token,
+    get_seed_phrase,
+    list_accounts,
+    set_active_account,
+    set_api_token,
+    set_seed_phrase,
+)
+from hippius_sdk.config import (
     get_all_config,
     get_config_value,
-    get_encryption_key,
-    get_hippius_key,
-    get_seed_phrase,
-    initialize_from_env,
-    list_accounts,
     load_config,
     reset_config,
     save_config,
-    set_active_account,
     set_config_value,
-    set_encryption_key,
-    set_hippius_key,
-    set_seed_phrase,
 )
-from hippius_sdk.ipfs import IPFSClient
-from hippius_sdk.utils import format_cid, format_size, hex_to_ipfs_cid
+from hippius_sdk.hcfs import HcfsManager
+from hippius_sdk.utils import format_size
 
 __version__ = "0.2.70"
 __all__ = [
-    "HippiusClient",
-    "IPFSClient",
+    "ArionClient",
+    "HcfsManager",
     "get_config_value",
     "set_config_value",
-    "get_encryption_key",
-    "set_encryption_key",
     "load_config",
     "save_config",
-    "initialize_from_env",
     "get_all_config",
     "reset_config",
-    "get_hippius_key",
-    "set_hippius_key",
-    "encrypt_hippius_key",
-    "decrypt_hippius_key",
+    "get_api_token",
+    "set_api_token",
+    "encrypt_api_token",
+    "decrypt_api_token",
     "get_active_account",
     "set_active_account",
     "list_accounts",
@@ -54,12 +50,5 @@ __all__ = [
     "get_seed_phrase",
     "set_seed_phrase",
     "encrypt_seed_phrase",
-    "format_cid",
     "format_size",
-    "hex_to_ipfs_cid",
 ]
-
-# Initialize configuration from environment variables for backward compatibility
-initialize_from_env()
-
-# Note: Substrate functionality will be added in a future release
