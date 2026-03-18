@@ -22,7 +22,8 @@ def mock_client():
 
 
 @pytest.mark.asyncio
-async def test_download_success(mock_client):
+@patch("hippius_sdk.cli_handlers_file._enable_encryption")
+async def test_download_success(mock_enc, mock_client):
     """Returns 0 with valid result dict."""
     mock_client.download_file.return_value = {
         "output_path": "/tmp/output.txt",

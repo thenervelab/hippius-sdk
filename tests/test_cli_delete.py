@@ -20,7 +20,8 @@ def mock_client():
 
 
 @pytest.mark.asyncio
-async def test_delete_forced(mock_client):
+@patch("hippius_sdk.cli_handlers_file._enable_encryption")
+async def test_delete_forced(mock_enc, mock_client):
     """force=True skips confirmation, returns 0."""
     mock_client.delete_file.return_value = {
         "status": "deleted",
@@ -33,8 +34,9 @@ async def test_delete_forced(mock_client):
 
 
 @pytest.mark.asyncio
+@patch("hippius_sdk.cli_handlers_file._enable_encryption")
 @patch("hippius_sdk.cli_handlers_file.click.confirm", return_value=False)
-async def test_delete_cancelled(mock_confirm, mock_client):
+async def test_delete_cancelled(mock_confirm, mock_enc, mock_client):
     """User declines, returns 0."""
     result = await handle_delete(mock_client, "abc123", force=False)
     assert result == 0

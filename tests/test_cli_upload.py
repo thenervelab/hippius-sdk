@@ -36,7 +36,8 @@ async def test_store_not_a_file(mock_client, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_store_success(mock_client, tmp_path):
+@patch("hippius_sdk.cli_handlers_file._enable_encryption")
+async def test_store_success(mock_enc, mock_client, tmp_path):
     """Returns 0, calls upload_file."""
     test_file = tmp_path / "test.txt"
     test_file.write_text("hello world")
