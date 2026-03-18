@@ -6,12 +6,16 @@ import time
 
 import click
 
+from hcfs_client import Drive
+
 from hippius_sdk import (
     ArionClient,
     format_size,
+    get_active_account,
     get_config_value,
 )
 from hippius_sdk.api_client import HippiusApiClient
+from hippius_sdk.hcfs import get_drive_dir
 from hippius_sdk.cli_ui import (
     _console,
     create_progress,
@@ -21,6 +25,34 @@ from hippius_sdk.cli_ui import (
     print_panel,
     warning,
 )
+
+
+def _enable_encryption(client: ArionClient):
+    """
+    Enable HCFS encryption on the client for the active account.
+
+    Reuses the password already collected during client creation.
+    Falls back to HIPPIUS_ENCRYPTION_PASSWORD env var or interactive prompt.
+    """
+    account_name = get_active_account()
+    if not account_name:
+        error("No active account. Run: hippius account login")
+        raise SystemExit(1)
+
+    drive_dir = get_drive_dir(account_name)
+    drive = Drive(drive_dir)
+    if not drive.is_initialized():
+        error("Encryption not initialized. Run: hippius account login")
+        raise SystemExit(1)
+
+    # Reuse password from client creation, fall back to env var or prompt
+    password = client._password
+    if not password:
+        password = os.environ.get("HIPPIUS_ENCRYPTION_PASSWORD")
+    if not password:
+        password = click.prompt("Encryption password", hide_input=True)
+
+    client.enable_encryption(password, config_dir=drive_dir)
 
 
 async def handle_store(
@@ -35,6 +67,8 @@ async def handle_store(
     if not os.path.isfile(file_path):
         error(f"[bold]{file_path}[/bold] is not a file")
         return 1
+
+    _enable_encryption(client)
 
     # Get file size for display
     file_size = os.path.getsize(file_path)
@@ -99,6 +133,8 @@ async def handle_download(
     output_path: str,
 ) -> int:
     """Handle the download command"""
+    _enable_encryption(client)
+
     info(
         f"Downloading [bold cyan]{file_id}[/bold cyan] to [bold]{output_path}[/bold]..."
     )
@@ -121,6 +157,8 @@ async def handle_download(
 
 async def handle_delete(client: ArionClient, file_id: str, force: bool = False) -> int:
     """Handle the delete command"""
+    _enable_encryption(client)
+
     info(f"Preparing to delete file: [bold cyan]{file_id}[/bold cyan]")
 
     if not force:

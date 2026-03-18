@@ -96,6 +96,40 @@ def retry_on_error(
     return decorator
 
 
+async def _log_request(request: httpx.Request):
+    """Log outgoing HTTP request details at DEBUG level."""
+    headers = dict(request.headers)
+    # Mask sensitive headers for safety
+    for key in ("authorization", "x-api-key"):
+        if key in headers:
+            val = headers[key]
+            if len(val) > 15:
+                headers[key] = val[:12] + "..."
+    logger.debug(
+        "HTTP %s %s headers=%s",
+        request.method,
+        request.url,
+        headers,
+    )
+    if request.content:
+        body = request.content[:1024]
+        logger.debug("HTTP request body: %s", body)
+
+
+async def _log_response(response: httpx.Response):
+    """Log incoming HTTP response details at DEBUG level."""
+    await response.aread()
+    logger.debug(
+        "HTTP %s %s -> %s (%s bytes)",
+        response.request.method,
+        response.request.url,
+        response.status_code,
+        len(response.content),
+    )
+    if not response.is_success and response.content:
+        logger.debug("HTTP response body: %s", response.text[:2048])
+
+
 def create_http_client(base_url: str) -> httpx.AsyncClient:
     """
     Create a configured httpx.AsyncClient with standard timeout and redirect settings.
@@ -110,4 +144,8 @@ def create_http_client(base_url: str) -> httpx.AsyncClient:
         base_url=base_url,
         timeout=httpx.Timeout(60.0, connect=10.0),
         follow_redirects=True,
+        event_hooks={
+            "request": [_log_request],
+            "response": [_log_response],
+        },
     )

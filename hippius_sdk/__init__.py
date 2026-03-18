@@ -3,35 +3,35 @@ Hippius SDK - Python interface for Hippius storage
 """
 
 from hippius_sdk.arion import ArionClient
-
-# Backward-compat alias — HippiusClient was a thin wrapper around ArionClient
-HippiusClient = ArionClient
-from hippius_sdk.config import (
+from hippius_sdk.accounts import (
     decrypt_api_token,
     delete_account,
     encrypt_api_token,
     encrypt_seed_phrase,
     get_account_address,
     get_active_account,
-    get_all_config,
     get_api_token,
-    get_config_value,
     get_seed_phrase,
     list_accounts,
+    set_active_account,
+    set_api_token,
+    set_seed_phrase,
+)
+from hippius_sdk.config import (
+    get_all_config,
+    get_config_value,
     load_config,
     reset_config,
     save_config,
-    set_active_account,
-    set_api_token,
     set_config_value,
-    set_seed_phrase,
 )
+from hippius_sdk.hcfs import HcfsManager
 from hippius_sdk.utils import format_size
 
 __version__ = "0.2.70"
 __all__ = [
-    "HippiusClient",
     "ArionClient",
+    "HcfsManager",
     "get_config_value",
     "set_config_value",
     "load_config",
@@ -52,5 +52,3 @@ __all__ = [
     "encrypt_seed_phrase",
     "format_size",
 ]
-
-# Note: Substrate functionality will be added in a future release

@@ -8,11 +8,11 @@ API Documentation: https://api.hippius.com/?format=openapi
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from pydantic import BaseModel
 
-from hippius_sdk.config import get_api_token
+from hippius_sdk.accounts import get_api_token
 from hippius_sdk.errors import HippiusAPIError
 from hippius_sdk.http_utils import create_http_client, retry_on_error
 

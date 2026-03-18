@@ -167,7 +167,7 @@ class TestAccountLogin:
     @patch("hippius_sdk.cli_handlers_account.HippiusApiClient")
     @patch(
         "hippius_sdk.cli_handlers_account.click.prompt",
-        side_effect=["testaccount", "my_api_token_123"],
+        side_effect=["testaccount", "my_api_token_123", "mypassword"],
     )
     @patch("hippius_sdk.cli_handlers_account.draw_logo")
     def test_account_login_success(
@@ -190,7 +190,16 @@ class TestAccountLogin:
         mock_api_instance.__aexit__ = AsyncMock(return_value=False)
         mock_api_class.return_value = mock_api_instance
 
-        result = handle_account_login()
+        # Mock encrypt_api_token and Drive for the login flow
+        mock_drive = MagicMock()
+        mock_drive.is_initialized.return_value = False
+        mock_drive.init.return_value = "word " * 23 + "word"
+
+        with patch("hippius_sdk.cli_handlers_account.encrypt_api_token"), patch(
+            "hippius_sdk.cli_handlers_account.Drive", return_value=mock_drive
+        ):
+            result = handle_account_login()
+
         assert result == 0
         mock_save.assert_called_once()
         saved_config = mock_save.call_args[0][0]
@@ -215,10 +224,7 @@ class TestAccountBalance:
         "hippius_sdk.cli_handlers_account.get_config_value",
         return_value="https://api.hippius.com/api",
     )
-    @patch("hippius_sdk.config.get_api_token", return_value="test_token")
-    async def test_account_balance_success(
-        self, mock_get_token, mock_get_config, mock_api_class
-    ):
+    async def test_account_balance_success(self, mock_get_config, mock_api_class):
         """Returns 0 with credit balance."""
         mock_api_instance = MagicMock()
         mock_api_instance.get_account_balance = AsyncMock(
@@ -237,9 +243,8 @@ class TestAccountBalance:
         "hippius_sdk.cli_handlers_account.get_config_value",
         return_value="https://api.hippius.com/api",
     )
-    @patch("hippius_sdk.config.get_api_token", return_value="test_token")
     async def test_account_balance_string_balance(
-        self, mock_get_token, mock_get_config, mock_api_class
+        self, mock_get_config, mock_api_class
     ):
         """Balance as string is handled."""
         mock_api_instance = MagicMock()

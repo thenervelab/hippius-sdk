@@ -9,10 +9,10 @@ from unittest.mock import patch
 
 import pytest
 
+from hippius_sdk.accounts import encrypt_api_token
 from hippius_sdk.config import (
     DEFAULT_CONFIG,
     _migrate_old_config,
-    encrypt_api_token,
     get_config_value,
     load_config,
     save_config,
@@ -99,7 +99,7 @@ class TestMigrateOldConfig:
 class TestEncryptDecryptRoundtrip:
     def test_encrypt_api_token_roundtrip(self, temp_config_dir):
         """Encrypt then decrypt returns the original token."""
-        from hippius_sdk.config import decrypt_api_token
+        from hippius_sdk.accounts import decrypt_api_token
 
         # Create an account first
         config = load_config()

@@ -3,14 +3,19 @@ Arion API Client for interacting with the Hippius Arion storage service.
 
 This module provides an HTTP-based client for file operations via the
 Arion service at https://arion.hippius.com/.
+
+All file operations (upload, download, delete) are routed through HCFS
+for client-side encryption. Call enable_encryption() before using file operations.
 """
 
 import logging
 import os
-from typing import Any, Dict
+import tempfile
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
 
+from hippius_sdk.config import get_config_value
 from hippius_sdk.errors import HippiusArionError
 from hippius_sdk.http_utils import create_http_client, retry_on_error
 from hippius_sdk.utils import format_size
@@ -62,6 +67,8 @@ class CanUploadResponse(BaseModel):
 class ArionClient:
     """
     HTTP API client for Hippius Arion storage service.
+
+    All file operations require HCFS encryption to be enabled via enable_encryption().
     """
 
     def __init__(
@@ -69,6 +76,7 @@ class ArionClient:
         base_url: str | None = None,
         api_token: str | None = None,
         account_address: str | None = None,
+        password: str | None = None,
     ) -> None:
         """
         Initialize the Arion API client.
@@ -77,11 +85,14 @@ class ArionClient:
             base_url: Arion base URL (default: https://arion.hippius.com)
             api_token: API token for Bearer authentication
             account_address: SS58 account address for file operations
+            password: Encryption password for HCFS operations
         """
         self.base_url = base_url or "https://arion.hippius.com"
         self._api_token = api_token
         self._account_address = account_address
+        self._password = password
         self._client = create_http_client(self.base_url)
+        self._hcfs_manager = None
 
     async def __aenter__(self) -> "ArionClient":
         """Async context manager entry."""
@@ -94,6 +105,46 @@ class ArionClient:
     async def close(self) -> None:
         """Close the HTTP client."""
         await self._client.aclose()
+
+    def enable_encryption(self, password: str, config_dir: Optional[str] = None):
+        """
+        Enable client-side encryption via HCFS.
+
+        Encryption must be initialized first via HcfsManager.init() or the CLI.
+
+        Args:
+            password: Password to unlock the encrypted mnemonic
+            config_dir: Path to HCFS drive directory (default: ~/.hippius/drive)
+        """
+        from hippius_sdk.hcfs import HcfsManager, DEFAULT_DRIVE_DIR
+
+        config_dir = config_dir or DEFAULT_DRIVE_DIR
+        hcfs_api_key = get_config_value("arion", "hcfs_api_key", "SERVER")
+        self._hcfs_manager = HcfsManager(
+            drive_dir=config_dir,
+            base_url=self.base_url,
+            api_key=hcfs_api_key,
+            bearer_token=self._api_token or "",
+            account_ss58=self._account_address or "",
+        )
+        self._password = password
+
+    @property
+    def encryption_enabled(self) -> bool:
+        """Whether client-side encryption is active."""
+        return self._hcfs_manager is not None and self._hcfs_manager.is_initialized()
+
+    def _require_encryption(self):
+        """Raise if HCFS encryption is not enabled."""
+        if self._hcfs_manager is None:
+            raise HippiusArionError(
+                "HCFS encryption not enabled. Call enable_encryption() first, "
+                "or run: hippius account login"
+            )
+        if not self._hcfs_manager.is_initialized():
+            raise HippiusArionError(
+                "HCFS encryption not initialized. Run: hippius account login"
+            )
 
     def _get_headers(self) -> Dict[str, str]:
         """
@@ -113,11 +164,9 @@ class ArionClient:
         file_name: str | None = None,
     ) -> Dict[str, Any]:
         """
-        Upload a file to Arion storage.
+        Upload a file to Arion storage via HCFS (encrypted).
 
-        Checks can_upload first, then uploads via multipart form.
-
-        Maps to: POST /upload
+        Maps to: copy to drive dir → sync
 
         Args:
             file_path: Path to the file to upload
@@ -127,54 +176,21 @@ class ArionClient:
             dict: Upload result with file_id, size_bytes, size_formatted, etc.
 
         Raises:
-            HippiusArionError: If the upload fails
+            HippiusArionError: If encryption is not enabled or the upload fails
             FileNotFoundError: If the file doesn't exist
         """
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        file_name = file_name or os.path.basename(file_path)
-        file_size = os.path.getsize(file_path)
+        self._require_encryption()
 
-        # Check if upload is permitted
-        can_upload_result = await self.can_upload(file_size)
-        if not can_upload_result.result:
-            error_msg = can_upload_result.error or "Upload not permitted"
-            raise HippiusArionError(f"Cannot upload: {error_msg}")
-
-        # Read file data
-        with open(file_path, "rb") as f:
-            file_data = f.read()
-
-        files = {
-            "file": (
-                file_name,
-                file_data,
-                "application/octet-stream",
-                {"Content-Length": str(len(file_data))},
-            ),
-        }
-        data = {"account_ss58": self._account_address}
-
-        headers = self._get_headers()
-        response = await self._client.post(
-            "/upload",
-            files=files,
-            data=data,
-            headers=headers,
-        )
-        response.raise_for_status()
-        response_json = response.json()
-
-        upload_response = UploadResponse.model_validate(response_json)
-        size_bytes = len(file_data)
+        result = await self._hcfs_manager.upload(file_path, self._password)
         return {
-            "file_id": upload_response.file_id,
-            "size_bytes": size_bytes,
-            "size_formatted": format_size(size_bytes),
-            "filename": file_name,
-            "upload_id": upload_response.upload_id,
-            "timestamp": upload_response.timestamp,
+            "file_id": result["file_id"],
+            "size_bytes": result["size_bytes"],
+            "size_formatted": format_size(result["size_bytes"]),
+            "filename": file_name or os.path.basename(file_path),
+            "encrypted": True,
         }
 
     async def download_file(
@@ -184,38 +200,30 @@ class ArionClient:
         chunk_size: int = 65536,
     ) -> dict:
         """
-        Download a file from Arion storage to a local path.
+        Download a file from Arion storage (decrypted via HCFS).
 
-        Maps to: GET /download/{account}/{file_id}
+        Maps to: HcfsClient.download()
 
         Args:
             file_id: File identifier
             output_path: Local path to save the downloaded file
-            chunk_size: Size of chunks for streaming download (default 64KB)
+            chunk_size: Unused (kept for API compatibility)
 
         Returns:
             dict: Download result with output_path and size_bytes
         """
-        headers = self._get_headers()
-        download_path = f"/download/{self._account_address}/{file_id}"
+        self._require_encryption()
 
-        total_bytes = 0
-        async with self._client.stream(
-            "GET",
-            download_path,
-            headers=headers,
-        ) as response:
-            response.raise_for_status()
-            with open(output_path, "wb") as f:
-                async for chunk in response.aiter_bytes(chunk_size):
-                    f.write(chunk)
-                    total_bytes += len(chunk)
-
+        await self._hcfs_manager.download(
+            self._account_address, file_id, output_path, self._password
+        )
+        size_bytes = os.path.getsize(output_path) if os.path.exists(output_path) else 0
         return {
             "output_path": output_path,
-            "size_bytes": total_bytes,
-            "size_formatted": format_size(total_bytes),
+            "size_bytes": size_bytes,
+            "size_formatted": format_size(size_bytes),
             "file_id": file_id,
+            "encrypted": True,
         }
 
     async def download_bytes(
@@ -224,31 +232,31 @@ class ArionClient:
         chunk_size: int = 65536,
     ) -> bytes:
         """
-        Download a file from Arion storage to memory.
+        Download a file from Arion storage to memory (decrypted via HCFS).
 
-        Maps to: GET /download/{account}/{file_id}
+        Downloads to a temp file, reads bytes, and cleans up.
 
         Args:
             file_id: File identifier
-            chunk_size: Size of chunks for streaming download (default 64KB)
+            chunk_size: Unused (kept for API compatibility)
 
         Returns:
-            bytes: File content
+            bytes: Decrypted file content
         """
-        headers = self._get_headers()
-        download_path = f"/download/{self._account_address}/{file_id}"
+        self._require_encryption()
 
-        chunks = []
-        async with self._client.stream(
-            "GET",
-            download_path,
-            headers=headers,
-        ) as response:
-            response.raise_for_status()
-            async for chunk in response.aiter_bytes(chunk_size):
-                chunks.append(chunk)
-
-        return b"".join(chunks)
+        tmp_fd, tmp_path = tempfile.mkstemp(prefix="hippius_dl_")
+        os.close(tmp_fd)
+        try:
+            await self._hcfs_manager.download(
+                self._account_address, file_id, tmp_path, self._password
+            )
+            with open(tmp_path, "rb") as f:
+                data = f.read()
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        return data
 
     @retry_on_error(retries=3, backoff=5.0, base_error_class=HippiusArionError)
     async def delete_file(
@@ -256,9 +264,9 @@ class ArionClient:
         file_id: str,
     ) -> Dict[str, str]:
         """
-        Delete a file from Arion storage.
+        Delete a file from Arion storage via HCFS.
 
-        Maps to: DELETE /delete/{account}/{file_id}
+        Removes the file from the drive directory and syncs.
 
         Args:
             file_id: File identifier
@@ -266,18 +274,12 @@ class ArionClient:
         Returns:
             dict: Deletion result with status and file_id
         """
-        headers = self._get_headers()
-        response = await self._client.delete(
-            f"/delete/{self._account_address}/{file_id}",
-            headers=headers,
-        )
-        response.raise_for_status()
-        response_json = response.json()
+        self._require_encryption()
 
-        parsed = DeleteSuccessResponse.model_validate(response_json)
+        await self._hcfs_manager.delete(self._account_address, file_id, self._password)
         return {
-            "status": parsed.Success.status,
-            "file_id": parsed.Success.file_id,
+            "status": "deleted",
+            "file_id": file_id,
         }
 
     @retry_on_error(retries=3, backoff=5.0, base_error_class=HippiusArionError)

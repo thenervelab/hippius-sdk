@@ -231,6 +231,22 @@ def add_account_commands(subparsers):
         help="Encrypt the imported credentials",
     )
 
+    # Account init-encryption
+    init_enc_parser = account_subparsers.add_parser(
+        "init-encryption",
+        help="Re-initialize HCFS file encryption (normally set up during login)",
+    )
+    init_enc_parser.add_argument(
+        "--mnemonic",
+        help="Existing 24-word recovery phrase (generates new if not provided)",
+    )
+
+    # Account show-mnemonic
+    account_subparsers.add_parser(
+        "show-mnemonic",
+        help="Display the saved encryption recovery phrase (requires password)",
+    )
+
 
 def add_miner_commands(subparsers):
     """Add miner registration/verification commands to the parser."""
@@ -282,11 +298,6 @@ def add_miner_commands(subparsers):
             default="u32",
             choices=["u32", "u64"],
             help="Block number encoding width (default: u32)",
-        )
-        parser.add_argument(
-            "--domain",
-            default="HIPPIUS::REGISTER::v1",
-            help="Challenge domain string (default: HIPPIUS::REGISTER::v1)",
         )
         parser.add_argument(
             "--nonce-hex",

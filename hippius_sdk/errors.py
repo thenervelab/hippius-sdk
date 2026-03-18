@@ -9,12 +9,6 @@ class HippiusError(Exception):
     pass
 
 
-class HippiusSubstrateError(HippiusError):
-    """Base exception for Substrate-related errors."""
-
-    pass
-
-
 class HippiusAPIError(HippiusError):
     """Base exception for API-related errors."""
 
@@ -29,11 +23,5 @@ class HippiusArionError(HippiusError):
 
 class HippiusAuthenticationError(HippiusAPIError):
     """Raised when there's an authentication issue with the API."""
-
-    pass
-
-
-class HippiusFailedSubstrateDelete(HippiusSubstrateError):
-    """Raised when deletion from blockchain storage fails."""
 
     pass

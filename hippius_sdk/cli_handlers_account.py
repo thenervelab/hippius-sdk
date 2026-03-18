@@ -7,22 +7,26 @@ import time
 from typing import Optional
 
 import click
-from substrateinterface import Keypair, SubstrateInterface
+from substrateinterface import SubstrateInterface
+
+from hcfs_client import Drive
 
 from hippius_sdk import (
     ArionClient,
     delete_account,
+    encrypt_api_token,
     get_account_address,
     get_active_account,
     get_config_value,
-    get_seed_phrase,
     list_accounts,
     load_config,
     save_config,
     set_active_account,
 )
 from hippius_sdk.api_client import HippiusApiClient
+from hippius_sdk.crypto import decrypt_hcfs_mnemonic
 from hippius_sdk.errors import HippiusAuthenticationError
+from hippius_sdk.hcfs import get_drive_dir, HCFS_METADATA_SUBDIR
 from hippius_sdk.cli_ui import (
     BRAND_COLOR,
     _console,
@@ -38,6 +42,20 @@ from hippius_sdk.cli_ui import (
     success,
     warning,
 )
+
+
+def _display_recovery_phrase(phrase: str):
+    """Display a recovery phrase with warnings."""
+    warning("IMPORTANT: Write down your recovery phrase and store it safely!")
+    warning(
+        "You will need it to recover your encryption keys if you lose your password."
+    )
+    click.echo()
+    click.secho("Recovery Phrase (24 words):", fg="yellow", bold=True)
+    click.echo()
+    click.echo(phrase)
+    click.echo()
+    click.secho("This phrase will NOT be shown again.", fg="red", bold=True)
 
 
 def handle_account_info(account_name: Optional[str] = None) -> int:
@@ -394,29 +412,28 @@ def handle_account_login() -> int:
 
     success(f"Token is valid! Account address: {account_address}")
 
-    # Step 4: Encryption
+    # Step 4: Encryption password (mandatory)
     click.echo()
-    draw_step(4, "Secure your account")
-    click.secho("Encrypting your API token adds an extra layer of security.", dim=True)
-    click.secho("Strongly recommended to protect your account.", fg="yellow", dim=True)
-    encrypt = click.confirm("Encrypt API token?", default=True)
+    draw_step(4, "Set your encryption password")
+    click.secho(
+        "This password encrypts your API token and initializes file encryption.",
+        dim=True,
+    )
+    click.secho(
+        "You'll need it whenever you use your account for operations.",
+        dim=True,
+    )
+    password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
 
-    # Set up encryption if requested
-    password = None
-    if encrypt:
-        click.echo()
-        draw_step(5, "Set encryption password")
-        click.secho(
-            "This password will be required whenever you use your account for operations.",
-            dim=True,
-        )
-        password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
+    if not password:
+        error("Password cannot be empty")
+        return 1
 
-        if not password:
-            error("Password cannot be empty for encryption")
-            return 1
+    # Step 5: Create account, encrypt token, and initialize per-account HCFS Drive
+    click.echo()
+    draw_step(5, "Setting up account and file encryption")
 
-    # Create and store the account
+    recovery_phrase = None
     with _console.status("[cyan]Setting up your account...[/cyan]", spinner="dots"):
         config = load_config()
 
@@ -434,13 +451,25 @@ def handle_account_login() -> int:
         # Save the config first
         save_config(config)
 
-        # Now encrypt if requested
-        if encrypt:
-            from hippius_sdk import encrypt_api_token
+        # Encrypt the API token
+        encrypt_api_token(api_token, password, name)
 
-            encrypt_api_token(api_token, password, name)
+        # Initialize per-account HCFS Drive
+        drive_dir = get_drive_dir(name)
+        os.makedirs(drive_dir, exist_ok=True)
+        drive = Drive(drive_dir)
+        if not drive.is_initialized():
+            recovery_phrase = drive.init(password)
 
         time.sleep(0.5)  # Small delay for visual feedback
+
+    # Display recovery phrase if newly generated
+    if recovery_phrase:
+        click.echo()
+        _display_recovery_phrase(recovery_phrase)
+    else:
+        click.echo()
+        info("File encryption already initialized for this account.")
 
     # Success box with account information
     result_lines = [
@@ -449,27 +478,17 @@ def handle_account_login() -> int:
         "",
         "Login successful!",
         "Account set as active",
+        "API token encrypted",
+        "File encryption initialized",
     ]
-
-    if encrypt:
-        result_lines.append("API token encrypted")
-    else:
-        result_lines.append("API token not encrypted")
 
     draw_success_box(result_lines)
 
-    if encrypt:
-        click.echo()
-        click.secho(
-            "You'll need your password when using this account for operations.",
-            dim=True,
-        )
-    else:
-        click.echo()
-        click.secho(
-            "For better security, consider encrypting your API token.",
-            dim=True,
-        )
+    click.echo()
+    click.secho(
+        "You'll need your password when using this account for operations.",
+        dim=True,
+    )
 
     # Next steps
     click.echo()
@@ -517,6 +536,101 @@ def handle_account_delete(account_name: str) -> int:
     return 0
 
 
+def handle_init_encryption(mnemonic: Optional[str] = None) -> int:
+    """Handle the account init-encryption command — initialize HCFS file encryption."""
+
+    account_name = get_active_account()
+    if not account_name:
+        error("No active account. Run: hippius account login")
+        return 1
+
+    info("Initializing HCFS file encryption...")
+
+    drive_dir = get_drive_dir(account_name)
+    os.makedirs(drive_dir, exist_ok=True)
+    drive = Drive(drive_dir)
+    if drive.is_initialized():
+        warning("Encryption is already initialized.")
+        if not click.confirm(
+            "Re-initialize? This will overwrite the existing keys.", default=False
+        ):
+            info("Cancelled.")
+            return 0
+
+    # Prompt for password
+    click.echo()
+    draw_step(1, "Set encryption password")
+    click.secho(
+        "This password will be required to encrypt and decrypt your files.",
+        dim=True,
+    )
+    password = click.prompt("Password", hide_input=True, confirmation_prompt=True)
+
+    if not password:
+        error("Password cannot be empty")
+        return 1
+
+    # Initialize
+    click.echo()
+    draw_step(2, "Generating encryption keys")
+
+    with _console.status("[cyan]Initializing...[/cyan]", spinner="dots"):
+        phrase = drive.init(password, mnemonic)
+
+    # Display the mnemonic for backup
+    if not mnemonic:
+        click.echo()
+        _display_recovery_phrase(phrase)
+    else:
+        success("Encryption initialized with provided recovery phrase.")
+
+    click.echo()
+    success("File encryption is now enabled!")
+    click.secho(
+        "Your files will be encrypted client-side before uploading.",
+        dim=True,
+    )
+
+    return 0
+
+
+def handle_show_mnemonic() -> int:
+    """Handle the account show-mnemonic command — display saved recovery phrase."""
+
+    account_name = get_active_account()
+    if not account_name:
+        error("No active account. Run: hippius account login")
+        return 1
+
+    drive_dir = get_drive_dir(account_name)
+    drive = Drive(drive_dir)
+    if not drive.is_initialized():
+        error("Encryption is not initialized. Run: hippius account login")
+        return 1
+
+    password = click.prompt("Encryption password", hide_input=True)
+
+    mnemonic_path = os.path.join(drive_dir, HCFS_METADATA_SUBDIR, "enc_mnemonic.json")
+    if not os.path.exists(mnemonic_path):
+        error("Encrypted mnemonic not found.")
+        return 1
+
+    # Decrypt mnemonic using PBKDF2 + AES-GCM (matching Rust hcfs-client scheme)
+    with open(mnemonic_path, "r") as f:
+        enc_data = json.load(f)
+
+    mnemonic_str = decrypt_hcfs_mnemonic(enc_data, password)
+
+    click.echo()
+    click.secho("Recovery Phrase (24 words):", fg="yellow", bold=True)
+    click.echo()
+    click.echo(mnemonic_str)
+    click.echo()
+    warning("Keep this phrase safe — it can recover your encryption keys.")
+
+    return 0
+
+
 async def handle_account_balance(
     client: ArionClient, account_address: Optional[str] = None
 ) -> int:
@@ -534,9 +648,7 @@ async def handle_account_balance(
         await api_client.close()
 
         credits = balance_data.get("balance", 0)
-        # Convert to float if it's a string
-        if isinstance(credits, str):
-            credits = float(credits)
+        credits = float(credits)
 
         # Create a panel with balance information
         balance_info = [
@@ -557,7 +669,7 @@ async def handle_account_balance(
 
     # Get the account address we're querying
     if account_address is None:
-        from hippius_sdk.config import get_account_address as cfg_get_account_address
+        from hippius_sdk.accounts import get_account_address as cfg_get_account_address
 
         active_account = get_active_account()
         if active_account:
