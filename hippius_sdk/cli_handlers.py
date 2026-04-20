@@ -1903,7 +1903,9 @@ def handle_account_create(
     click.secho("Account creation with seed phrases is no longer supported.", bold=True)
     click.echo("\nTo use Hippius, please:")
     click.echo("  1. Create an account at https://hippius.com")
-    click.echo("  2. Get your HIPPIUS_KEY from https://console.hippius.com/dashboard/settings")
+    click.echo(
+        "  2. Get your HIPPIUS_KEY from https://console.hippius.com/dashboard/settings"
+    )
     click.echo("  3. Run: hippius account login")
     click.echo()
     return 1

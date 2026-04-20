@@ -553,7 +553,9 @@ def main():
                     return o.decode("utf-8")
                 except UnicodeDecodeError:
                     return "0x" + o.hex()
-            raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+            raise TypeError(
+                f"Object of type {type(o).__name__} is not JSON serializable"
+            )
 
         print(
             json.dumps(
