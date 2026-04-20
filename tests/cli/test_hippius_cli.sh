@@ -58,8 +58,6 @@ run_test "Erasure-code help" "$PYTHON -m hippius_sdk.cli erasure-code -h"
 run_test "Miner help" "$PYTHON -m hippius_sdk.cli miner -h"
 run_test "Miner register-coldkey help" "$PYTHON -m hippius_sdk.cli miner register-coldkey -h"
 run_test "Miner register-hotkey help" "$PYTHON -m hippius_sdk.cli miner register-hotkey -h"
-run_test "Miner verify-node help" "$PYTHON -m hippius_sdk.cli miner verify-node -h"
-run_test "Miner verify-coldkey-node help" "$PYTHON -m hippius_sdk.cli miner verify-coldkey-node -h"
 
 # Test configuration commands
 run_test "Config list" "$PYTHON -m hippius_sdk.cli config list"
@@ -86,12 +84,11 @@ echo "  Node ID: $TEST_NODE_ID"
 echo "  Coldkey: $TEST_COLDKEY_ADDRESS"
 
 # Test register-coldkey with various parameter combinations
-run_test "Miner register-coldkey dry-run with ipfs-priv-b64" \
+run_test "Miner register-coldkey dry-run basic" \
     "$PYTHON -m hippius_sdk.cli miner register-coldkey \
     --node-id $TEST_NODE_ID \
     --node-priv-hex $TEST_NODE_PRIV_HEX \
     --node-type StorageMiner \
-    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64 \
     --dry-run"
 
 run_test "Miner register-coldkey dry-run with all optional params" \
@@ -99,8 +96,6 @@ run_test "Miner register-coldkey dry-run with all optional params" \
     --node-id $TEST_NODE_ID \
     --node-priv-hex $TEST_NODE_PRIV_HEX \
     --node-type ComputeMiner \
-    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64 \
-    --ipfs-peer-id 12D3KooWBhzNWgT7Wt1KqvBcGjDnZ8XkF4FzGJkNS2bTnWJzBq4Q \
     --pay-in-credits \
     --expires-in 20 \
     --block-width u64 \
@@ -113,18 +108,15 @@ run_test "Miner register-coldkey dry-run Validator type" \
     --node-id $TEST_NODE_ID \
     --node-priv-hex $TEST_NODE_PRIV_HEX \
     --node-type Validator \
-    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64 \
-    --ipfs-peer-id 12D3KooWBhzNWgT7Wt1KqvBcGjDnZ8XkF4FzGJkNS2bTnWJzBq4Q \
     --dry-run"
 
 # Test register-hotkey with various parameter combinations
-run_test "Miner register-hotkey dry-run with ipfs-priv-b64" \
+run_test "Miner register-hotkey dry-run basic" \
     "$PYTHON -m hippius_sdk.cli miner register-hotkey \
     --coldkey $TEST_COLDKEY_ADDRESS \
     --node-id $TEST_NODE_ID \
     --node-priv-hex $TEST_NODE_PRIV_HEX \
     --node-type StorageMiner \
-    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64 \
     --dry-run"
 
 run_test "Miner register-hotkey dry-run with all optional params" \
@@ -133,11 +125,9 @@ run_test "Miner register-hotkey dry-run with all optional params" \
     --node-id $TEST_NODE_ID \
     --node-priv-hex $TEST_NODE_PRIV_HEX \
     --node-type GpuMiner \
-    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64 \
-    --ipfs-peer-id 12D3KooWBhzNWgT7Wt1KqvBcGjDnZ8XkF4FzGJkNS2bTnWJzBq4Q \
     --pay-in-credits \
     --expires-in 15 \
-    --block-width u32 \
+    --block-width u64 \
     --domain 'CUSTOM::REGISTER::v2' \
     --dry-run"
 
@@ -147,7 +137,6 @@ run_test "Miner register-hotkey dry-run StorageS3 type" \
     --node-id $TEST_NODE_ID \
     --node-priv-hex $TEST_NODE_PRIV_HEX \
     --node-type StorageS3 \
-    --ipfs-priv-b64 $TEST_IPFS_PRIV_B64 \
     --dry-run"
 
 # Test error handling - missing required parameters
@@ -175,22 +164,22 @@ run_failure_test() {
 
 # Test missing required arguments
 run_failure_test "Missing node-id for register-coldkey" \
-    "$PYTHON -m hippius_sdk.cli miner register-coldkey --node-priv-hex $TEST_NODE_PRIV_HEX --node-type StorageMiner --ipfs-priv-b64 $TEST_IPFS_PRIV_B64"
+    "$PYTHON -m hippius_sdk.cli miner register-coldkey --node-priv-hex $TEST_NODE_PRIV_HEX --node-type StorageMiner"
 
 run_failure_test "Missing node-type for register-coldkey" \
-    "$PYTHON -m hippius_sdk.cli miner register-coldkey --node-id $TEST_NODE_ID --node-priv-hex $TEST_NODE_PRIV_HEX --ipfs-priv-b64 $TEST_IPFS_PRIV_B64"
+    "$PYTHON -m hippius_sdk.cli miner register-coldkey --node-id $TEST_NODE_ID --node-priv-hex $TEST_NODE_PRIV_HEX"
 
-run_failure_test "Missing ipfs config for register-coldkey" \
-    "$PYTHON -m hippius_sdk.cli miner register-coldkey --node-id $TEST_NODE_ID --node-priv-hex $TEST_NODE_PRIV_HEX --node-type StorageMiner"
+run_failure_test "Missing node-priv-hex/b64 for register-coldkey" \
+    "$PYTHON -m hippius_sdk.cli miner register-coldkey --node-id $TEST_NODE_ID --node-type StorageMiner"
 
 run_failure_test "Missing coldkey for register-hotkey" \
-    "$PYTHON -m hippius_sdk.cli miner register-hotkey --node-id $TEST_NODE_ID --node-priv-hex $TEST_NODE_PRIV_HEX --node-type StorageMiner --ipfs-priv-b64 $TEST_IPFS_PRIV_B64"
+    "$PYTHON -m hippius_sdk.cli miner register-hotkey --node-id $TEST_NODE_ID --node-priv-hex $TEST_NODE_PRIV_HEX --node-type StorageMiner"
 
 run_failure_test "Invalid node-type" \
-    "$PYTHON -m hippius_sdk.cli miner register-coldkey --node-id $TEST_NODE_ID --node-priv-hex $TEST_NODE_PRIV_HEX --node-type InvalidType --ipfs-priv-b64 $TEST_IPFS_PRIV_B64"
+    "$PYTHON -m hippius_sdk.cli miner register-coldkey --node-id $TEST_NODE_ID --node-priv-hex $TEST_NODE_PRIV_HEX --node-type InvalidType"
 
 run_failure_test "Invalid block-width" \
-    "$PYTHON -m hippius_sdk.cli miner register-coldkey --node-id $TEST_NODE_ID --node-priv-hex $TEST_NODE_PRIV_HEX --node-type StorageMiner --ipfs-priv-b64 $TEST_IPFS_PRIV_B64 --block-width u128 --dry-run"
+    "$PYTHON -m hippius_sdk.cli miner register-coldkey --node-id $TEST_NODE_ID --node-priv-hex $TEST_NODE_PRIV_HEX --node-type StorageMiner --block-width u128 --dry-run"
 
 echo -e "\n\033[1;32m✓ All miner command tests completed successfully!\033[0m"
 

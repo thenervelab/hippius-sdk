@@ -641,31 +641,22 @@ def add_miner_commands(subparsers):
     register_coldkey_parser.add_argument(
         "--node-id", required=True, help="Your main node_id (libp2p peer ID)"
     )
-    register_coldkey_parser.add_argument(
+    node_priv_group = register_coldkey_parser.add_mutually_exclusive_group(
+        required=True
+    )
+    node_priv_group.add_argument(
         "--node-priv-hex",
-        required=True,
         help="Main libp2p ed25519 private key hex (32/64B)",
+    )
+    node_priv_group.add_argument(
+        "--node-priv-b64",
+        help="Main libp2p Identity.PrivKey base64 (go-libp2p proto)",
     )
     register_coldkey_parser.add_argument(
         "--node-type",
         required=True,
         choices=["StorageMiner", "Validator", "ComputeMiner", "StorageS3", "GpuMiner"],
         help="Type of miner node",
-    )
-
-    # IPFS configuration (one required)
-    ipfs_group = register_coldkey_parser.add_mutually_exclusive_group(required=True)
-    ipfs_group.add_argument(
-        "--ipfs-config", help="Path to IPFS config file (e.g. ~/.ipfs/config)"
-    )
-    ipfs_group.add_argument(
-        "--ipfs-priv-b64",
-        help="IPFS Identity.PrivKey base64 if not using --ipfs-config",
-    )
-
-    # Optional arguments
-    register_coldkey_parser.add_argument(
-        "--ipfs-peer-id", help="Optional override IPFS PeerID"
     )
     register_coldkey_parser.add_argument(
         "--pay-in-credits", action="store_true", help="Pay in credits for registration"
@@ -679,8 +670,8 @@ def add_miner_commands(subparsers):
     register_coldkey_parser.add_argument(
         "--block-width",
         choices=["u32", "u64"],
-        default="u32",
-        help="Block number width (default: u32)",
+        default="u64",
+        help="Block number width (default: u64)",
     )
     register_coldkey_parser.add_argument(
         "--domain",
@@ -709,33 +700,22 @@ def add_miner_commands(subparsers):
     register_hotkey_parser.add_argument(
         "--node-id", required=True, help="Your main node_id (libp2p peer ID)"
     )
-    register_hotkey_parser.add_argument(
+    node_priv_group_hotkey = register_hotkey_parser.add_mutually_exclusive_group(
+        required=True
+    )
+    node_priv_group_hotkey.add_argument(
         "--node-priv-hex",
-        required=True,
         help="Main libp2p ed25519 private key hex (32/64B)",
+    )
+    node_priv_group_hotkey.add_argument(
+        "--node-priv-b64",
+        help="Main libp2p Identity.PrivKey base64 (go-libp2p proto)",
     )
     register_hotkey_parser.add_argument(
         "--node-type",
         required=True,
         choices=["StorageMiner", "Validator", "ComputeMiner", "StorageS3", "GpuMiner"],
         help="Type of miner node",
-    )
-
-    # IPFS configuration (one required)
-    ipfs_group_hotkey = register_hotkey_parser.add_mutually_exclusive_group(
-        required=True
-    )
-    ipfs_group_hotkey.add_argument(
-        "--ipfs-config", help="Path to IPFS config file (e.g. ~/.ipfs/config)"
-    )
-    ipfs_group_hotkey.add_argument(
-        "--ipfs-priv-b64",
-        help="IPFS Identity.PrivKey base64 if not using --ipfs-config",
-    )
-
-    # Optional arguments
-    register_hotkey_parser.add_argument(
-        "--ipfs-peer-id", help="Optional override IPFS PeerID"
     )
     register_hotkey_parser.add_argument(
         "--pay-in-credits", action="store_true", help="Pay in credits for registration"
@@ -749,8 +729,8 @@ def add_miner_commands(subparsers):
     register_hotkey_parser.add_argument(
         "--block-width",
         choices=["u32", "u64"],
-        default="u32",
-        help="Block number width (default: u32)",
+        default="u64",
+        help="Block number width (default: u64)",
     )
     register_hotkey_parser.add_argument(
         "--domain",
@@ -761,133 +741,12 @@ def add_miner_commands(subparsers):
         "--nonce-hex", help="32-byte hex nonce (optional, random if not provided)"
     )
     register_hotkey_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Do not submit extrinsic; just print payload",
-    )
-
-    # Verify node command
-    verify_node_parser = miner_subparsers.add_parser(
-        "verify-node", help="Verify an existing registered node (proves key ownership)"
-    )
-
-    # Required arguments for verify-node
-    verify_node_parser.add_argument(
-        "--node-id", required=True, help="Your main node_id (libp2p peer ID)"
-    )
-    verify_node_parser.add_argument(
-        "--node-priv-hex",
-        required=True,
-        help="Main libp2p ed25519 private key hex (32/64B)",
-    )
-
-    # IPFS configuration (one required)
-    ipfs_group_verify = verify_node_parser.add_mutually_exclusive_group(required=True)
-    ipfs_group_verify.add_argument(
-        "--ipfs-config", help="Path to IPFS config file (e.g. ~/.ipfs/config)"
-    )
-    ipfs_group_verify.add_argument(
-        "--ipfs-priv-b64",
-        help="IPFS Identity.PrivKey base64 if not using --ipfs-config",
-    )
-
-    # Optional arguments
-    verify_node_parser.add_argument(
-        "--ipfs-peer-id", help="Optional override IPFS PeerID"
-    )
-    verify_node_parser.add_argument(
-        "--expires-in",
-        type=int,
-        default=10,
-        help="Challenge expiration in blocks (default: 10)",
-    )
-    verify_node_parser.add_argument(
-        "--block-width",
-        choices=["u32", "u64"],
-        default="u32",
-        help="Block number width (default: u32)",
-    )
-    verify_node_parser.add_argument(
-        "--domain",
-        default="HIPPIUS::REGISTER::v1",
-        help="Domain for challenge (default: HIPPIUS::REGISTER::v1)",
-    )
-    verify_node_parser.add_argument(
-        "--nonce-hex", help="32-byte hex nonce (optional, random if not provided)"
-    )
-    verify_node_parser.add_argument(
-        "--module",
-        default="Registration",
-        help="Blockchain pallet/module name (default: Registration)",
-    )
-    verify_node_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Do not submit extrinsic; just print payload",
     )
 
     # Verify coldkey node command
-    verify_coldkey_node_parser = miner_subparsers.add_parser(
-        "verify-coldkey-node",
-        help="Verify an existing coldkey-registered node (proves key ownership)",
-    )
-
-    # Required arguments for verify-coldkey-node
-    verify_coldkey_node_parser.add_argument(
-        "--node-id", required=True, help="Your main node_id (libp2p peer ID)"
-    )
-    verify_coldkey_node_parser.add_argument(
-        "--node-priv-hex",
-        required=True,
-        help="Main libp2p ed25519 private key hex (32/64B)",
-    )
-
-    # IPFS configuration (one required)
-    ipfs_group_verify_coldkey = verify_coldkey_node_parser.add_mutually_exclusive_group(
-        required=True
-    )
-    ipfs_group_verify_coldkey.add_argument(
-        "--ipfs-config", help="Path to IPFS config file (e.g. ~/.ipfs/config)"
-    )
-    ipfs_group_verify_coldkey.add_argument(
-        "--ipfs-priv-b64",
-        help="IPFS Identity.PrivKey base64 if not using --ipfs-config",
-    )
-
-    # Optional arguments
-    verify_coldkey_node_parser.add_argument(
-        "--ipfs-peer-id", help="Optional override IPFS PeerID"
-    )
-    verify_coldkey_node_parser.add_argument(
-        "--expires-in",
-        type=int,
-        default=10,
-        help="Challenge expiration in blocks (default: 10)",
-    )
-    verify_coldkey_node_parser.add_argument(
-        "--block-width",
-        choices=["u32", "u64"],
-        default="u32",
-        help="Block number width (default: u32)",
-    )
-    verify_coldkey_node_parser.add_argument(
-        "--domain",
-        default="HIPPIUS::REGISTER::v1",
-        help="Domain for challenge (default: HIPPIUS::REGISTER::v1)",
-    )
-    verify_coldkey_node_parser.add_argument(
-        "--nonce-hex", help="32-byte hex nonce (optional, random if not provided)"
-    )
-    verify_coldkey_node_parser.add_argument(
-        "--module",
-        default="Registration",
-        help="Blockchain pallet/module name (default: Registration)",
-    )
-    verify_coldkey_node_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Do not submit extrinsic; just print payload",
-    )
 
 
 def get_subparser(command: str) -> argparse.ArgumentParser:
