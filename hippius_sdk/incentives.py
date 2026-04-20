@@ -13,7 +13,6 @@ import base58
 from substrateinterface import SubstrateInterface, Keypair
 from scalecodec.utils.ss58 import ss58_decode
 
-
 # ---------- Helpers ----------
 def blake2_256(b: bytes) -> bytes:
     return blake2b(b, digest_size=32).digest()
@@ -386,7 +385,8 @@ def main():
             "main_sig": "0x" + main_sig.hex(),
             "challenge_bytes": "0x" + challenge_bytes.hex(),
         }
-    raise SystemExit(f"Unsupported function: {args.function}")
+    else:
+        raise SystemExit(f"Unsupported function: {args.function}")
 
     if args.dry_run:
         print(
