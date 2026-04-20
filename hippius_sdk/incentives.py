@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import os
 import base64
 import secrets
 from typing import Optional, Tuple
@@ -91,38 +90,6 @@ def get_public_key_from_peer_id(peer_id: str) -> bytes:
     return peer_id_bytes[6:38]
 
 
-def load_ipfs_seed(
-    ipfs_config: str = None, ipfs_priv_b64: str = None
-) -> Tuple[bytes, str]:
-    if ipfs_priv_b64:
-        try:
-            seed = decode_libp2p_privkey_b64(ipfs_priv_b64)
-            return seed, ""
-        except ValueError as e:
-            raise SystemExit(f"Error decoding IPFS private key: {e}")
-
-    if not ipfs_config:
-        raise SystemExit(
-            "Either --ipfs-config or --ipfs-priv-b64 is required for IPFS setup."
-        )
-
-    cfg_path = os.path.expanduser(ipfs_config)
-    if not os.path.exists(cfg_path):
-        raise SystemExit(f"IPFS config file not found at {cfg_path}")
-
-    try:
-        cfg = json.load(open(cfg_path))
-    except json.JSONDecodeError:
-        raise SystemExit(f"Invalid JSON in IPFS config file: {cfg_path}")
-
-    ident = cfg.get("Identity") or {}
-    if "PrivKey" not in ident:
-        raise SystemExit("IPFS config missing Identity.PrivKey")
-
-    seed = decode_libp2p_privkey_b64(ident["PrivKey"])
-    return seed, ident.get("PeerID", "")
-
-
 def load_main_seed(
     node_priv_hex: Optional[str] = None, node_priv_b64: Optional[str] = None
 ) -> bytes:
@@ -167,18 +134,8 @@ def encode_account_id(ss58_address: str) -> bytes:
     return decoded
 
 
-def verify_peer_id(
-    public_key: bytes, peer_id_bytes: bytes, key_type: str = "Ed25519"
-) -> bool:
-    """
-    Verify that a public key corresponds to a libp2p peer ID.
-
-    Backwards-compatible signature: older callers pass `(public_key, peer_id, key_type)`.
-    Newer callers can pass just `(public_key, peer_id_bytes)`.
-    """
-    if key_type != "Ed25519":
-        return False
-
+def verify_peer_id(public_key: bytes, peer_id_bytes: bytes) -> bool:
+    """Verify that an Ed25519 public key corresponds to a libp2p peer ID."""
     # pallet expects: [0x00,0x24,0x08,0x01,0x12,0x20] + 32B pubkey
     if len(peer_id_bytes) != 38:
         return False

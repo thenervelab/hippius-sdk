@@ -2816,9 +2816,7 @@ def handle_register_coldkey(
         nonce = (
             bytes.fromhex(nonce_hex[2:])
             if nonce_hex and nonce_hex.startswith("0x")
-            else bytes.fromhex(nonce_hex)
-            if nonce_hex
-            else secrets.token_bytes(32)
+            else bytes.fromhex(nonce_hex) if nonce_hex else secrets.token_bytes(32)
         )
 
         expires_at_block = current_block_number + expires_in
@@ -3003,9 +3001,7 @@ def handle_register_hotkey(
         nonce = (
             bytes.fromhex(nonce_hex[2:])
             if nonce_hex and nonce_hex.startswith("0x")
-            else bytes.fromhex(nonce_hex)
-            if nonce_hex
-            else secrets.token_bytes(32)
+            else bytes.fromhex(nonce_hex) if nonce_hex else secrets.token_bytes(32)
         )
 
         expires_at_block = current_block_number + expires_in
