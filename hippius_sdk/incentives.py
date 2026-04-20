@@ -13,6 +13,7 @@ import base58
 from substrateinterface import SubstrateInterface, Keypair
 from scalecodec.utils.ss58 import ss58_decode
 
+
 # ---------- Helpers ----------
 def blake2_256(b: bytes) -> bytes:
     return blake2b(b, digest_size=32).digest()
@@ -122,7 +123,9 @@ def load_ipfs_seed(
     return seed, ident.get("PeerID", "")
 
 
-def load_main_seed(node_priv_hex: Optional[str] = None, node_priv_b64: Optional[str] = None) -> bytes:
+def load_main_seed(
+    node_priv_hex: Optional[str] = None, node_priv_b64: Optional[str] = None
+) -> bytes:
     """
     Load the main libp2p Ed25519 seed (32B).
 
@@ -164,7 +167,9 @@ def encode_account_id(ss58_address: str) -> bytes:
     return decoded
 
 
-def verify_peer_id(public_key: bytes, peer_id_bytes: bytes, key_type: str = "Ed25519") -> bool:
+def verify_peer_id(
+    public_key: bytes, peer_id_bytes: bytes, key_type: str = "Ed25519"
+) -> bool:
     """
     Verify that a public key corresponds to a libp2p peer ID.
 
@@ -296,7 +301,9 @@ def main():
     else:
         node_id_bytes = base58.b58decode(args.node_id)
 
-    main_seed = load_main_seed(node_priv_hex=args.node_priv_hex, node_priv_b64=args.node_priv_b64)
+    main_seed = load_main_seed(
+        node_priv_hex=args.node_priv_hex, node_priv_b64=args.node_priv_b64
+    )
 
     # Keys & pubkeys
     main_sk = SigningKey(main_seed)
@@ -329,9 +336,9 @@ def main():
     nonce = (
         bytes.fromhex(args.nonce_hex[2:])
         if args.nonce_hex and args.nonce_hex.startswith("0x")
-        else bytes.fromhex(args.nonce_hex)
-        if args.nonce_hex
-        else secrets.token_bytes(32)
+        else (
+            bytes.fromhex(args.nonce_hex) if args.nonce_hex else secrets.token_bytes(32)
+        )
     )
 
     expires_at_block = current_block_number + args.expires_in

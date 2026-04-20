@@ -641,7 +641,9 @@ def add_miner_commands(subparsers):
     register_coldkey_parser.add_argument(
         "--node-id", required=True, help="Your main node_id (libp2p peer ID)"
     )
-    node_priv_group = register_coldkey_parser.add_mutually_exclusive_group(required=True)
+    node_priv_group = register_coldkey_parser.add_mutually_exclusive_group(
+        required=True
+    )
     node_priv_group.add_argument(
         "--node-priv-hex",
         help="Main libp2p ed25519 private key hex (32/64B)",
@@ -744,10 +746,7 @@ def add_miner_commands(subparsers):
         help="Do not submit extrinsic; just print payload",
     )
 
-
-
     # Verify coldkey node command
-
 
 
 def get_subparser(command: str) -> argparse.ArgumentParser:

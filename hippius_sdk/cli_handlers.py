@@ -966,9 +966,11 @@ async def handle_ec_files(
                                 "Original": original_chunk_idx,
                                 "Share": share_idx,
                                 "Size": chunk["size_formatted"],
-                                "CID": chunk["cid"][:10] + "..." + chunk["cid"][-6:]
-                                if len(chunk["cid"]) > 20
-                                else chunk["cid"],
+                                "CID": (
+                                    chunk["cid"][:10] + "..." + chunk["cid"][-6:]
+                                    if len(chunk["cid"]) > 20
+                                    else chunk["cid"]
+                                ),
                             }
                         )
 
@@ -2792,7 +2794,9 @@ def handle_register_coldkey(
             node_id_bytes = base58.b58decode(node_id)
 
         # Load main seed (hex or go-libp2p base64)
-        main_seed = load_main_seed(node_priv_hex=node_priv_hex, node_priv_b64=node_priv_b64)
+        main_seed = load_main_seed(
+            node_priv_hex=node_priv_hex, node_priv_b64=node_priv_b64
+        )
 
         # Create signing keys
         main_sk = SigningKey(main_seed)
@@ -2812,9 +2816,7 @@ def handle_register_coldkey(
         nonce = (
             bytes.fromhex(nonce_hex[2:])
             if nonce_hex and nonce_hex.startswith("0x")
-            else bytes.fromhex(nonce_hex)
-            if nonce_hex
-            else secrets.token_bytes(32)
+            else bytes.fromhex(nonce_hex) if nonce_hex else secrets.token_bytes(32)
         )
 
         expires_at_block = current_block_number + expires_in
@@ -2976,7 +2978,9 @@ def handle_register_hotkey(
             node_id_bytes = base58.b58decode(node_id)
 
         # Load main seed (hex or go-libp2p base64)
-        main_seed = load_main_seed(node_priv_hex=node_priv_hex, node_priv_b64=node_priv_b64)
+        main_seed = load_main_seed(
+            node_priv_hex=node_priv_hex, node_priv_b64=node_priv_b64
+        )
 
         # Create signing keys
         main_sk = SigningKey(main_seed)
@@ -2997,9 +3001,7 @@ def handle_register_hotkey(
         nonce = (
             bytes.fromhex(nonce_hex[2:])
             if nonce_hex and nonce_hex.startswith("0x")
-            else bytes.fromhex(nonce_hex)
-            if nonce_hex
-            else secrets.token_bytes(32)
+            else bytes.fromhex(nonce_hex) if nonce_hex else secrets.token_bytes(32)
         )
 
         expires_at_block = current_block_number + expires_in
@@ -3093,4 +3095,3 @@ def handle_register_hotkey(
 
             traceback.print_exc()
         return 1
-
