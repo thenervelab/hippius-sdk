@@ -390,6 +390,7 @@ def main():
                     domain=getattr(args, "domain", "HIPPIUS::REGISTER::v1"),
                     nonce_hex=getattr(args, "nonce_hex", None),
                     dry_run=getattr(args, "dry_run", False),
+                    substrate_url=getattr(args, "substrate_url", None),
                 )
             elif args.miner_action == "register-hotkey":
                 return run_async_handler(
@@ -406,6 +407,7 @@ def main():
                     domain=getattr(args, "domain", "HIPPIUS::REGISTER::v1"),
                     nonce_hex=getattr(args, "nonce_hex", None),
                     dry_run=getattr(args, "dry_run", False),
+                    substrate_url=getattr(args, "substrate_url", None),
                 )
             else:
                 # Display the Hippius logo banner with Rich formatting

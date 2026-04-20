@@ -1154,6 +1154,8 @@ async def handle_erasure_code(
         # As a fallback, create a task to update the general progress if no callbacks are received
         async def update_general_progress():
             while not progress.finished:
+                # Since we don't have actual progress data, we'll use time as a proxy
+                # The progress will move faster at first, then slow down
                 elapsed = time.time() - start_time
                 # If we haven't shown the encoding task yet, update the processing task
                 if not progress.tasks[encoding_task].visible:
@@ -1901,7 +1903,7 @@ def handle_account_create(
     click.secho("Account creation with seed phrases is no longer supported.", bold=True)
     click.echo("\nTo use Hippius, please:")
     click.echo("  1. Create an account at https://hippius.com")
-    click.echo("  2. Get your HIPPIUS_KEY from https://hippius.com/account/api-keys")
+    click.echo("  2. Get your HIPPIUS_KEY from https://console.hippius.com/dashboard/settings")
     click.echo("  3. Run: hippius account login")
     click.echo()
     return 1
@@ -2744,6 +2746,7 @@ def handle_register_coldkey(
     domain: str = "HIPPIUS::REGISTER::v1",
     nonce_hex: str = None,
     dry_run: bool = False,
+    substrate_url: Optional[str] = None,
 ) -> int:
     """Handle miner register-coldkey command"""
     try:
@@ -2771,14 +2774,17 @@ def handle_register_coldkey(
             verify_peer_id,
             blake2_256,
             manual_encode_challenge,
+            resolve_peer_id_inputs,
         )
         from nacl.signing import SigningKey
-        import base58
         import secrets
-        from binascii import hexlify
 
-        # Initialize SubstrateInterface
-        substrate = SubstrateInterface(url=get_config_value("substrate", "url"))
+        # Initialize SubstrateInterface (respect CLI --substrate-url)
+        ws_url = substrate_url or get_config_value(
+            "substrate", "url", "wss://rpc.hippius.network"
+        )
+        log(f"Substrate RPC: [bold cyan]{ws_url}[/bold cyan]")
+        substrate = SubstrateInterface(url=ws_url)
 
         # Get genesis hash and current block
         genesis_hash_hex = substrate.get_block_hash(0)
@@ -2787,11 +2793,17 @@ def handle_register_coldkey(
 
         log(f"Current block number: {current_block_number}")
 
-        # Process node_id
-        if node_id.startswith("0x"):
-            node_id_bytes = bytes.fromhex(node_id[2:])
-        else:
-            node_id_bytes = base58.b58decode(node_id)
+        # Verification uses 38-byte multihash (`node_id_hex` + challenge); display `node_id` is separate.
+        try:
+            node_id_verify_bytes, node_id_peer_id_str = resolve_peer_id_inputs(node_id)
+        except ValueError as e:
+            error(str(e))
+            return 1
+
+        log(
+            f"Peer id: [bold cyan]{node_id_peer_id_str}[/bold cyan] "
+            f"(challenge / [bold]node_id_hex[/bold]: 38-byte multihash; UIs often show as [dim]0x00240801…[/dim])"
+        )
 
         # Load main seed (hex or go-libp2p base64)
         main_seed = load_main_seed(
@@ -2803,13 +2815,13 @@ def handle_register_coldkey(
         main_pk = bytes(main_sk.verify_key)
 
         # Verify keys match node IDs
-        if not verify_peer_id(main_pk, node_id_bytes):
+        if not verify_peer_id(main_pk, node_id_verify_bytes):
             error("Main public key does not match node ID")
             return 1
 
         # Create challenge data
         domain24 = b"HIPPIUS::REGISTER::v1" + b"\x00" * 3
-        node_id_hash = blake2_256(node_id_bytes)
+        node_id_hash = blake2_256(node_id_verify_bytes)
         # ipfs_peer_id_hash is still part of the struct; set to hash(empty)
         ipfs_peer_id_hash = blake2_256(b"")
 
@@ -2839,14 +2851,12 @@ def handle_register_coldkey(
 
         # Sign challenge
         main_sig = main_sk.sign(challenge_bytes).signature
-        node_id_hex = "0x" + hexlify(node_id_bytes).decode()
 
-        # Build call parameters
+        node_id_display = node_id.strip()
         call_params = {
             "node_type": node_type,
-            # pallet checks `node_id == node_id_hex` so both must be identical bytes
-            "node_id": node_id_hex,
-            "node_id_hex": node_id_hex,
+            "node_id": node_id_display,
+            "node_id_hex": node_id_verify_bytes,
             "pay_in_credits": pay_in_credits,
             "owner": account_address,
             "main_key_type": "Ed25519",
@@ -2861,9 +2871,18 @@ def handle_register_coldkey(
                 "genesis_hash_hex": "0x" + genesis_hash.hex(),
                 "current_block_number": current_block_number,
                 "challenge_bytes_hex": "0x" + challenge_bytes.hex(),
+                "node_id_peer_id": node_id_peer_id_str,
                 "call_module": "Registration",
                 "call_function": "register_node_with_coldkey",
-                "call_params": call_params,
+                "call_params": {
+                    **{
+                        k: v
+                        for k, v in call_params.items()
+                        if k not in ("node_id", "node_id_hex")
+                    },
+                    "node_id": node_id.strip(),
+                    "node_id_hex": "0x" + node_id_verify_bytes.hex(),
+                },
             }
             click.echo(json.dumps(payload, indent=2))
             return 0
@@ -2893,12 +2912,26 @@ def handle_register_coldkey(
             "extrinsic_hash": receipt.extrinsic_hash,
             "is_success": receipt.is_success,
             "error_message": receipt.error_message,
+            "node_id_peer_id": node_id_peer_id_str,
             "triggered_events": [str(event) for event in receipt.triggered_events],
         }
 
         if receipt.is_success:
             success("Node registered successfully with coldkey!")
             success(f"Transaction hash: {receipt.extrinsic_hash}")
+            verify_hex = "0x" + node_id_verify_bytes.hex()
+            print_panel(
+                "\n".join(
+                    [
+                        f"Libp2p peer id: [bold cyan]{node_id_peer_id_str}[/bold cyan]",
+                        f"On-chain [bold]node_id[/bold] (display, your [bold]--node-id[/bold] text): "
+                        f"[dim]{node_id.strip()!r}[/dim]",
+                        f"On-chain [bold]node_id_hex[/bold] (38-byte multihash for [bold]verify_peer_id[/bold] / challenge): "
+                        f"[dim]{verify_hex}[/dim]",
+                    ]
+                ),
+                title="Node ID on-chain",
+            )
         else:
             error(f"Registration failed: {receipt.error_message}")
 
@@ -2929,6 +2962,7 @@ def handle_register_hotkey(
     domain: str = "HIPPIUS::REGISTER::v1",
     nonce_hex: str = None,
     dry_run: bool = False,
+    substrate_url: Optional[str] = None,
 ) -> int:
     """Handle miner register-hotkey command"""
     try:
@@ -2957,14 +2991,17 @@ def handle_register_hotkey(
             verify_peer_id,
             blake2_256,
             manual_encode_challenge,
+            resolve_peer_id_inputs,
         )
         from nacl.signing import SigningKey
-        import base58
         import secrets
-        from binascii import hexlify
 
-        # Initialize SubstrateInterface
-        substrate = SubstrateInterface(url=get_config_value("substrate", "url"))
+        # Initialize SubstrateInterface (respect CLI --substrate-url)
+        ws_url = substrate_url or get_config_value(
+            "substrate", "url", "wss://rpc.hippius.network"
+        )
+        log(f"Substrate RPC: [bold cyan]{ws_url}[/bold cyan]")
+        substrate = SubstrateInterface(url=ws_url)
 
         # Get genesis hash and current block
         genesis_hash_hex = substrate.get_block_hash(0)
@@ -2973,11 +3010,17 @@ def handle_register_hotkey(
 
         log(f"Current block number: {current_block_number}")
 
-        # Process node_id
-        if node_id.startswith("0x"):
-            node_id_bytes = bytes.fromhex(node_id[2:])
-        else:
-            node_id_bytes = base58.b58decode(node_id)
+        # Verification uses 38-byte multihash (`node_id_hex` + challenge); display `node_id` is separate.
+        try:
+            node_id_verify_bytes, node_id_peer_id_str = resolve_peer_id_inputs(node_id)
+        except ValueError as e:
+            error(str(e))
+            return 1
+
+        log(
+            f"Peer id: [bold cyan]{node_id_peer_id_str}[/bold cyan] "
+            f"(challenge / [bold]node_id_hex[/bold]: 38-byte multihash; UIs often show as [dim]0x00240801…[/dim])"
+        )
 
         # Load main seed (hex or go-libp2p base64)
         main_seed = load_main_seed(
@@ -2989,14 +3032,13 @@ def handle_register_hotkey(
         main_pk = bytes(main_sk.verify_key)
 
         # Verify keys match node IDs
-        if not verify_peer_id(main_pk, node_id_bytes):
+        if not verify_peer_id(main_pk, node_id_verify_bytes):
             error("Main public key does not match node ID")
             return 1
 
         # Create challenge data
-        domain_bytes = domain.encode()
         domain24 = b"HIPPIUS::REGISTER::v1" + b"\x00" * 3
-        node_id_hash = blake2_256(node_id_bytes)
+        node_id_hash = blake2_256(node_id_verify_bytes)
         # ipfs_peer_id_hash is still part of the struct; set to hash(empty)
         ipfs_peer_id_hash = blake2_256(b"")
 
@@ -3026,15 +3068,13 @@ def handle_register_hotkey(
 
         # Sign challenge
         main_sig = main_sk.sign(challenge_bytes).signature
-        node_id_hex = "0x" + hexlify(node_id_bytes).decode()
 
-        # Build call parameters
+        node_id_display = node_id.strip()
         call_params = {
             "coldkey": coldkey,
             "node_type": node_type,
-            # pallet checks `node_id == node_id_hex` so both must be identical bytes
-            "node_id": node_id_hex,
-            "node_id_hex": node_id_hex,
+            "node_id": node_id_display,
+            "node_id_hex": node_id_verify_bytes,
             "pay_in_credits": pay_in_credits,
             "owner": account_address,
             "main_key_type": "Ed25519",
@@ -3049,9 +3089,18 @@ def handle_register_hotkey(
                 "genesis_hash_hex": "0x" + genesis_hash.hex(),
                 "current_block_number": current_block_number,
                 "challenge_bytes_hex": "0x" + challenge_bytes.hex(),
+                "node_id_peer_id": node_id_peer_id_str,
                 "call_module": "Registration",
                 "call_function": "register_node_with_hotkey",
-                "call_params": call_params,
+                "call_params": {
+                    **{
+                        k: v
+                        for k, v in call_params.items()
+                        if k not in ("node_id", "node_id_hex")
+                    },
+                    "node_id": node_id.strip(),
+                    "node_id_hex": "0x" + node_id_verify_bytes.hex(),
+                },
             }
             click.echo(json.dumps(payload, indent=2))
             return 0
@@ -3078,12 +3127,26 @@ def handle_register_hotkey(
             "extrinsic_hash": receipt.extrinsic_hash,
             "is_success": receipt.is_success,
             "error_message": receipt.error_message,
+            "node_id_peer_id": node_id_peer_id_str,
             "triggered_events": [str(event) for event in receipt.triggered_events],
         }
 
         if receipt.is_success:
             success("Node registered successfully with hotkey!")
             success(f"Transaction hash: {receipt.extrinsic_hash}")
+            verify_hex = "0x" + node_id_verify_bytes.hex()
+            print_panel(
+                "\n".join(
+                    [
+                        f"Libp2p peer id: [bold cyan]{node_id_peer_id_str}[/bold cyan]",
+                        f"On-chain [bold]node_id[/bold] (display, your [bold]--node-id[/bold] text): "
+                        f"[dim]{node_id.strip()!r}[/dim]",
+                        f"On-chain [bold]node_id_hex[/bold] (38-byte multihash for [bold]verify_peer_id[/bold] / challenge): "
+                        f"[dim]{verify_hex}[/dim]",
+                    ]
+                ),
+                title="Node ID on-chain",
+            )
         else:
             error(f"Registration failed: {receipt.error_message}")
 
