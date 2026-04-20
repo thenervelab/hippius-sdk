@@ -635,11 +635,19 @@ def add_miner_commands(subparsers):
     register_coldkey_parser = miner_subparsers.add_parser(
         "register-coldkey",
         help="Register a node with coldkey (current account becomes coldkey)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "The extrinsic sends your --node-id text as the display node_id and the "
+            "38-byte libp2p multihash as node_id_hex for verify_peer_id and the challenge hash. "
+            "Explorers often show multihash Vec<u8> as hex (0x00240801…)."
+        ),
     )
 
     # Required arguments for register-coldkey
     register_coldkey_parser.add_argument(
-        "--node-id", required=True, help="Your main node_id (libp2p peer ID)"
+        "--node-id",
+        required=True,
+        help="Main libp2p peer id (base58 12D3KooW… or 0x + 38-byte multihash hex)",
     )
     node_priv_group = register_coldkey_parser.add_mutually_exclusive_group(
         required=True
@@ -691,6 +699,12 @@ def add_miner_commands(subparsers):
     register_hotkey_parser = miner_subparsers.add_parser(
         "register-hotkey",
         help="Register a node with hotkey (current account becomes hotkey)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "The extrinsic sends your --node-id text as the display node_id and the "
+            "38-byte libp2p multihash as node_id_hex for verify_peer_id and the challenge hash. "
+            "Explorers often show multihash Vec<u8> as hex (0x00240801…)."
+        ),
     )
 
     # Required arguments for register-hotkey
@@ -698,7 +712,9 @@ def add_miner_commands(subparsers):
         "--coldkey", required=True, help="Coldkey SS58 address"
     )
     register_hotkey_parser.add_argument(
-        "--node-id", required=True, help="Your main node_id (libp2p peer ID)"
+        "--node-id",
+        required=True,
+        help="Main libp2p peer id (base58 12D3KooW… or 0x + 38-byte multihash hex)",
     )
     node_priv_group_hotkey = register_hotkey_parser.add_mutually_exclusive_group(
         required=True
